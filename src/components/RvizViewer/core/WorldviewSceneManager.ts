@@ -3,10 +3,10 @@
  * 使用 regl-worldview 的优化渲染逻辑
  */
 import type regl from 'regl'
-import { createGridCommand, createAxesCommand, createPointsCommand, createLinesCommand } from './WorldviewAdapter'
-import type { PointCloudData } from './visualizations/PointCloud'
-import type { PathData } from './visualizations/Path'
-import type { RenderOptions } from './types'
+import { createGridCommand, createAxesCommand, createPointsCommand, createLinesCommand } from '../adapters/WorldviewAdapter'
+import type { PointCloudData } from '../visualizations/PointCloud'
+import type { PathData } from '../visualizations/Path'
+import type { RenderOptions } from '../types'
 
 export class WorldviewSceneManager {
   private reglContext: regl.Regl

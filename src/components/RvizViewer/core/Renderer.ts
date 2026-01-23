@@ -3,8 +3,8 @@
  * 负责管理 regl 上下文和基础渲染功能
  */
 import regl from 'regl'
-import type { CameraState, Viewport, RenderOptions } from './types'
-import { createPerspectiveMatrix, createViewMatrix } from './utils/math'
+import type { CameraState, Viewport, RenderOptions } from '../types'
+import { createPerspectiveMatrix, createViewMatrix } from '../utils/math'
 
 export class Renderer {
   private reglContext: regl.Regl
@@ -147,38 +147,6 @@ export class Renderer {
    */
   getViewport(): { width: number; height: number } {
     return { width: this.viewport.width, height: this.viewport.height }
-  }
-
-  /**
-   * 创建基础绘制命令
-   */
-  createDrawCommand(config: {
-    vert: string
-    frag: string
-    attributes: any
-    uniforms: any
-    elements?: any
-    primitive?: 'points' | 'lines' | 'line strip' | 'line loop' | 'triangles' | 'triangle strip' | 'triangle fan'
-    count?: number
-  }): regl.DrawCommand {
-    return this.reglContext({
-      vert: config.vert,
-      frag: config.frag,
-      attributes: config.attributes,
-      uniforms: {
-        ...config.uniforms,
-        projection: this.getProjectionMatrix(),
-        view: this.getViewMatrix()
-      },
-      elements: config.elements,
-      primitive: config.primitive || 'triangles',
-      count: config.count,
-      depth: {
-        enable: true,
-        func: 'less',
-        mask: true
-      }
-    })
   }
 
   /**

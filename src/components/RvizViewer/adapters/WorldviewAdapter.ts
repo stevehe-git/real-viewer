@@ -4,10 +4,6 @@
  */
 import type regl from 'regl'
 
-export interface WorldviewCommand {
-  render: (reglContext: regl.Regl, props: any) => void
-}
-
 /**
  * Grid 命令（基于 regl-worldview 的 Grid.js）
  */
@@ -44,32 +40,6 @@ export function createGridCommand(reglContext: regl.Regl): regl.DrawCommand {
     },
     count: reglContext.prop<any, 'count'>('count')
   })
-}
-
-/**
- * 创建网格数据
- */
-export function createGridData(reglContext: regl.Regl, count: number = 10, color: number[] = [0.3, 0.3, 0.3, 1]) {
-  const points: number[] = []
-  const colors: number[] = []
-  
-  for (let i = -count; i <= count; i++) {
-    // 垂直线
-    points.push(-count, i, 0)
-    points.push(count, i, 0)
-    colors.push(...color, ...color)
-    
-    // 水平线
-    points.push(i, -count, 0)
-    points.push(i, count, 0)
-    colors.push(...color, ...color)
-  }
-
-  return {
-    points: reglContext.buffer(points),
-    colors: reglContext.buffer(colors),
-    count: points.length / 3
-  }
 }
 
 /**

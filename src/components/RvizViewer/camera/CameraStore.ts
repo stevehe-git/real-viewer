@@ -2,7 +2,7 @@
  * 相机状态管理（基于 regl-worldview 的 CameraStore）
  */
 import { vec3, quat } from 'gl-matrix'
-import type { CameraState } from './types'
+import type { CameraState } from '../types'
 
 export interface WorldviewCameraState {
   distance: number

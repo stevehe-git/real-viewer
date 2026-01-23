@@ -36,9 +36,9 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { Refresh, Grid, Location } from '@element-plus/icons-vue'
-import { Renderer } from './Renderer'
-import { WorldviewCameraController } from './WorldviewCameraController'
-import { WorldviewSceneManager } from './WorldviewSceneManager'
+import { Renderer } from './core/Renderer'
+import { WorldviewCameraController } from './camera/WorldviewCameraController'
+import { WorldviewSceneManager } from './core/WorldviewSceneManager'
 import type { CameraState, Viewport, RenderOptions } from './types'
 import type { PointCloudData } from './visualizations/PointCloud'
 import type { PathData } from './visualizations/Path'

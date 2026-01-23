@@ -3,7 +3,7 @@
  * 实现 rviz 风格的鼠标交互
  */
 import { CameraStore, type WorldviewCameraState } from './CameraStore'
-import type { CameraState } from './types'
+import type { CameraState } from '../types'
 
 const PAN_SPEED = 4
 const MOUSE_ZOOM_SPEED = 0.1
