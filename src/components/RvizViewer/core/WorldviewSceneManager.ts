@@ -4,9 +4,7 @@
  */
 import type regl from 'regl'
 import { createGridCommand, createAxesCommand, createPointsCommand, createLinesCommand } from '../adapters/WorldviewAdapter'
-import type { PointCloudData } from '../visualizations/PointCloud'
-import type { PathData } from '../visualizations/Path'
-import type { RenderOptions } from '../types'
+import type { PointCloudData, PathData, RenderOptions } from '../types'
 
 export class WorldviewSceneManager {
   private reglContext: regl.Regl

@@ -38,7 +38,10 @@ export function createGridCommand(reglContext: regl.Regl): regl.DrawCommand {
       projection: reglContext.prop<any, 'projection'>('projection'),
       view: reglContext.prop<any, 'view'>('view')
     },
-    count: reglContext.prop<any, 'count'>('count')
+    count: reglContext.prop<any, 'count'>('count'),
+    depth: {
+      enable: false // 禁用深度测试，确保坐标轴始终可见
+    },
   })
 }
 

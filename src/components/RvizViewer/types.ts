@@ -43,3 +43,16 @@ export interface VisualizationConfig {
   color?: Color
   opacity?: number
 }
+
+export interface PointCloudData {
+  points: Point3D[]
+  colors?: Color[]
+  pointSize?: number
+}
+
+export interface PathData {
+  waypoints: Point3D[]
+  color?: Color
+  lineWidth?: number
+  showPoints?: boolean
+}

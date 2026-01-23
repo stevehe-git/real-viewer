@@ -3,5 +3,3 @@
  */
 export { default as RvizViewer } from './RvizViewer.vue'
 export * from './types'
-export type { PointCloudData } from './visualizations/PointCloud'
-export type { PathData } from './visualizations/Path'

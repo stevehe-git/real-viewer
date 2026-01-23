@@ -18,8 +18,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import RvizViewer from '../../components/RvizViewer/RvizViewer.vue'
-import type { PointCloudData } from '../../components/RvizViewer/visualizations/PointCloud'
-import type { PathData } from '../../components/RvizViewer/visualizations/Path'
+import type { PointCloudData, PathData } from '../../components/RvizViewer/types'
 
 // 视口尺寸
 const viewerWidth = ref(1200)

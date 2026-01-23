@@ -39,9 +39,7 @@ import { Refresh, Grid, Location } from '@element-plus/icons-vue'
 import { Renderer } from './core/Renderer'
 import { WorldviewCameraController } from './camera/WorldviewCameraController'
 import { WorldviewSceneManager } from './core/WorldviewSceneManager'
-import type { CameraState, Viewport, RenderOptions } from './types'
-import type { PointCloudData } from './visualizations/PointCloud'
-import type { PathData } from './visualizations/Path'
+import type { CameraState, Viewport, RenderOptions, PointCloudData, PathData } from './types'
 
 interface Props {
   width?: number
