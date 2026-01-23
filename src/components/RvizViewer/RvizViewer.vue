@@ -206,6 +206,9 @@ function setupEventListeners(): void {
 let animationFrameId: number | null = null
 let lastCameraState: CameraState | null = null
 let isRendering = false
+let lastRenderTime = 0
+const TARGET_FPS = 30
+const FRAME_INTERVAL = 1000 / TARGET_FPS // 约 33.33ms
 
 function startRenderLoop(): void {
   if (!renderer.value || !cameraController.value || !sceneManager.value) return
@@ -213,7 +216,7 @@ function startRenderLoop(): void {
 
   isRendering = true
 
-  const loop = () => {
+  const loop = (currentTime: number) => {
     if (!renderer.value || !cameraController.value || !sceneManager.value) {
       animationFrameId = null
       isRendering = false
@@ -236,11 +239,16 @@ function startRenderLoop(): void {
       lastCameraState.target[2] !== camera.target[2] ||
       lastCameraState.fov !== camera.fov
 
-    // 只在有变化或正在交互时才渲染
-    if (cameraChanged || isDragging || renderer.value.shouldRender()) {
+    // 检查是否到了渲染时间（30 FPS）
+    const timeSinceLastRender = currentTime - lastRenderTime
+    const shouldRenderByTime = timeSinceLastRender >= FRAME_INTERVAL
+
+    // 只在有变化或正在交互或到了渲染时间时才渲染
+    if ((cameraChanged || isDragging || renderer.value.shouldRender()) && shouldRenderByTime) {
       // 更新相机
       renderer.value.updateCamera(camera)
       lastCameraState = { ...camera }
+      lastRenderTime = currentTime
 
       // 获取投影和视图矩阵（带缓存）
       const projection = renderer.value.getProjectionMatrix()
@@ -264,6 +272,7 @@ function startRenderLoop(): void {
     animationFrameId = requestAnimationFrame(loop)
   }
 
+  lastRenderTime = performance.now()
   animationFrameId = requestAnimationFrame(loop)
 }
 

@@ -27,7 +27,7 @@ export const DEFAULT_CAMERA_STATE: WorldviewCameraState = {
   target: [0, 0, 0],
   targetOffset: [0, 0, 0],
   targetOrientation: [0, 0, 0, 1],
-  thetaOffset: 0,
+  thetaOffset: 1.0,
   fovy: Math.PI / 4,
   near: 0.1,
   far: 1000
