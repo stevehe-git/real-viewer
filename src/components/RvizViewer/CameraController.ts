@@ -19,6 +19,24 @@ export class CameraController {
   constructor(initialCamera: CameraState) {
     this.camera = { ...initialCamera }
     this.updateDistance()
+    // 初始化旋转角度（基于初始相机位置）
+    this.initializeRotation()
+  }
+
+  /**
+   * 根据初始相机位置初始化旋转角度
+   */
+  private initializeRotation(): void {
+    const dx = this.camera.position[0] - this.camera.target[0]
+    const dy = this.camera.position[1] - this.camera.target[1]
+    const dz = this.camera.position[2] - this.camera.target[2]
+    
+    // 计算水平角度（从正Y轴开始，逆时针为正）
+    this.rotationY = Math.atan2(dx, dy)
+    
+    // 计算垂直角度（俯仰角）
+    const horizontalDist = Math.sqrt(dx * dx + dy * dy)
+    this.rotationX = Math.atan2(dz, horizontalDist)
   }
 
   /**
@@ -41,7 +59,7 @@ export class CameraController {
   }
 
   /**
-   * 处理鼠标移动事件
+   * 处理鼠标移动事件（rviz 风格）
    */
   onMouseMove(event: MouseEvent, button: number): void {
     if (!this.isDragging) return
@@ -50,18 +68,20 @@ export class CameraController {
     const deltaY = event.clientY - this.lastMouseY
 
     if (button === 0) {
-      // 左键：旋转
-      this.rotationY += deltaX * 0.01
-      this.rotationX += deltaY * 0.01
+      // 左键：旋转（轨道控制）
+      const sensitivity = 0.005
+      this.rotationY += deltaX * sensitivity
+      this.rotationX += deltaY * sensitivity
       this.rotationX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, this.rotationX))
-    } else if (button === 2) {
-      // 右键：平移
+      this.updateCameraPosition()
+    } else if (button === 1 || button === 2) {
+      // 中键或右键：平移
       const panSpeed = this.distance * 0.001
       this.panX -= deltaX * panSpeed
       this.panY += deltaY * panSpeed
+      this.updateCameraPosition()
     }
 
-    this.updateCameraPosition()
     this.lastMouseX = event.clientX
     this.lastMouseY = event.clientY
   }
@@ -74,28 +94,33 @@ export class CameraController {
   }
 
   /**
-   * 处理滚轮缩放
+   * 处理滚轮缩放（rviz 风格）
    */
   onWheel(event: WheelEvent): void {
-    const zoomSpeed = 0.1
-    this.distance += event.deltaY * zoomSpeed
-    this.distance = Math.max(0.1, Math.min(100, this.distance))
+    const zoomSpeed = 0.05
+    const zoomFactor = 1 + (event.deltaY > 0 ? zoomSpeed : -zoomSpeed)
+    this.distance *= zoomFactor
+    this.distance = Math.max(0.5, Math.min(200, this.distance))
     this.updateCameraPosition()
   }
 
   /**
-   * 更新相机位置
+   * 更新相机位置（球坐标系统）
    */
   private updateCameraPosition(): void {
+    // 更新目标点（考虑平移）
     const target = vec3.fromValues(
       this.camera.target[0] + this.panX,
       this.camera.target[1] + this.panY,
       this.camera.target[2]
     )
 
+    // 球坐标转笛卡尔坐标
+    // rotationY: 水平角度（绕Z轴，从正Y轴开始）
+    // rotationX: 垂直角度（俯仰角，从水平面开始）
     const x = this.distance * Math.cos(this.rotationX) * Math.sin(this.rotationY)
-    const y = this.distance * Math.sin(this.rotationX)
-    const z = this.distance * Math.cos(this.rotationX) * Math.cos(this.rotationY)
+    const y = this.distance * Math.cos(this.rotationX) * Math.cos(this.rotationY)
+    const z = this.distance * Math.sin(this.rotationX)
 
     this.camera.position[0] = target[0] + x
     this.camera.position[1] = target[1] + y
@@ -106,8 +131,8 @@ export class CameraController {
    * 重置相机
    */
   reset(): void {
-    this.rotationX = 0
-    this.rotationY = 0
+    this.rotationX = Math.PI / 6 // 30度俯视角度
+    this.rotationY = Math.PI / 4 // 45度水平角度
     this.panX = 0
     this.panY = 0
     this.distance = 10

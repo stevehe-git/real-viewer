@@ -23,7 +23,7 @@
           <span>鼠标左键拖拽：旋转</span>
         </div>
         <div class="info-item">
-          <span>鼠标右键拖拽：平移</span>
+          <span>鼠标中键拖拽：平移</span>
         </div>
         <div class="info-item">
           <span>滚轮：缩放</span>
@@ -37,7 +37,7 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { Refresh, Grid, Location } from '@element-plus/icons-vue'
 import { Renderer } from './Renderer'
-import { CameraController } from './CameraController'
+import { WorldviewCameraController } from './WorldviewCameraController'
 import { WorldviewSceneManager } from './WorldviewSceneManager'
 import type { CameraState, Viewport, RenderOptions } from './types'
 import type { PointCloudData } from './visualizations/PointCloud'
@@ -63,7 +63,7 @@ const props = withDefaults(defineProps<Props>(), {
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const renderer = ref<Renderer | null>(null)
-const cameraController = ref<CameraController | null>(null)
+const cameraController = ref<WorldviewCameraController | null>(null)
 const sceneManager = ref<WorldviewSceneManager | null>(null)
 const gridVisible = ref(true)
 const axesVisible = ref(true)
@@ -101,8 +101,14 @@ onMounted(() => {
   // 初始化渲染器
   renderer.value = new Renderer(canvas, viewport, camera, props.options)
 
-  // 初始化相机控制器
-  cameraController.value = new CameraController(camera)
+  // 初始化相机控制器（基于 regl-worldview）
+  cameraController.value = new WorldviewCameraController({
+    distance: 10,
+    phi: Math.PI / 4,
+    target: camera.target,
+    fovy: camera.fov
+  })
+  cameraController.value.setCanvas(canvas)
 
   // 初始化场景管理器（使用 regl-worldview 优化版本）
   sceneManager.value = new WorldviewSceneManager(renderer.value.getContext(), props.options)
@@ -123,51 +129,76 @@ onMounted(() => {
   startRenderLoop()
 })
 
-// 设置事件监听
+// 设置事件监听（基于 regl-worldview 的实现）
 function setupEventListeners(): void {
   if (!canvasRef.value || !cameraController.value) return
 
   const canvas = canvasRef.value
-  let currentButton = 0
 
+  // 鼠标按下
   canvas.addEventListener('mousedown', (e) => {
-    currentButton = e.button
+    e.preventDefault()
     cameraController.value?.onMouseDown(e)
-    canvas.style.cursor = 'grabbing'
-  })
-
-  canvas.addEventListener('mousemove', (e) => {
-    if (cameraController.value) {
-      cameraController.value.onMouseMove(e, currentButton)
+    canvas.focus()
+    
+    // 根据按钮设置光标
+    if (e.button === 0) {
+      canvas.style.cursor = 'grabbing' // 左键：旋转
+    } else if (e.button === 1) {
+      canvas.style.cursor = 'move' // 中键：平移
     }
   })
 
-  canvas.addEventListener('mouseup', () => {
-    cameraController.value?.onMouseUp()
-    canvas.style.cursor = 'default'
-    currentButton = -1
-  })
+  // 鼠标移动（使用 window 监听，确保在画布外也能响应）
+  const handleMouseMove = (e: MouseEvent) => {
+    if (cameraController.value?.isDragging()) {
+      cameraController.value.onMouseMove(e)
+      renderer.value?.markDirty()
+    }
+  }
+  window.addEventListener('mousemove', handleMouseMove)
 
+  // 鼠标释放
+  const handleMouseUp = (e: MouseEvent) => {
+    if (cameraController.value) {
+      cameraController.value.onMouseUp(e)
+      canvas.style.cursor = 'default'
+      renderer.value?.markDirty()
+    }
+  }
+  window.addEventListener('mouseup', handleMouseUp)
   canvas.addEventListener('mouseleave', () => {
-    cameraController.value?.onMouseUp()
-    canvas.style.cursor = 'default'
-    currentButton = -1
+    if (cameraController.value) {
+      // 清除所有按钮状态
+      cameraController.value.clearButtons()
+      canvas.style.cursor = 'default'
+    }
   })
 
+  // 滚轮缩放
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault()
-    cameraController.value?.onWheel(e)
-  })
+    if (cameraController.value) {
+      cameraController.value.onWheel(e)
+      renderer.value?.markDirty()
+    }
+  }, { passive: false })
 
   // 防止右键菜单
   canvas.addEventListener('contextmenu', (e) => {
     e.preventDefault()
   })
+
+  // 窗口失焦时清理状态
+  window.addEventListener('blur', () => {
+    if (cameraController.value) {
+      cameraController.value.clearButtons()
+    }
+  })
 }
 
 // 渲染循环（优化版本）
 let animationFrameId: number | null = null
-let lastCameraState: string = ''
 
 function startRenderLoop(): void {
   if (!renderer.value || !cameraController.value || !sceneManager.value) return
@@ -178,17 +209,9 @@ function startRenderLoop(): void {
       return
     }
 
-    // 更新相机
+    // 更新相机（每次循环都更新，确保响应性）
     const camera = cameraController.value.getCamera()
-    
-    // 检查相机是否变化（避免不必要的更新）
-    const cameraState = JSON.stringify(camera)
-    const cameraChanged = cameraState !== lastCameraState
-    
-    if (cameraChanged) {
-      renderer.value.updateCamera(camera)
-      lastCameraState = cameraState
-    }
+    renderer.value.updateCamera(camera)
 
     // 获取投影和视图矩阵（带缓存）
     const projection = renderer.value.getProjectionMatrix()
