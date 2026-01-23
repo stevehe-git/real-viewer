@@ -24,7 +24,7 @@ export class Renderer {
       enableGrid: options?.enableGrid ?? true,
       enableAxes: options?.enableAxes ?? true,
       gridSize: options?.gridSize || 10,
-      gridDivisions: options?.gridDivisions || 10
+      gridDivisions: options?.gridDivisions ?? 5 // 默认5个格子（从-5到5，共10个格子）
     }
 
     // 初始化 regl

@@ -37,7 +37,7 @@ const viewerOptions = {
   enableGrid: true,
   enableAxes: false, // rviz 默认不显示坐标轴
   gridSize: 10,
-  gridDivisions: 10,
+  gridDivisions: 5, // 5个格子（从-5到5，共10个格子）
   gridColor: [0.67, 0.67, 0.67, 1.0] as [number, number, number, number] // 浅灰色网格 #AAAAAA
 }
 

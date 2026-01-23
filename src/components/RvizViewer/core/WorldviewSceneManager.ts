@@ -28,7 +28,7 @@ export class WorldviewSceneManager {
       enableGrid: options?.enableGrid ?? true,
       enableAxes: options?.enableAxes ?? true,
       gridSize: options?.gridSize || 10,
-      gridDivisions: options?.gridDivisions || 10,
+      gridDivisions: options?.gridDivisions ?? 5, // 默认5个格子（从-5到5，共10个格子）
       gridColor: options?.gridColor || [0.67, 0.67, 0.67, 1.0] // 浅灰色网格
     }
 
