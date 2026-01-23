@@ -6,7 +6,7 @@ import { CameraStore, type WorldviewCameraState } from './CameraStore'
 import type { CameraState } from './types'
 
 const PAN_SPEED = 4
-const MOUSE_ZOOM_SPEED = 0.3
+const MOUSE_ZOOM_SPEED = 0.1
 
 export class WorldviewCameraController {
   private cameraStore: CameraStore
@@ -112,7 +112,7 @@ export class WorldviewCameraController {
     event.preventDefault()
     
     // 使用 normalize-wheel 的逻辑
-    const delta = event.deltaY
+    const delta = -event.deltaY
     const zoomPercent = (delta / 100) * MOUSE_ZOOM_SPEED * 100
     this.cameraStore.cameraZoom(zoomPercent)
   }
