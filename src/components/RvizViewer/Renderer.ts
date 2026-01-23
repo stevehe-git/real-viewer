@@ -143,6 +143,13 @@ export class Renderer {
   }
 
   /**
+   * 获取视口
+   */
+  getViewport(): { width: number; height: number } {
+    return { width: this.viewport.width, height: this.viewport.height }
+  }
+
+  /**
    * 创建基础绘制命令
    */
   createDrawCommand(config: {

@@ -38,7 +38,7 @@ import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { Refresh, Grid, Location } from '@element-plus/icons-vue'
 import { Renderer } from './Renderer'
 import { CameraController } from './CameraController'
-import { SceneManager } from './SceneManager'
+import { WorldviewSceneManager } from './WorldviewSceneManager'
 import type { CameraState, Viewport, RenderOptions } from './types'
 import type { PointCloudData } from './visualizations/PointCloud'
 import type { PathData } from './visualizations/Path'
@@ -64,7 +64,7 @@ const props = withDefaults(defineProps<Props>(), {
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const renderer = ref<Renderer | null>(null)
 const cameraController = ref<CameraController | null>(null)
-const sceneManager = ref<SceneManager | null>(null)
+const sceneManager = ref<WorldviewSceneManager | null>(null)
 const gridVisible = ref(true)
 const axesVisible = ref(true)
 
@@ -104,8 +104,8 @@ onMounted(() => {
   // 初始化相机控制器
   cameraController.value = new CameraController(camera)
 
-  // 初始化场景管理器
-  sceneManager.value = new SceneManager(renderer.value.getContext(), props.options)
+  // 初始化场景管理器（使用 regl-worldview 优化版本）
+  sceneManager.value = new WorldviewSceneManager(renderer.value.getContext(), props.options)
 
   // 设置初始数据
   if (props.pointCloud) {
@@ -193,10 +193,11 @@ function startRenderLoop(): void {
     // 获取投影和视图矩阵（带缓存）
     const projection = renderer.value.getProjectionMatrix()
     const view = renderer.value.getViewMatrix()
+    const viewport = renderer.value.getViewport()
 
-    // 渲染场景（使用优化的渲染方法）
+    // 渲染场景（使用 regl-worldview 优化版本）
     renderer.value.render(() => {
-      sceneManager.value?.render(projection, view)
+      sceneManager.value?.render(projection, view, viewport)
     })
 
     // 继续循环
