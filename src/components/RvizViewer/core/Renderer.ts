@@ -88,6 +88,13 @@ export class Renderer {
   }
 
   /**
+   * 检查是否需要渲染
+   */
+  shouldRender(): boolean {
+    return this.needsRender
+  }
+
+  /**
    * 获取 regl 上下文
    */
   getContext(): regl.Regl {

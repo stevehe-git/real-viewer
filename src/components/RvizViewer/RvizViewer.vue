@@ -125,6 +125,9 @@ onMounted(() => {
   // 设置事件监听
   setupEventListeners()
 
+  // 初始渲染一次
+  renderer.value.markDirty()
+  
   // 开始渲染循环
   startRenderLoop()
 })
@@ -154,6 +157,7 @@ function setupEventListeners(): void {
     if (cameraController.value?.isDragging()) {
       cameraController.value.onMouseMove(e)
       renderer.value?.markDirty()
+      startRenderLoop() // 确保渲染循环在运行
     }
   }
   window.addEventListener('mousemove', handleMouseMove)
@@ -181,6 +185,7 @@ function setupEventListeners(): void {
     if (cameraController.value) {
       cameraController.value.onWheel(e)
       renderer.value?.markDirty()
+      startRenderLoop() // 确保渲染循环在运行
     }
   }, { passive: false })
 
@@ -197,31 +202,63 @@ function setupEventListeners(): void {
   })
 }
 
-// 渲染循环（优化版本）
+// 渲染循环（优化版本：只在有变化时渲染）
 let animationFrameId: number | null = null
+let lastCameraState: CameraState | null = null
+let isRendering = false
 
 function startRenderLoop(): void {
   if (!renderer.value || !cameraController.value || !sceneManager.value) return
+  if (isRendering) return // 已经在渲染中
+
+  isRendering = true
 
   const loop = () => {
     if (!renderer.value || !cameraController.value || !sceneManager.value) {
       animationFrameId = null
+      isRendering = false
       return
     }
 
-    // 更新相机（每次循环都更新，确保响应性）
+    // 检查是否有交互（拖拽中）
+    const isDragging = cameraController.value.isDragging()
+    
+    // 获取当前相机状态
     const camera = cameraController.value.getCamera()
-    renderer.value.updateCamera(camera)
+    
+    // 检查相机是否有变化
+    const cameraChanged = !lastCameraState || 
+      lastCameraState.position[0] !== camera.position[0] ||
+      lastCameraState.position[1] !== camera.position[1] ||
+      lastCameraState.position[2] !== camera.position[2] ||
+      lastCameraState.target[0] !== camera.target[0] ||
+      lastCameraState.target[1] !== camera.target[1] ||
+      lastCameraState.target[2] !== camera.target[2] ||
+      lastCameraState.fov !== camera.fov
 
-    // 获取投影和视图矩阵（带缓存）
-    const projection = renderer.value.getProjectionMatrix()
-    const view = renderer.value.getViewMatrix()
-    const viewport = renderer.value.getViewport()
+    // 只在有变化或正在交互时才渲染
+    if (cameraChanged || isDragging || renderer.value.shouldRender()) {
+      // 更新相机
+      renderer.value.updateCamera(camera)
+      lastCameraState = { ...camera }
 
-    // 渲染场景（使用 regl-worldview 优化版本）
-    renderer.value.render(() => {
-      sceneManager.value?.render(projection, view, viewport)
-    })
+      // 获取投影和视图矩阵（带缓存）
+      const projection = renderer.value.getProjectionMatrix()
+      const view = renderer.value.getViewMatrix()
+      const viewport = renderer.value.getViewport()
+
+      // 渲染场景（使用 regl-worldview 优化版本）
+      renderer.value.render(() => {
+        sceneManager.value?.render(projection, view, viewport)
+      })
+    }
+
+    // 如果没有交互且没有变化，停止渲染循环
+    if (!isDragging && !cameraChanged && !renderer.value.shouldRender()) {
+      animationFrameId = null
+      isRendering = false
+      return
+    }
 
     // 继续循环
     animationFrameId = requestAnimationFrame(loop)
@@ -235,24 +272,31 @@ function stopRenderLoop(): void {
     cancelAnimationFrame(animationFrameId)
     animationFrameId = null
   }
+  isRendering = false
 }
 
 // 重置相机
 function resetCamera(): void {
   cameraController.value?.reset()
+  lastCameraState = null // 重置相机状态缓存，强制重新渲染
   renderer.value?.markDirty() // 标记需要重新渲染
+  startRenderLoop() // 重新启动渲染循环
 }
 
 // 切换网格显示
 function toggleGrid(): void {
   gridVisible.value = !gridVisible.value
   sceneManager.value?.setGridVisible(gridVisible.value)
+  renderer.value?.markDirty() // 标记需要重新渲染
+  startRenderLoop() // 重新启动渲染循环
 }
 
 // 切换坐标轴显示
 function toggleAxes(): void {
   axesVisible.value = !axesVisible.value
   sceneManager.value?.setAxesVisible(axesVisible.value)
+  renderer.value?.markDirty() // 标记需要重新渲染
+  startRenderLoop() // 重新启动渲染循环
 }
 
 // 监听属性变化
@@ -260,6 +304,7 @@ watch(() => props.pointCloud, (newData) => {
   if (newData && sceneManager.value) {
     sceneManager.value.updatePointCloud(newData)
     renderer.value?.markDirty() // 标记需要重新渲染
+    startRenderLoop() // 重新启动渲染循环
   }
 }, { deep: true })
 
@@ -270,6 +315,7 @@ watch(() => props.paths, (newPaths) => {
       sceneManager.value?.addPath(path)
     })
     renderer.value?.markDirty() // 标记需要重新渲染
+    startRenderLoop() // 重新启动渲染循环
   }
 }, { deep: true })
 
