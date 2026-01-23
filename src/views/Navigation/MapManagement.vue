@@ -1,8 +1,8 @@
 <template>
   <div class="page-container">
-    <h1>导航概览</h1>
+    <h1>地图管理</h1>
     <div class="content">
-      <p>这是导航概览页面，显示导航系统的整体状态和关键指标。</p>
+      <p>这是地图管理页面，用于管理导航系统中的地图数据。</p>
     </div>
   </div>
 </template>

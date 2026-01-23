@@ -69,16 +69,14 @@ defineEmits<{
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   position: fixed;
   top: 0;
-  left: 180px;
+  left: 240px;
   right: 0;
   z-index: 100;
-  transition: left 0.3s ease, width 0.3s ease;
-  width: calc(100% - 180px);
+  transition: left 0.3s ease;
 }
 
 .header.sidebar-collapsed {
   left: 60px;
-  width: calc(100% - 60px);
 }
 
 .header-left {

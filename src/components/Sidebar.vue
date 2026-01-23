@@ -1,16 +1,12 @@
 <template>
-  <div
-    class="sidebar"
-    :class="{ collapsed: props.collapsed }"
-    @mouseenter="handleSidebarEnter"
-    @mouseleave="handleSidebarLeave"
-  >
+  <div class="sidebar" :class="{ collapsed: props.collapsed }">
     <div class="sidebar-header">
       <div class="sidebar-title">
         <el-icon class="title-icon">
           <Share />
         </el-icon>
         <span v-if="!props.collapsed" class="title-text">RosViewer</span>
+        <span v-else class="title-text-collapsed">RV</span>
       </div>
     </div>
     <div class="sidebar-menu">
@@ -19,27 +15,10 @@
         :key="item.key"
         class="menu-item"
       >
-        <!-- 顶级菜单项（没有children） -->
-        <router-link
-          v-if="item.path"
-          :to="item.path"
-          class="menu-parent menu-link"
-          :class="{ active: $route.path === item.path, collapsed: props.collapsed }"
-          @mouseenter="handleMenuHover(item.key, $event)"
-        >
-          <el-icon class="menu-icon">
-            <component :is="item.icon" />
-          </el-icon>
-          <span v-if="!props.collapsed" class="menu-title">{{ item.title }}</span>
-        </router-link>
-
-        <!-- 可展开的菜单项（有children） -->
         <div
-          v-else
           class="menu-parent"
           :class="{ active: isActiveParent(item), collapsed: props.collapsed }"
           @click="toggleMenu(item.key)"
-          @mouseenter="handleMenuHover(item.key, $event)"
         >
           <el-icon class="menu-icon">
             <component :is="item.icon" />
@@ -67,32 +46,19 @@
         </transition>
       </div>
     </div>
-
-    <!-- 收起状态下的hover子菜单模态框 -->
-    <HoverSubmenuModal
-      :visible="props.collapsed && isHoveringSidebar && !!hoveredMenuItem"
-      :menu-item="hoveredMenuItem || null"
-      :trigger-rect="triggerRect"
-      @mouseenter="handlePanelEnter"
-      @mouseleave="handlePanelLeave"
-    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, h } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   Location,
   Setting,
   Histogram,
   User,
-  Share,
-  DocumentAdd,
-  Aim,
-  MapLocation
+  Share
 } from '@element-plus/icons-vue'
-import HoverSubmenuModal from './HoverSubmenuModal.vue'
 
 interface MenuChild {
   path: string
@@ -103,8 +69,7 @@ interface MenuItem {
   key: string
   title: string
   icon: any // Icon component
-  children?: MenuChild[]
-  path?: string
+  children: MenuChild[]
 }
 
 interface Props {
@@ -117,9 +82,6 @@ const props = withDefaults(defineProps<Props>(), {
 
 const route = useRoute()
 const expandedMenus = ref<string[]>([])
-const hoveredMenu = ref<string | null>(null)
-const isHoveringSidebar = ref(false)
-const triggerRect = ref<DOMRect | null>(null)
 
 const menuItems: MenuItem[] = [
   {
@@ -127,35 +89,10 @@ const menuItems: MenuItem[] = [
     title: '导航',
     icon: Location,
     children: [
-      { path: '/navigation/overview', title: '导航预览' },
-      { path: '/navigation/route-planning', title: '路径规划' }
-    ]
-  },
-  {
-    key: 'waypoints',
-    title: '航点管理',
-    icon: Aim,
-    children: [
-      { path: '/waypoints/list', title: '航点列表' },
-      { path: '/waypoints/create', title: '创建航点' }
-    ]
-  },
-  {
-    key: 'map-management',
-    title: '地图管理',
-    icon: MapLocation,
-    children: [
-      { path: '/map-management/list', title: '地图列表' },
-      { path: '/map-management/create', title: '创建地图' }
-    ]
-  },
-  {
-    key: 'task-management',
-    title: '任务管理',
-    icon: DocumentAdd,
-    children: [
-      { path: '/task-management/task-list', title: '任务列表' },
-      { path: '/task-management/task-create', title: '创建任务' }
+      { path: '/navigation/overview', title: '导航概览' },
+      { path: '/navigation/route-planning', title: '路径规划' },
+      { path: '/navigation/waypoints', title: '航点管理' },
+      { path: '/navigation/map-management', title: '地图管理' }
     ]
   },
   {
@@ -192,26 +129,8 @@ const menuItems: MenuItem[] = [
 ]
 
 const isActiveParent = (item: MenuItem): boolean => {
-  if (item.path) {
-    // 顶级菜单项（航点管理、地图管理、任务管理等）
-    return route.path === item.path
-  } else if (item.children) {
-    // 有子项的菜单（导航、控制、分析、用户管理、航点管理、地图管理）
-    if (props.collapsed) {
-      // 收起状态：显示父级路由激活状态
-      return item.children.some(child => route.path === child.path)
-    } else {
-      // 展开状态：不显示父级背景色，只有次级路由显示
-      return false
-    }
-  }
-  return false
+  return item.children.some(child => route.path === child.path)
 }
-
-const hoveredMenuItem = computed((): MenuItem | null => {
-  if (!hoveredMenu.value) return null
-  return menuItems.find(item => item.key === hoveredMenu.value) || null
-})
 
 const toggleMenu = (key: string) => {
   const index = expandedMenus.value.indexOf(key)
@@ -220,35 +139,6 @@ const toggleMenu = (key: string) => {
   } else {
     expandedMenus.value.push(key)
   }
-}
-
-const handleMenuHover = (key: string, event?: MouseEvent) => {
-  hoveredMenu.value = key
-  if (event && event.target) {
-    const target = event.target as HTMLElement
-    const parentElement = target.closest('.menu-parent') as HTMLElement
-    if (parentElement) {
-      triggerRect.value = parentElement.getBoundingClientRect()
-    }
-  }
-}
-
-const handleSidebarEnter = () => {
-  isHoveringSidebar.value = true
-}
-
-const handleSidebarLeave = () => {
-  isHoveringSidebar.value = false
-  hoveredMenu.value = null
-}
-
-const handlePanelEnter = () => {
-  isHoveringSidebar.value = true
-}
-
-const handlePanelLeave = () => {
-  isHoveringSidebar.value = false
-  hoveredMenu.value = null
 }
 
 onMounted(() => {
@@ -265,7 +155,7 @@ onMounted(() => {
 
 <style scoped>
 .sidebar {
-  width: 180px;
+  width: 240px;
   height: 100vh;
   background-color: #2c3e50;
   color: #ecf0f1;
@@ -313,7 +203,7 @@ onMounted(() => {
 }
 
 .sidebar-menu {
-  padding: 0 0 0px 0;
+  padding: 0 0 20px 0;
 }
 
 .menu-item {
@@ -333,8 +223,7 @@ onMounted(() => {
   background-color: #34495e;
 }
 
-.menu-parent.active,
-.menu-link.active {
+.menu-parent.active {
   background-color: #3498db;
   color: white;
 }
@@ -396,5 +285,4 @@ onMounted(() => {
   max-height: 0;
   overflow: hidden;
 }
-
 </style>
