@@ -16,6 +16,7 @@ export class WorldviewSceneManager {
   private linesCommand: regl.DrawCommand | null = null
   
   private gridData: any = null
+  private axesData: any = null // 缓存坐标轴数据
   private pointCloudData: any = null
   private pathsData: any[] = []
   
@@ -39,7 +40,8 @@ export class WorldviewSceneManager {
     }
 
     if (this.options.enableAxes) {
-      this.axesCommand = createAxesCommand(reglContext, 1)
+      this.axesCommand = createAxesCommand(reglContext)
+      this.updateAxesData()
     }
 
     this.pointsCommand = createPointsCommand(reglContext)
@@ -71,6 +73,30 @@ export class WorldviewSceneManager {
     }
   }
 
+  private updateAxesData(): void {
+    // 坐标轴数据是固定的，只需要创建一次
+    if (this.axesData) return
+
+    const length = 1
+    const positions = [
+      0, 0, 0, length, 0, 0,  // X轴 - 红色
+      0, 0, 0, 0, length, 0,  // Y轴 - 绿色
+      0, 0, 0, 0, 0, length   // Z轴 - 蓝色
+    ]
+
+    const colors = [
+      1, 0, 0, 1, 1, 0, 0, 1,  // X轴 - 红色
+      0, 1, 0, 1, 0, 1, 0, 1,  // Y轴 - 绿色
+      0, 0, 1, 1, 0, 0, 1, 1   // Z轴 - 蓝色
+    ]
+
+    this.axesData = {
+      points: this.reglContext.buffer(positions),
+      colors: this.reglContext.buffer(colors),
+      count: 6
+    }
+  }
+
   /**
    * 渲染整个场景（使用 regl-worldview 的优化渲染）
    */
@@ -87,10 +113,13 @@ export class WorldviewSceneManager {
     }
 
     // 渲染坐标轴（使用 regl-worldview 的 Axes 命令）
-    if (this.axesCommand) {
+    if (this.axesCommand && this.axesData) {
       this.axesCommand({
         projection,
-        view
+        view,
+        points: this.axesData.points,
+        colors: this.axesData.colors,
+        count: this.axesData.count
       })
     }
 
@@ -205,7 +234,8 @@ export class WorldviewSceneManager {
   setAxesVisible(visible: boolean): void {
     this.options.enableAxes = visible
     if (visible && !this.axesCommand) {
-      this.axesCommand = createAxesCommand(this.reglContext, 1)
+      this.axesCommand = createAxesCommand(this.reglContext)
+      this.updateAxesData()
     }
   }
 
@@ -217,6 +247,7 @@ export class WorldviewSceneManager {
     this.clearPointCloud()
     this.gridCommand = null
     this.axesCommand = null
+    this.axesData = null // 清理坐标轴数据
     this.pointsCommand = null
     this.linesCommand = null
   }

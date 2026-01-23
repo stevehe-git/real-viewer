@@ -44,20 +44,9 @@ export function createGridCommand(reglContext: regl.Regl): regl.DrawCommand {
 
 /**
  * Axes 命令（基于 regl-worldview 的 Axes.js）
+ * 优化版本：使用外部传入的 buffer，避免重复创建
  */
-export function createAxesCommand(reglContext: regl.Regl, length: number = 1): regl.DrawCommand {
-  const positions = [
-    0, 0, 0, length, 0, 0,  // X轴 - 红色
-    0, 0, 0, 0, length, 0,  // Y轴 - 绿色
-    0, 0, 0, 0, 0, length   // Z轴 - 蓝色
-  ]
-
-  const colors = [
-    1, 0, 0, 1, 1, 0, 0, 1,  // X轴 - 红色
-    0, 1, 0, 1, 0, 1, 0, 1,  // Y轴 - 绿色
-    0, 0, 1, 1, 0, 0, 1, 1   // Z轴 - 蓝色
-  ]
-
+export function createAxesCommand(reglContext: regl.Regl): regl.DrawCommand {
   return reglContext({
     vert: `
       precision mediump float;
@@ -80,14 +69,17 @@ export function createAxesCommand(reglContext: regl.Regl, length: number = 1): r
     `,
     primitive: 'lines',
     attributes: {
-      point: reglContext.buffer(positions),
-      color: reglContext.buffer(colors)
+      point: reglContext.prop<any, 'points'>('points'),
+      color: reglContext.prop<any, 'colors'>('colors')
     },
     uniforms: {
       projection: reglContext.prop<any, 'projection'>('projection'),
       view: reglContext.prop<any, 'view'>('view')
     },
-    count: 6
+    count: reglContext.prop<any, 'count'>('count'),
+    depth: {
+      enable: false // 禁用深度测试，确保坐标轴始终可见
+    }
   })
 }
 
