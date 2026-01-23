@@ -22,20 +22,20 @@ const routes: RouteRecordRaw[] = [
         name: 'RoutePlanning',
         component: () => import('../views/Navigation/RoutePlanning.vue'),
         meta: { title: '路径规划' }
-      },
-      {
-        path: 'waypoints',
-        name: 'Waypoints',
-        component: () => import('../views/Navigation/Waypoints.vue'),
-        meta: { title: '航点管理' }
-      },
-      {
-        path: 'map-management',
-        name: 'MapManagement',
-        component: () => import('../views/Navigation/MapManagement.vue'),
-        meta: { title: '地图管理' }
       }
     ]
+  },
+  {
+    path: '/waypoints',
+    name: 'Waypoints',
+    component: () => import('../views/Navigation/Waypoints.vue'),
+    meta: { title: '航点管理' }
+  },
+  {
+    path: '/map-management',
+    name: 'MapManagement',
+    component: () => import('../views/Navigation/MapManagement.vue'),
+    meta: { title: '地图管理' }
   },
   {
     path: '/control',
@@ -127,6 +127,37 @@ const routes: RouteRecordRaw[] = [
         name: 'UserPermissions',
         component: () => import('../views/UserManagement/UserPermissions.vue'),
         meta: { title: '用户权限' }
+      }
+    ]
+  },
+  {
+    path: '/task-management',
+    name: 'TaskManagement',
+    component: () => import('../views/TaskManagement/index.vue'),
+    children: [
+      {
+        path: 'task-list',
+        name: 'TaskList',
+        component: () => import('../views/TaskManagement/TaskList.vue'),
+        meta: { title: '任务列表' }
+      },
+      {
+        path: 'task-create',
+        name: 'TaskCreate',
+        component: () => import('../views/TaskManagement/TaskCreate.vue'),
+        meta: { title: '创建任务' }
+      },
+      {
+        path: 'task-edit/:id',
+        name: 'TaskEdit',
+        component: () => import('../views/TaskManagement/TaskEdit.vue'),
+        meta: { title: '编辑任务' }
+      },
+      {
+        path: 'task-execution/:id',
+        name: 'TaskExecution',
+        component: () => import('../views/TaskManagement/TaskExecution.vue'),
+        meta: { title: '任务执行' }
       }
     ]
   }
