@@ -10,7 +10,7 @@ export class Renderer {
   private reglContext: regl.Regl
   private viewport: Viewport
   private camera: CameraState
-  private options: Required<RenderOptions>
+  private options: Required<Omit<RenderOptions, 'gridColor'>>
   private cachedProjection: regl.Mat4 | null = null
   private cachedView: regl.Mat4 | null = null
   private cachedAspect: number = 0
@@ -20,7 +20,7 @@ export class Renderer {
     this.viewport = viewport
     this.camera = camera
     this.options = {
-      clearColor: options?.clearColor || [0.1, 0.1, 0.1, 1.0],
+      clearColor: options?.clearColor || [0.2, 0.2, 0.2, 1.0], // rviz 深灰色背景
       enableGrid: options?.enableGrid ?? true,
       enableAxes: options?.enableAxes ?? true,
       gridSize: options?.gridSize || 10,

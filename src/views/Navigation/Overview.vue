@@ -31,61 +31,21 @@ const pointCloudData = ref<PointCloudData | undefined>(undefined)
 // 路径数据示例
 const pathData = ref<PathData[]>([])
 
-// 查看器选项
+// 查看器选项（rviz 风格：深灰色背景，浅灰色网格）
 const viewerOptions = {
-  clearColor: [0.1, 0.1, 0.1, 1.0] as [number, number, number, number],
+  clearColor: [0.2, 0.2, 0.2, 1.0] as [number, number, number, number], // 深灰色背景 #333333
   enableGrid: true,
-  enableAxes: true,
-  gridSize: 20,
-  gridDivisions: 20
+  enableAxes: false, // rviz 默认不显示坐标轴
+  gridSize: 10,
+  gridDivisions: 10,
+  gridColor: [0.67, 0.67, 0.67, 1.0] as [number, number, number, number] // 浅灰色网格 #AAAAAA
 }
 
-// 生成示例数据
+// 生成示例数据（rviz 风格：简洁的网格视图）
 function generateSampleData(): void {
-  // 生成示例点云数据
-  const points: PointCloudData['points'] = []
-  const colors: PointCloudData['colors'] = []
-  
-  for (let i = 0; i < 1000; i++) {
-    const x = (Math.random() - 0.5) * 10
-    const y = (Math.random() - 0.5) * 10
-    const z = Math.random() * 2
-    
-    points.push({ x, y, z })
-    
-    // 根据高度设置颜色
-    const height = z / 2
-    colors.push({
-      r: height,
-      g: 1 - height,
-      b: 0.5,
-      a: 1
-    })
-  }
-  
-  pointCloudData.value = {
-    points,
-    colors,
-    pointSize: 3
-  }
-
-  // 生成示例路径数据
-  const waypoints = [
-    { x: -5, y: -5, z: 0 },
-    { x: -3, y: -3, z: 0.5 },
-    { x: 0, y: 0, z: 1 },
-    { x: 3, y: 3, z: 0.5 },
-    { x: 5, y: 5, z: 0 }
-  ]
-
-  pathData.value = [
-    {
-      waypoints,
-      color: { r: 0, g: 1, b: 0, a: 1 },
-      lineWidth: 3,
-      showPoints: true
-    }
-  ]
+  // rviz 默认不显示点云和路径，只显示网格
+  pointCloudData.value = undefined
+  pathData.value = []
 }
 
 // 更新视口尺寸

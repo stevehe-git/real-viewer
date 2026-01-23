@@ -22,6 +22,7 @@ export interface RenderOptions {
   enableAxes?: boolean
   gridSize?: number
   gridDivisions?: number
+  gridColor?: [number, number, number, number]
 }
 
 export interface Point3D {

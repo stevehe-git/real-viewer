@@ -68,9 +68,9 @@ const sceneManager = ref<WorldviewSceneManager | null>(null)
 const gridVisible = ref(true)
 const axesVisible = ref(true)
 
-// 默认相机配置
+// 默认相机配置（rviz 风格：等轴测视角）
 const defaultCamera: CameraState = {
-  position: [5, 5, 5],
+  position: [8, 8, 6], // 稍微高一点的视角
   target: [0, 0, 0],
   up: [0, 0, 1],
   fov: Math.PI / 4,
@@ -273,8 +273,7 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   position: relative;
-  background: #1a1a1a;
-  border-radius: 4px;
+  background: #333333; /* rviz 深灰色背景 */
   overflow: hidden;
 }
 

@@ -19,16 +19,17 @@ export class WorldviewSceneManager {
   private pointCloudData: any = null
   private pathsData: any[] = []
   
-  private options: Required<RenderOptions>
+  private options: Required<Omit<RenderOptions, 'gridColor'>> & { gridColor: [number, number, number, number] }
 
   constructor(reglContext: regl.Regl, options?: RenderOptions) {
     this.reglContext = reglContext
     this.options = {
-      clearColor: options?.clearColor || [0.1, 0.1, 0.1, 1.0],
+      clearColor: options?.clearColor || [0.2, 0.2, 0.2, 1.0],
       enableGrid: options?.enableGrid ?? true,
       enableAxes: options?.enableAxes ?? true,
       gridSize: options?.gridSize || 10,
-      gridDivisions: options?.gridDivisions || 10
+      gridDivisions: options?.gridDivisions || 10,
+      gridColor: options?.gridColor || [0.67, 0.67, 0.67, 1.0] // 浅灰色网格
     }
 
     // 初始化命令（使用 regl-worldview 的优化命令）
@@ -49,18 +50,18 @@ export class WorldviewSceneManager {
     const count = this.options.gridDivisions
     const points: number[] = []
     const colors: number[] = []
-    const DEFAULT_GRID_COLOR = [0.3, 0.3, 0.3, 1]
+    const gridColor = this.options.gridColor
     
     for (let i = -count; i <= count; i++) {
       // 垂直线
       points.push(-count, i, 0)
       points.push(count, i, 0)
-      colors.push(...DEFAULT_GRID_COLOR, ...DEFAULT_GRID_COLOR)
+      colors.push(...gridColor, ...gridColor)
       
       // 水平线
       points.push(i, -count, 0)
       points.push(i, count, 0)
-      colors.push(...DEFAULT_GRID_COLOR, ...DEFAULT_GRID_COLOR)
+      colors.push(...gridColor, ...gridColor)
     }
 
     this.gridData = {

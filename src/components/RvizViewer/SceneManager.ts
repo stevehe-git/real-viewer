@@ -14,13 +14,13 @@ export class SceneManager {
   private axes: Axes | null = null
   private pointCloud: PointCloud
   private paths: Path[] = []
-  private options: Required<RenderOptions>
+  private options: Required<Omit<RenderOptions, 'gridColor'>>
   private reglContext: regl.Regl
 
   constructor(reglContext: regl.Regl, options?: RenderOptions) {
     this.reglContext = reglContext
     this.options = {
-      clearColor: options?.clearColor || [0.1, 0.1, 0.1, 1.0],
+      clearColor: options?.clearColor || [0.2, 0.2, 0.2, 1.0], // rviz 深灰色背景
       enableGrid: options?.enableGrid ?? true,
       enableAxes: options?.enableAxes ?? true,
       gridSize: options?.gridSize || 10,
