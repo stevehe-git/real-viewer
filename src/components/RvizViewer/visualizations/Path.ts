@@ -61,9 +61,9 @@ export class Path {
         color: this.reglContext.buffer(colors)
       },
       uniforms: {
-        projection: this.reglContext.prop<{}, 'projection'>('projection'),
-        view: this.reglContext.prop<{}, 'view'>('view'),
-        model: this.reglContext.prop<{}, 'model'>('model'),
+        projection: this.reglContext.prop<any, 'projection'>('projection'),
+        view: this.reglContext.prop<any, 'view'>('view'),
+        model: this.reglContext.prop<any, 'model'>('model'),
         opacity: defaultColor.a || 1.0
       },
       elements: this.reglContext.elements(indices),
@@ -116,9 +116,9 @@ export class Path {
           color: this.reglContext.buffer(pointColors)
         },
         uniforms: {
-          projection: this.reglContext.prop<{}, 'projection'>('projection'),
-          view: this.reglContext.prop<{}, 'view'>('view'),
-          model: this.reglContext.prop<{}, 'model'>('model'),
+          projection: this.reglContext.prop<any, 'projection'>('projection'),
+          view: this.reglContext.prop<any, 'view'>('view'),
+          model: this.reglContext.prop<any, 'model'>('model'),
           opacity: defaultColor.a || 1.0,
           pointSize: 5.0
         },

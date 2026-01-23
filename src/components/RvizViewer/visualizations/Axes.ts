@@ -39,9 +39,9 @@ export class Axes {
         color: reglContext.buffer(colors)
       },
       uniforms: {
-        projection: reglContext.prop<{}, 'projection'>('projection'),
-        view: reglContext.prop<{}, 'view'>('view'),
-        model: reglContext.prop<{}, 'model'>('model'),
+        projection: reglContext.prop<any, 'projection'>('projection'),
+        view: reglContext.prop<any, 'view'>('view'),
+        model: reglContext.prop<any, 'model'>('model'),
         opacity: 1.0
       },
       elements: reglContext.elements(indices),

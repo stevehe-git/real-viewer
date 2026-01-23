@@ -59,9 +59,9 @@ export class PointCloud {
         pointSize: this.reglContext.buffer(pointSizes)
       },
       uniforms: {
-        projection: this.reglContext.prop<{}, 'projection'>('projection'),
-        view: this.reglContext.prop<{}, 'view'>('view'),
-        model: this.reglContext.prop<{}, 'model'>('model'),
+        projection: this.reglContext.prop<any, 'projection'>('projection'),
+        view: this.reglContext.prop<any, 'view'>('view'),
+        model: this.reglContext.prop<any, 'model'>('model'),
         opacity: 1.0
       },
       count: this.data.points.length,

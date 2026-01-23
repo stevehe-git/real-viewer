@@ -39,7 +39,9 @@ import { Refresh, Grid, Location } from '@element-plus/icons-vue'
 import { Renderer } from './Renderer'
 import { CameraController } from './CameraController'
 import { SceneManager } from './SceneManager'
-import type { CameraState, Viewport, RenderOptions, PointCloudData, PathData } from './types'
+import type { CameraState, Viewport, RenderOptions } from './types'
+import type { PointCloudData } from './visualizations/PointCloud'
+import type { PathData } from './visualizations/Path'
 
 interface Props {
   width?: number
@@ -163,35 +165,58 @@ function setupEventListeners(): void {
   })
 }
 
-// 渲染循环
+// 渲染循环（优化版本）
+let animationFrameId: number | null = null
+let lastCameraState: string = ''
+
 function startRenderLoop(): void {
   if (!renderer.value || !cameraController.value || !sceneManager.value) return
 
   const loop = () => {
-    if (!renderer.value || !cameraController.value || !sceneManager.value) return
+    if (!renderer.value || !cameraController.value || !sceneManager.value) {
+      animationFrameId = null
+      return
+    }
 
     // 更新相机
     const camera = cameraController.value.getCamera()
-    renderer.value.updateCamera(camera)
+    
+    // 检查相机是否变化（避免不必要的更新）
+    const cameraState = JSON.stringify(camera)
+    const cameraChanged = cameraState !== lastCameraState
+    
+    if (cameraChanged) {
+      renderer.value.updateCamera(camera)
+      lastCameraState = cameraState
+    }
 
-    // 获取投影和视图矩阵
+    // 获取投影和视图矩阵（带缓存）
     const projection = renderer.value.getProjectionMatrix()
     const view = renderer.value.getViewMatrix()
 
-    // 渲染场景
+    // 渲染场景（使用优化的渲染方法）
     renderer.value.render(() => {
       sceneManager.value?.render(projection, view)
     })
 
-    requestAnimationFrame(loop)
+    // 继续循环
+    animationFrameId = requestAnimationFrame(loop)
   }
 
-  requestAnimationFrame(loop)
+  animationFrameId = requestAnimationFrame(loop)
+}
+
+function stopRenderLoop(): void {
+  if (animationFrameId !== null) {
+    cancelAnimationFrame(animationFrameId)
+    animationFrameId = null
+  }
 }
 
 // 重置相机
 function resetCamera(): void {
   cameraController.value?.reset()
+  renderer.value?.markDirty() // 标记需要重新渲染
 }
 
 // 切换网格显示
@@ -210,6 +235,7 @@ function toggleAxes(): void {
 watch(() => props.pointCloud, (newData) => {
   if (newData && sceneManager.value) {
     sceneManager.value.updatePointCloud(newData)
+    renderer.value?.markDirty() // 标记需要重新渲染
   }
 }, { deep: true })
 
@@ -219,11 +245,13 @@ watch(() => props.paths, (newPaths) => {
     newPaths.forEach(path => {
       sceneManager.value?.addPath(path)
     })
+    renderer.value?.markDirty() // 标记需要重新渲染
   }
 }, { deep: true })
 
 // 清理
 onUnmounted(() => {
+  stopRenderLoop()
   if (renderer.value) {
     renderer.value.destroy()
   }
