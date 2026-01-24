@@ -46,6 +46,93 @@ export interface Point3D {
   z: number
 }
 
+// regl-worldview 类型定义
+export type Point = Point3D
+export type Orientation = { x: number; y: number; z: number; w: number }
+export type Pose = {
+  position: Point | Vec3
+  orientation: Orientation | Vec4
+}
+export type PointType = {
+  pose: Pose
+  points: Point[] | Vec3[]
+  scale?: { x: number; y: number; z: number }
+  color?: Color
+  colors?: Color[] | Vec4[]
+}
+export type Line = {
+  pose: Pose
+  points: Point[] | Vec3[]
+  scale?: { x: number; y: number; z: number }
+  color?: Color
+  colors?: Color[] | Vec4[]
+  closed?: boolean
+  primitive?: 'lines' | 'line strip'
+  scaleInvariant?: boolean
+  alpha?: number
+  depth?: { enable: boolean; mask: boolean }
+  blend?: typeof import('./commands/utils/commandUtils').defaultReglBlend
+}
+export type Regl = any // regl.Regl 类型
+export type ReglCommand = any // regl.DrawCommand 类型
+export type TriangleList = {
+  pose: Pose
+  points: Point[] | Vec3[]
+  colors?: Color[] | Vec4[]
+  color?: Color | Vec4
+  scale?: { x: number; y: number; z: number } | Vec3
+  depth?: { enable: boolean; mask: boolean; func?: string }
+  blend?: typeof import('./commands/utils/commandUtils').defaultReglBlend
+  onlyRenderInHitmap?: boolean
+}
+export type SphereList = {
+  pose: Pose
+  points: Point[] | Vec3[]
+  colors?: Color[] | Vec4[]
+  color?: Color | Vec4
+  scale?: { x: number; y: number; z: number } | Vec3
+  depth?: { enable: boolean; mask: boolean }
+  blend?: typeof import('./commands/utils/commandUtils').defaultReglBlend
+}
+export type DepthState = { enable: boolean; mask?: boolean; func?: string }
+export type BlendState = typeof import('./commands/utils/commandUtils').defaultReglBlend
+export type Cube = {
+  pose: Pose
+  points: Point[] | Vec3[]
+  colors?: Color[] | Vec4[]
+  color?: Color | Vec4
+  scale?: { x: number; y: number; z: number } | Vec3
+  depth?: { enable: boolean; mask: boolean }
+  blend?: BlendState
+}
+export type Cylinder = {
+  pose: Pose
+  points: Point[] | Vec3[]
+  colors?: Color[] | Vec4[]
+  color?: Color | Vec4
+  scale?: { x: number; y: number; z: number } | Vec3
+  depth?: { enable: boolean; mask: boolean }
+  blend?: BlendState
+}
+export type Cone = {
+  pose: Pose
+  points: Point[] | Vec3[]
+  colors?: Color[] | Vec4[]
+  color?: Color | Vec4
+  scale?: { x: number; y: number; z: number } | Vec3
+  depth?: { enable: boolean; mask: boolean }
+  blend?: BlendState
+}
+export type Arrow = {
+  pose: Pose
+  points?: Point[] | Vec3[]
+  color?: Color | Vec4
+  scale?: { x: number; y: number; z: number } | Vec3
+  depth?: { enable: boolean; mask: boolean }
+  blend?: BlendState
+  originalMarker?: any
+}
+
 export interface Color {
   r: number
   g: number
