@@ -24,7 +24,7 @@ const UNIT_Z_VECTOR: Vec3 = Object.freeze([0, 0, 1]) as Vec3
 const TEMP_QUAT = quat.create()
 
 export const DEFAULT_CAMERA_STATE: CameraState = {
-  distance: 75,
+  distance: 15,
   perspective: true,
   phi: Math.PI / 4,
   target: [0, 0, 0],

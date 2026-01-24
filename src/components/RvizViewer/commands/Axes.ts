@@ -11,13 +11,12 @@ const pointToVec3 = (p: Vec3): Point => ({
   z: p[2]
 })
 
-const scale = 100
-const x = 1 * scale
-const xAxisPoints = [[-x, 0, 0], [x, 0, 0]].map(pointToVec3)
-const yAxisPoints = [[0, -100, 0], [0, 100, 0]].map(pointToVec3)
-const zAxisPoints = [[0, 0, -100], [0, 0, 100]].map(pointToVec3)
+const scale = 10
+const xAxisPoints = [[-scale, 0, 0], [scale, 0, 0]].map(pointToVec3)
+const yAxisPoints = [[0, -scale, 0], [0, scale, 0]].map(pointToVec3)
+const zAxisPoints = [[0, 0, -scale], [0, 0, scale]].map(pointToVec3)
 const pose = {
-  orientation: { x: 0, y: 0, z: 0, w: 0 },
+  orientation: { x: 0, y: 0, z: 0, w: 1 },
   position: { x: 0, y: 0, z: 0 }
 }
 const xAxis: Line = {

@@ -82,6 +82,12 @@ export class SceneManager {
     this.axesData = defaultAxes
   }
 
+  // 保存实例引用以便正确管理
+  private gridInstance: any = { displayName: 'Grid' }
+  private axesInstance: any = { displayName: 'Axes' }
+  private pointsInstance: any = { displayName: 'Points' }
+  private pathInstances: any[] = []
+
   /**
    * 注册所有绘制调用到 WorldviewContext
    * 这个方法应该在初始化时和每次数据更新时调用
@@ -92,10 +98,9 @@ export class SceneManager {
 
     // 注册 Grid
     if (this.gridVisible && this.gridCommand && this.gridData) {
-      const gridInstance = { displayName: 'Grid' }
-      this.worldviewContext.onMount(gridInstance, grid)
+      this.worldviewContext.onMount(this.gridInstance, grid)
       this.worldviewContext.registerDrawCall({
-        instance: gridInstance,
+        instance: this.gridInstance,
         reglCommand: grid,
         children: this.gridData,
         layerIndex: 0
@@ -104,10 +109,9 @@ export class SceneManager {
 
     // 注册 Axes
     if (this.axesVisible && this.linesCommand && this.axesData) {
-      const axesInstance = { displayName: 'Axes' }
-      this.worldviewContext.onMount(axesInstance, lines)
+      this.worldviewContext.onMount(this.axesInstance, lines)
       this.worldviewContext.registerDrawCall({
-        instance: axesInstance,
+        instance: this.axesInstance,
         reglCommand: lines,
         children: this.axesData,
         layerIndex: 1
@@ -116,10 +120,9 @@ export class SceneManager {
 
     // 注册点云
     if (this.pointsCommand && this.pointCloudData) {
-      const pointsInstance = { displayName: 'Points' }
-      this.worldviewContext.onMount(pointsInstance, makePointsCommand({}))
+      this.worldviewContext.onMount(this.pointsInstance, makePointsCommand({}))
       this.worldviewContext.registerDrawCall({
-        instance: pointsInstance,
+        instance: this.pointsInstance,
         reglCommand: makePointsCommand({}),
         children: this.pointCloudData,
         layerIndex: 2
@@ -129,10 +132,12 @@ export class SceneManager {
     // 注册路径
     this.pathsData.forEach((pathData, index) => {
       if (this.linesCommand && pathData) {
-        const pathInstance = { displayName: `Path-${index}` }
-        this.worldviewContext.onMount(pathInstance, lines)
+        if (!this.pathInstances[index]) {
+          this.pathInstances[index] = { displayName: `Path-${index}` }
+        }
+        this.worldviewContext.onMount(this.pathInstances[index], lines)
         this.worldviewContext.registerDrawCall({
-          instance: pathInstance,
+          instance: this.pathInstances[index],
           reglCommand: lines,
           children: pathData,
           layerIndex: 3 + index
@@ -145,8 +150,14 @@ export class SceneManager {
    * 取消注册所有绘制调用
    */
   private unregisterAllDrawCalls(): void {
-    // 这里可以维护一个实例列表来取消注册
-    // 简化版本：让 WorldviewContext 在每次 paint 时重新收集
+    // 清除所有实例的绘制调用
+    this.worldviewContext.onUnmount(this.gridInstance)
+    this.worldviewContext.onUnmount(this.axesInstance)
+    this.worldviewContext.onUnmount(this.pointsInstance)
+    this.pathInstances.forEach((instance) => {
+      this.worldviewContext.onUnmount(instance)
+    })
+    this.pathInstances = []
   }
 
   /**
@@ -223,9 +234,11 @@ export class SceneManager {
    */
   clearPaths(): void {
     this.pathsData = []
-    // 重新注册绘制调用
-    this.registerDrawCalls()
-    this.worldviewContext.onDirty()
+    // 只有在 WorldviewContext 已初始化时才重新注册绘制调用
+    if (this.worldviewContext.initializedData) {
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
+    }
   }
 
   /**
@@ -258,12 +271,16 @@ export class SceneManager {
    * 销毁场景
    */
   destroy(): void {
-    this.clearPaths()
-    this.clearPointCloud()
+    // 先清除所有绘制调用，避免在销毁时触发渲染
+    this.unregisterAllDrawCalls()
+    // 清除数据，但不触发渲染
+    this.pathsData = []
+    this.pointCloudData = null
     this.gridCommand = null
     this.axesCommand = null
     this.pointsCommand = null
     this.linesCommand = null
     this.axesData = null
+    this.gridData = null
   }
 }

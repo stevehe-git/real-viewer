@@ -2,14 +2,14 @@
  * Camera 命令
  * 完全基于 regl-worldview 的 camera.js 实现
  */
-import { mat4 } from 'gl-matrix'
-import type { Vec3, Mat4, CameraCommand, Viewport } from '../types'
+import { mat4, vec4 } from 'gl-matrix'
+import type { Vec3, Vec4, Mat4, CameraCommand, Viewport } from '../types'
 import { getOrthographicBounds } from './utils'
 import cameraProject from './cameraProject'
 import { DEFAULT_CAMERA_STATE, type CameraState } from './CameraStore'
 import selectors from './cameraStateSelectors'
 
-const TEMP_MAT = mat4.create()
+const TEMP_MAT = mat4.create() as Mat4
 
 // This is the regl command which encapsulates the camera projection and view matrices.
 // It adds the matrices to the regl context so they can be used by other commands.
@@ -50,8 +50,10 @@ export default (regl: any) => {
     toScreenCoord(viewport: Viewport, point: Vec3): [number, number, number] | undefined {
       const projection = this.getProjection()
       const view = selectors.view(this.cameraState)
-      const combinedProjView = mat4.multiply(mat4.create(), projection, view)
-      const [x, y, z, w] = cameraProject([], point, viewport, combinedProjView)
+      const tempMat = mat4.create()
+      const combinedProjView = mat4.multiply(tempMat, projection, view) as Mat4
+      const result = cameraProject(vec4.create() as Vec4, point, viewport, combinedProjView)
+      const [x, y, z, w] = result
       if (z < 0 || z > 1 || w < 0) {
         // resulting point is outside the window depth range
         return undefined
@@ -68,7 +70,7 @@ export default (regl: any) => {
       context: {
         // use functions, not lambdas here to make sure we can access
         // the regl supplied this scope: http://regl.party/api#this
-        projection(context: any, props: any) {
+        projection(this: Camera, context: any, props: any): Mat4 {
           const { viewportWidth, viewportHeight } = context
           // save these variables on the camera instance
           // because we need them for raycasting
@@ -78,20 +80,20 @@ export default (regl: any) => {
           return this.getProjection()
         },
 
-        view(context: any, props: any) {
+        view(this: Camera, _context: any, _props: any): Mat4 {
           return this.getView()
         },
 
         // inverse of the view rotation, used for making objects always face the camera
-        billboardRotation(context: any, props: any) {
+        billboardRotation(this: Camera, _context: any, _props: any): Mat4 {
           return selectors.billboardRotation(this.cameraState)
         },
 
-        isPerspective(context: any, props: any) {
+        isPerspective(this: Camera, _context: any, _props: any): boolean {
           return this.cameraState.perspective
         },
 
-        fovy(context: any, props: any) {
+        fovy(this: Camera, _context: any, _props: any): number {
           return this.cameraState.fovy
         }
       },

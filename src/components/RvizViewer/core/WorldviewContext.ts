@@ -138,8 +138,25 @@ export class WorldviewContext {
   }
 
   destroy(): void {
+    // 取消所有待处理的渲染帧
+    if (this._frame !== null) {
+      cancelAnimationFrame(this._frame)
+      this._frame = null
+    }
+    // 清除所有绘制调用，避免在销毁时触发渲染
+    this._drawCalls.clear()
+    this._compiled.clear()
+    this._commands.clear()
+    this._paintCalls.clear()
+    // 销毁 regl 上下文
     if (this.initializedData) {
-      this.initializedData.regl.destroy()
+      try {
+        this.initializedData.regl.destroy()
+      } catch (e) {
+        // 忽略销毁时的错误
+        console.warn('Error destroying regl context:', e)
+      }
+      this.initializedData = null
     }
     if (this._frame !== null) {
       cancelAnimationFrame(this._frame)
@@ -378,6 +395,11 @@ export class WorldviewContext {
   )
 
   _drawInput = (isHitmap?: boolean, excludedObjects?: MouseEventObject[]): void => {
+    // 如果 regl 上下文已被销毁，直接返回
+    if (!this.initializedData || !this.initializedData.regl) {
+      return
+    }
+    
     if (isHitmap) {
       this._hitmapObjectIdManager = new HitmapObjectIdManager()
     }

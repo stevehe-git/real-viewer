@@ -200,11 +200,12 @@ export const lines = (regl: Regl) => {
     data: flatten(new Array(VERTICES_PER_INSTANCE).fill([0, 0, 0, 1]))
   })
 
-  const colorBuffer = regl.buffer({ type: 'float' })
-  const positionBuffer1 = regl.buffer({ type: 'float' })
-  const positionBuffer2 = regl.buffer({ type: 'float' })
-  const posePositionBuffer = regl.buffer({ type: 'float' })
-  const poseRotationBuffer = regl.buffer({ type: 'float' })
+  // 初始化动态缓冲区，使用空数据确保缓冲区被创建
+  const colorBuffer = regl.buffer({ type: 'float', data: [] })
+  const positionBuffer1 = regl.buffer({ type: 'float', data: [] })
+  const positionBuffer2 = regl.buffer({ type: 'float', data: [] })
+  const posePositionBuffer = regl.buffer({ type: 'float', data: [] })
+  const poseRotationBuffer = regl.buffer({ type: 'float', data: [] })
 
   const command = regl(
     withPose({
@@ -285,7 +286,26 @@ export const lines = (regl: Regl) => {
       allocatedPoints = numTotalPoints
     }
     points.forEach((point, i) => {
-      const [x, y, z] = shouldConvert(point) ? pointToVec3(point) : point
+      // 检查点是否是对象格式 {x, y, z} 或数组格式 [x, y, z]
+      let x: number, y: number, z: number
+      if (shouldConvert(point)) {
+        // Point 对象格式 {x, y, z}
+        const converted = pointToVec3(point as any)
+        x = converted[0]
+        y = converted[1]
+        z = converted[2]
+      } else if (Array.isArray(point) && point.length >= 3) {
+        // 数组格式 [x, y, z]
+        x = point[0]
+        y = point[1]
+        z = point[2]
+      } else {
+        // 已经是 Vec3 格式或未知格式，尝试直接访问
+        const vec = point as any
+        x = vec[0] ?? vec.x ?? 0
+        y = vec[1] ?? vec.y ?? 0
+        z = vec[2] ?? vec.z ?? 0
+      }
       const off = 3 + i * 3
       pointArray[off + 0] = x
       pointArray[off + 1] = y
@@ -407,37 +427,64 @@ export const lines = (regl: Regl) => {
 
   function renderLine(props: any) {
     const { debug, primitive = 'lines', scaleInvariant = false, depth, blend } = props
-    const numInputPoints = props.points.length
-
-    if (numInputPoints < 2) {
+    
+    // 检查 points 是否存在且有效
+    if (!props.points || !Array.isArray(props.points) || props.points.length < 2) {
+      console.warn('Lines: Invalid points data', props)
       return
     }
+    
+    const numInputPoints = props.points.length
 
     const alreadyClosed = numInputPoints > 2 && pointsEqual(props.points[0], props.points[numInputPoints - 1])
     const shouldClose = !alreadyClosed && props.closed
 
     const pointData = fillPointArray(props.points, alreadyClosed, shouldClose)
-    positionBuffer1({ data: pointData, usage: 'dynamic' })
-    positionBuffer2({ data: pointData, usage: 'dynamic' })
+    // 确保缓冲区有数据，即使数据为空也要初始化
+    if (pointData.length > 0) {
+      positionBuffer1({ data: pointData, usage: 'dynamic' })
+      positionBuffer2({ data: pointData, usage: 'dynamic' })
+    } else {
+      console.warn('Lines: Empty point data')
+      return
+    }
 
     const monochrome = !(props.colors && props.colors.length)
     const colorData = fillColorArray(props.color, props.colors, monochrome, shouldClose)
-    colorBuffer({ data: colorData, usage: 'dynamic' })
+    // 确保颜色缓冲区有数据
+    if (colorData.length > 0) {
+      colorBuffer({ data: colorData, usage: 'dynamic' })
+    } else {
+      console.warn('Lines: Empty color data')
+      return
+    }
 
     const joined = primitive === 'line strip'
     const effectiveNumPoints = numInputPoints + (shouldClose ? 1 : 0)
     const instances = joined ? effectiveNumPoints - 1 : Math.floor(effectiveNumPoints / 2)
 
-    const { poses } = props
+    // 处理单个 pose（非实例化）或 poses 数组（实例化）
+    const { poses, pose } = props
     const hasInstancedPoses = !!poses && poses.length > 0
-    if (hasInstancedPoses && poses) {
-      if (instances !== poses.length) {
-        console.error(`Expected ${instances} poses but given ${poses.length} poses: will result in webgl error.`)
+    
+    // 如果有单个 pose，需要将其转换为实例化的 poses 数组
+    let finalPoses: Pose[] | undefined = poses
+    if (!hasInstancedPoses && pose) {
+      // 为每个实例使用相同的 pose
+      finalPoses = new Array(instances).fill(pose)
+    }
+    
+    if (finalPoses && finalPoses.length > 0) {
+      if (instances !== finalPoses.length) {
+        console.error(`Expected ${instances} poses but given ${finalPoses.length} poses: will result in webgl error.`)
         return
       }
-      const { positionData, rotationData } = fillPoseArrays(instances, poses)
-      posePositionBuffer({ data: positionData, usage: 'dynamic' })
-      poseRotationBuffer({ data: rotationData, usage: 'dynamic' })
+      const { positionData, rotationData } = fillPoseArrays(instances, finalPoses)
+      // 确保 pose 缓冲区有数据
+      if (positionData.length > 0 && rotationData.length > 0) {
+        posePositionBuffer({ data: positionData, usage: 'dynamic' })
+        poseRotationBuffer({ data: rotationData, usage: 'dynamic' })
+      }
     }
 
     render({ debug, depth, blend }, () => {
@@ -449,7 +496,7 @@ export const lines = (regl: Regl) => {
           monochrome,
           instances,
           scaleInvariant,
-          hasInstancedPoses
+          hasInstancedPoses: !!finalPoses && finalPoses.length > 0
         })
       )
       if (debug) {
@@ -461,7 +508,7 @@ export const lines = (regl: Regl) => {
             monochrome,
             instances,
             scaleInvariant,
-            hasInstancedPoses
+            hasInstancedPoses: !!finalPoses && finalPoses.length > 0
           })
         )
       }
@@ -470,7 +517,24 @@ export const lines = (regl: Regl) => {
 
   return (inProps: any) => {
     if (Array.isArray(inProps)) {
-      inProps.forEach(renderLine)
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('Lines: Rendering array of', inProps.length, 'lines')
+      }
+      inProps.forEach((line: any, index: number) => {
+        if (!line || !line.points) {
+          console.warn(`Lines: Invalid line data at index ${index}`, line)
+          return
+        }
+        if (process.env.NODE_ENV !== 'production') {
+          console.log(`Lines: Rendering line ${index}:`, {
+            points: line.points?.length,
+            pose: line.pose,
+            color: line.color,
+            scale: line.scale
+          })
+        }
+        renderLine(line)
+      })
     } else {
       renderLine(inProps)
     }
