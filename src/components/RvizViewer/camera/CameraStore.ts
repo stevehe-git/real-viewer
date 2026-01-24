@@ -5,23 +5,23 @@ import { vec3, quat } from 'gl-matrix'
 import type { CameraState } from '../types'
 
 export interface WorldviewCameraState {
-  distance: number
-  perspective: boolean
+  distance: number // 相机距离
+  perspective: boolean // 是否透视投影
   phi: number // 垂直角度（0 到 PI）
-  target: [number, number, number]
-  targetOffset: [number, number, number]
-  targetOrientation: [number, number, number, number] // 四元数
+  target: [number, number, number] // 目标点
+  targetOffset: [number, number, number] // 目标偏移
+  targetOrientation: [number, number, number, number] // 目标方向
   thetaOffset: number // 水平角度偏移
-  fovy: number
-  near: number
-  far: number
+  fovy: number // 垂直视角
+  near: number // 近截面
+  far: number // 远截面
 }
 
 const UNIT_Z_VECTOR: [number, number, number] = [0, 0, 1]
 const TEMP_QUAT = quat.create()
 
 export const DEFAULT_CAMERA_STATE: WorldviewCameraState = {
-  distance: 10,
+  distance: 10, // 相机距离
   perspective: true,
   phi: Math.PI / 4, // 45度
   target: [0, 0, 0],
