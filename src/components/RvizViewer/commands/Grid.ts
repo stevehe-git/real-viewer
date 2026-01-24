@@ -39,22 +39,45 @@ export function grid(regl: Regl) {
       point: (context: any, props: any) => {
         const points: number[][] = []
         const bound = props.count
+        
+        // 绘制内部网格线
         for (let i = -props.count; i < props.count; i++) {
+          // 垂直线
           points.push([-bound, i, 0])
           points.push([bound, i, 0])
+          // 水平线
           points.push([i, -bound, 0])
           points.push([i, bound, 0])
         }
+        
+        // 绘制边界框（封边）
+        // 左边界
+        points.push([-bound, -bound, 0])
+        points.push([-bound, bound, 0])
+        // 右边界
+        points.push([bound, -bound, 0])
+        points.push([bound, bound, 0])
+        // 下边界
+        points.push([-bound, -bound, 0])
+        points.push([bound, -bound, 0])
+        // 上边界
+        points.push([-bound, bound, 0])
+        points.push([bound, bound, 0])
+        
         return points
       },
       color: (context: any, props: any) => {
         const color = props.color || DEFAULT_GRID_COLOR
-        return new Array(props.count * 4 * 2).fill(color)
+        // 内部网格线：props.count * 4 * 2 个点
+        // 边界框：8 个点（4条边，每条边2个点）
+        const totalPoints = props.count * 4 * 2 + 8
+        return new Array(totalPoints).fill(color)
       }
     },
     count: (context: any, props: any) => {
-      // 8 points per count
-      const count = props.count * 4 * 2
+      // 内部网格线：props.count * 4 * 2 个点
+      // 边界框：8 个点
+      const count = props.count * 4 * 2 + 8
       return count
     }
   })
