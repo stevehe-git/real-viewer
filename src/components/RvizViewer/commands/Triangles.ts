@@ -136,7 +136,7 @@ const vertexColors = (regl: Regl) =>
   })
 
 // command to render triangle lists optionally supporting vertex colors for each triangle
-const triangles = (regl: Regl) => {
+export const triangles = (regl: Regl) => {
   const single = withRenderStateOverrides(singleColor)(regl)
   const vertex = withRenderStateOverrides(vertexColors)(regl)
   return (props: any, isHitmap: boolean = false) => {

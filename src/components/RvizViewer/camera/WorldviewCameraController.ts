@@ -18,10 +18,19 @@ export class WorldviewCameraController {
   private rect: DOMRect | null = null
   private canvas: HTMLCanvasElement | null = null
 
-  constructor(initialCamera?: Partial<CameraState>) {
-    this.cameraStore = new CameraStore(() => {
-      // 相机状态变化时的回调
-    }, initialCamera)
+  constructor(cameraStore?: CameraStore, initialCamera?: Partial<CameraState>) {
+    // 如果提供了 CameraStore，使用它；否则创建新的
+    if (cameraStore) {
+      this.cameraStore = cameraStore
+      // 如果提供了初始相机状态，更新它
+      if (initialCamera) {
+        this.cameraStore.setCameraState(initialCamera)
+      }
+    } else {
+      this.cameraStore = new CameraStore(() => {
+        // 相机状态变化时的回调（如果使用独立的 CameraStore）
+      }, initialCamera)
+    }
   }
 
   /**

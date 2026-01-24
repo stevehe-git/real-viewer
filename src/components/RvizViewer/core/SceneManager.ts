@@ -1,0 +1,269 @@
+/**
+ * 场景管理器
+ * 基于 regl-worldview 的架构，使用命令系统管理场景对象
+ */
+import type { Regl, PointCloudData, PathData, RenderOptions } from '../types'
+import { grid, defaultAxes, lines, makePointsCommand } from '../commands'
+import type { CameraState } from '../camera'
+
+export class SceneManager {
+  private reglContext: Regl
+  private worldviewContext: any // WorldviewContext
+  private gridCommand: any = null
+  private axesCommand: any = null
+  private pointsCommand: any = null
+  private linesCommand: any = null
+
+  private gridData: any = null
+  private axesData: any = null
+  private pointCloudData: any = null
+  private pathsData: any[] = []
+
+  private options: Required<Omit<RenderOptions, 'gridColor'>> & { gridColor: [number, number, number, number] }
+  private gridVisible = true
+  private axesVisible = true
+
+  constructor(reglContext: Regl, worldviewContext: any, options?: RenderOptions) {
+    this.reglContext = reglContext
+    this.worldviewContext = worldviewContext
+    this.options = {
+      clearColor: options?.clearColor || [0.2, 0.2, 0.2, 1.0],
+      enableGrid: options?.enableGrid ?? true,
+      enableAxes: options?.enableAxes ?? true,
+      gridSize: options?.gridSize || 10,
+      gridDivisions: options?.gridDivisions ?? 5,
+      gridColor: options?.gridColor || [0.67, 0.67, 0.67, 1.0]
+    }
+
+    // 初始化命令
+    this.initializeCommands()
+    
+    // 注册绘制调用
+    this.registerDrawCalls()
+  }
+
+  private initializeCommands(): void {
+    // 初始化 Grid 命令
+    if (this.options.enableGrid) {
+      this.gridCommand = grid(this.reglContext)
+      this.updateGridData()
+    }
+
+    // 初始化 Axes 命令（使用 Lines）
+    if (this.options.enableAxes) {
+      this.linesCommand = lines(this.reglContext)
+      this.updateAxesData()
+    }
+
+    // 初始化 Points 命令
+    this.pointsCommand = makePointsCommand({})(this.reglContext)
+
+    // 初始化 Lines 命令
+    if (!this.linesCommand) {
+      this.linesCommand = lines(this.reglContext)
+    }
+  }
+
+  private updateGridData(): void {
+    const count = this.options.gridDivisions
+    const gridColor = this.options.gridColor
+
+    // Grid 命令需要 count 属性
+    this.gridData = {
+      count,
+      color: gridColor
+    }
+  }
+
+  private updateAxesData(): void {
+    if (this.axesData) return
+
+    // 使用 defaultAxes 数据
+    this.axesData = defaultAxes
+  }
+
+  /**
+   * 注册所有绘制调用到 WorldviewContext
+   * 这个方法应该在初始化时和每次数据更新时调用
+   */
+  registerDrawCalls(): void {
+    // 清除旧的绘制调用
+    this.unregisterAllDrawCalls()
+
+    // 注册 Grid
+    if (this.gridVisible && this.gridCommand && this.gridData) {
+      const gridInstance = { displayName: 'Grid' }
+      this.worldviewContext.onMount(gridInstance, grid)
+      this.worldviewContext.registerDrawCall({
+        instance: gridInstance,
+        reglCommand: grid,
+        children: this.gridData,
+        layerIndex: 0
+      })
+    }
+
+    // 注册 Axes
+    if (this.axesVisible && this.linesCommand && this.axesData) {
+      const axesInstance = { displayName: 'Axes' }
+      this.worldviewContext.onMount(axesInstance, lines)
+      this.worldviewContext.registerDrawCall({
+        instance: axesInstance,
+        reglCommand: lines,
+        children: this.axesData,
+        layerIndex: 1
+      })
+    }
+
+    // 注册点云
+    if (this.pointsCommand && this.pointCloudData) {
+      const pointsInstance = { displayName: 'Points' }
+      this.worldviewContext.onMount(pointsInstance, makePointsCommand({}))
+      this.worldviewContext.registerDrawCall({
+        instance: pointsInstance,
+        reglCommand: makePointsCommand({}),
+        children: this.pointCloudData,
+        layerIndex: 2
+      })
+    }
+
+    // 注册路径
+    this.pathsData.forEach((pathData, index) => {
+      if (this.linesCommand && pathData) {
+        const pathInstance = { displayName: `Path-${index}` }
+        this.worldviewContext.onMount(pathInstance, lines)
+        this.worldviewContext.registerDrawCall({
+          instance: pathInstance,
+          reglCommand: lines,
+          children: pathData,
+          layerIndex: 3 + index
+        })
+      }
+    })
+  }
+
+  /**
+   * 取消注册所有绘制调用
+   */
+  private unregisterAllDrawCalls(): void {
+    // 这里可以维护一个实例列表来取消注册
+    // 简化版本：让 WorldviewContext 在每次 paint 时重新收集
+  }
+
+  /**
+   * 更新点云数据
+   */
+  updatePointCloud(data: PointCloudData): void {
+    if (!data || !data.points || data.points.length === 0) {
+      this.pointCloudData = null
+      return
+    }
+
+    const points: any[] = []
+    const colors: any[] = []
+    const defaultColor = { r: 1, g: 1, b: 1, a: 1 }
+    const pointSize = data.pointSize || 3.0
+
+    data.points.forEach((point, index) => {
+      points.push({ x: point.x, y: point.y, z: point.z })
+      const color = data.colors?.[index] || defaultColor
+      colors.push(color)
+    })
+
+    this.pointCloudData = {
+      pose: {
+        position: { x: 0, y: 0, z: 0 },
+        orientation: { x: 0, y: 0, z: 0, w: 1 }
+      },
+      points,
+      colors: colors.length > 0 ? colors : undefined,
+      color: colors.length === 0 ? defaultColor : undefined,
+      scale: { x: pointSize, y: pointSize, z: pointSize }
+    }
+
+    // 重新注册绘制调用
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
+  }
+
+  /**
+   * 添加路径
+   */
+  addPath(data: PathData): number {
+    if (!data || !data.waypoints || data.waypoints.length < 2) {
+      return -1
+    }
+
+    const points: any[] = []
+    const defaultColor = data.color || { r: 0, g: 1, b: 0, a: 1 }
+
+    data.waypoints.forEach((point) => {
+      points.push({ x: point.x, y: point.y, z: point.z })
+    })
+
+    const pathData = {
+      pose: {
+        position: { x: 0, y: 0, z: 0 },
+        orientation: { x: 0, y: 0, z: 0, w: 1 }
+      },
+      points,
+      color: defaultColor,
+      scale: { x: data.lineWidth || 1, y: data.lineWidth || 1, z: data.lineWidth || 1 },
+      primitive: 'line strip' as const
+    }
+
+    this.pathsData.push(pathData)
+    // 重新注册绘制调用
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
+    return this.pathsData.length - 1
+  }
+
+  /**
+   * 清除所有路径
+   */
+  clearPaths(): void {
+    this.pathsData = []
+    // 重新注册绘制调用
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
+  }
+
+  /**
+   * 清除点云
+   */
+  clearPointCloud(): void {
+    this.pointCloudData = null
+    this.worldviewContext.onDirty()
+  }
+
+  /**
+   * 设置网格可见性
+   */
+  setGridVisible(visible: boolean): void {
+    this.gridVisible = visible
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
+  }
+
+  /**
+   * 设置坐标轴可见性
+   */
+  setAxesVisible(visible: boolean): void {
+    this.axesVisible = visible
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
+  }
+
+  /**
+   * 销毁场景
+   */
+  destroy(): void {
+    this.clearPaths()
+    this.clearPointCloud()
+    this.gridCommand = null
+    this.axesCommand = null
+    this.pointsCommand = null
+    this.linesCommand = null
+    this.axesData = null
+  }
+}

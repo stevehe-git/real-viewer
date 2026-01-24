@@ -34,17 +34,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { Refresh, Grid, Location } from '@element-plus/icons-vue'
-import { Renderer } from './core/Renderer'
+import { Worldview } from './core/Worldview'
+import { SceneManager } from './core/SceneManager'
 import { WorldviewCameraController } from './camera/WorldviewCameraController'
-import { WorldviewSceneManager } from './core/WorldviewSceneManager'
-import type { CameraState, Viewport, RenderOptions, PointCloudData, PathData } from './types'
+import type { PointCloudData, PathData, RenderOptions, Dimensions } from './types'
+import { DEFAULT_CAMERA_STATE } from './camera'
 
 interface Props {
   width?: number
   height?: number
-  camera?: Partial<CameraState>
   options?: RenderOptions
   pointCloud?: PointCloudData
   paths?: PathData[]
@@ -53,86 +53,82 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   width: 800,
   height: 600,
-  camera: () => ({}),
   options: () => ({}),
   pointCloud: undefined,
   paths: () => []
 })
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
-const renderer = ref<Renderer | null>(null)
+const worldview = ref<Worldview | null>(null)
+const sceneManager = ref<SceneManager | null>(null)
 const cameraController = ref<WorldviewCameraController | null>(null)
-const sceneManager = ref<WorldviewSceneManager | null>(null)
 const gridVisible = ref(true)
 const axesVisible = ref(true)
 
-// 默认相机配置（rviz 风格：等轴测视角）
-const defaultCamera: CameraState = {
-  position: [8, 8, 6], // 稍微高一点的视角
-  target: [0, 0, 0],
-  up: [0, 0, 1],
-  fov: Math.PI / 4,
-  near: 0.1,
-  far: 1000
-}
-
 // 初始化
-onMounted(() => {
+onMounted(async () => {
+  await nextTick()
   if (!canvasRef.value) return
 
   const canvas = canvasRef.value
-  const viewport: Viewport = {
+  const dimension: Dimensions = {
     width: props.width || canvas.clientWidth || 800,
-    height: props.height || canvas.clientHeight || 600
+    height: props.height || canvas.clientHeight || 600,
+    left: 0,
+    top: 0
   }
 
   // 设置画布尺寸
-  canvas.width = viewport.width
-  canvas.height = viewport.height
+  canvas.width = dimension.width
+  canvas.height = dimension.height
 
-  // 合并相机配置
-  const camera: CameraState = {
-    ...defaultCamera,
-    ...props.camera
+  // 初始化 Worldview（完全基于 regl-worldview）
+  worldview.value = new Worldview({
+    dimension,
+    canvasBackgroundColor: props.options?.clearColor || [0.2, 0.2, 0.2, 1.0],
+    defaultCameraState: DEFAULT_CAMERA_STATE,
+    contextAttributes: {
+      antialias: true,
+      depth: true,
+      stencil: false,
+      alpha: true
+    }
+  })
+
+  // 初始化 regl 上下文
+  worldview.value.initialize(canvas)
+
+  // 初始化场景管理器
+  const reglContext = worldview.value.getContext().initializedData?.regl
+  if (reglContext) {
+    sceneManager.value = new SceneManager(reglContext, worldview.value.getContext(), props.options)
   }
 
-  // 初始化渲染器
-  renderer.value = new Renderer(canvas, viewport, camera, props.options)
-
-  // 初始化相机控制器（基于 regl-worldview）
-  cameraController.value = new WorldviewCameraController({
-    distance: 10,
-    phi: Math.PI / 4,
-    target: camera.target,
-    fovy: camera.fov
-  })
+  // 初始化相机控制器（使用 WorldviewContext 的 CameraStore）
+  // 注意：WorldviewContext 的 CameraStore 回调会自动触发渲染
+  const worldviewCameraStore = worldview.value.getContext().cameraStore
+  cameraController.value = new WorldviewCameraController(worldviewCameraStore)
   cameraController.value.setCanvas(canvas)
 
-  // 初始化场景管理器（使用 regl-worldview 优化版本）
-  sceneManager.value = new WorldviewSceneManager(renderer.value.getContext(), props.options)
-
   // 设置初始数据
-  if (props.pointCloud) {
+  if (props.pointCloud && sceneManager.value) {
     sceneManager.value.updatePointCloud(props.pointCloud)
   }
 
-  props.paths.forEach(path => {
+  props.paths.forEach((path) => {
     sceneManager.value?.addPath(path)
   })
 
   // 设置事件监听
   setupEventListeners()
 
-  // 初始渲染一次
-  renderer.value.markDirty()
-  
-  // 开始渲染循环
-  startRenderLoop()
+  // 初始渲染
+  worldview.value.paint()
 })
 
 // 设置事件监听（基于 regl-worldview 的实现）
 function setupEventListeners(): void {
-  if (!canvasRef.value || !cameraController.value) return
+  if (!canvasRef.value || !cameraController.value || !worldview.value) return
 
   const canvas = canvasRef.value
 
@@ -141,7 +137,7 @@ function setupEventListeners(): void {
     e.preventDefault()
     cameraController.value?.onMouseDown(e)
     canvas.focus()
-    
+
     // 根据按钮设置光标
     if (e.button === 0) {
       canvas.style.cursor = 'grabbing' // 左键：旋转
@@ -154,8 +150,8 @@ function setupEventListeners(): void {
   const handleMouseMove = (e: MouseEvent) => {
     if (cameraController.value?.isDragging()) {
       cameraController.value.onMouseMove(e)
-      renderer.value?.markDirty()
-      startRenderLoop() // 确保渲染循环在运行
+      // 相机状态已通过共享的 CameraStore 自动更新
+      // WorldviewContext 的回调会自动触发渲染
     }
   }
   window.addEventListener('mousemove', handleMouseMove)
@@ -165,27 +161,29 @@ function setupEventListeners(): void {
     if (cameraController.value) {
       cameraController.value.onMouseUp(e)
       canvas.style.cursor = 'default'
-      renderer.value?.markDirty()
+      // 相机状态变化会通过 WorldviewContext 的回调自动触发渲染
     }
   }
   window.addEventListener('mouseup', handleMouseUp)
   canvas.addEventListener('mouseleave', () => {
     if (cameraController.value) {
-      // 清除所有按钮状态
       cameraController.value.clearButtons()
       canvas.style.cursor = 'default'
     }
   })
 
   // 滚轮缩放
-  canvas.addEventListener('wheel', (e) => {
-    e.preventDefault()
-    if (cameraController.value) {
-      cameraController.value.onWheel(e)
-      renderer.value?.markDirty()
-      startRenderLoop() // 确保渲染循环在运行
-    }
-  }, { passive: false })
+  canvas.addEventListener(
+    'wheel',
+    (e) => {
+      e.preventDefault()
+      if (cameraController.value) {
+        cameraController.value.onWheel(e)
+        // 相机状态变化会通过 WorldviewContext 的回调自动触发渲染
+      }
+    },
+    { passive: false }
+  )
 
   // 防止右键菜单
   canvas.addEventListener('contextmenu', (e) => {
@@ -198,139 +196,77 @@ function setupEventListeners(): void {
       cameraController.value.clearButtons()
     }
   })
-}
 
-// 渲染循环（优化版本：只在有变化时渲染）
-let animationFrameId: number | null = null
-let lastCameraState: CameraState | null = null
-let isRendering = false
-let lastRenderTime = 0
-const TARGET_FPS = 30
-const FRAME_INTERVAL = 1000 / TARGET_FPS // 约 33.33ms
-
-function startRenderLoop(): void {
-  if (!renderer.value || !cameraController.value || !sceneManager.value) return
-  if (isRendering) return // 已经在渲染中
-
-  isRendering = true
-
-  const loop = (currentTime: number) => {
-    if (!renderer.value || !cameraController.value || !sceneManager.value) {
-      animationFrameId = null
-      isRendering = false
-      return
-    }
-
-    // 检查是否有交互（拖拽中）
-    const isDragging = cameraController.value.isDragging()
-    
-    // 获取当前相机状态
-    const camera = cameraController.value.getCamera()
-    
-    // 检查相机是否有变化
-    const cameraChanged = !lastCameraState || 
-      lastCameraState.position[0] !== camera.position[0] ||
-      lastCameraState.position[1] !== camera.position[1] ||
-      lastCameraState.position[2] !== camera.position[2] ||
-      lastCameraState.target[0] !== camera.target[0] ||
-      lastCameraState.target[1] !== camera.target[1] ||
-      lastCameraState.target[2] !== camera.target[2] ||
-      lastCameraState.fov !== camera.fov
-
-    // 检查是否到了渲染时间（30 FPS）
-    const timeSinceLastRender = currentTime - lastRenderTime
-    const shouldRenderByTime = timeSinceLastRender >= FRAME_INTERVAL
-
-    // 只在有变化或正在交互或到了渲染时间时才渲染
-    if ((cameraChanged || isDragging || renderer.value.shouldRender()) && shouldRenderByTime) {
-      // 更新相机
-      renderer.value.updateCamera(camera)
-      lastCameraState = { ...camera }
-      lastRenderTime = currentTime
-
-      // 获取投影和视图矩阵（带缓存）
-      const projection = renderer.value.getProjectionMatrix()
-      const view = renderer.value.getViewMatrix()
-      const viewport = renderer.value.getViewport()
-
-      // 渲染场景（使用 regl-worldview 优化版本）
-      renderer.value.render(() => {
-        sceneManager.value?.render(projection, view, viewport)
-      })
-    }
-
-    // 如果没有交互且没有变化，停止渲染循环
-    if (!isDragging && !cameraChanged && !renderer.value.shouldRender()) {
-      animationFrameId = null
-      isRendering = false
-      return
-    }
-
-    // 继续循环
-    animationFrameId = requestAnimationFrame(loop)
+  // 窗口大小变化
+  const handleResize = () => {
+    if (!canvasRef.value || !worldview.value) return
+    const rect = canvasRef.value.getBoundingClientRect()
+    worldview.value.setDimension({
+      width: rect.width,
+      height: rect.height,
+      left: rect.left,
+      top: rect.top
+    })
   }
-
-  lastRenderTime = performance.now()
-  animationFrameId = requestAnimationFrame(loop)
-}
-
-function stopRenderLoop(): void {
-  if (animationFrameId !== null) {
-    cancelAnimationFrame(animationFrameId)
-    animationFrameId = null
-  }
-  isRendering = false
+  window.addEventListener('resize', handleResize)
 }
 
 // 重置相机
 function resetCamera(): void {
-  cameraController.value?.reset()
-  lastCameraState = null // 重置相机状态缓存，强制重新渲染
-  renderer.value?.markDirty() // 标记需要重新渲染
-  startRenderLoop() // 重新启动渲染循环
+  if (!worldview.value) return
+  worldview.value.setCameraState(DEFAULT_CAMERA_STATE)
+  worldview.value.markDirty()
+  worldview.value.paint()
 }
 
 // 切换网格显示
 function toggleGrid(): void {
   gridVisible.value = !gridVisible.value
   sceneManager.value?.setGridVisible(gridVisible.value)
-  renderer.value?.markDirty() // 标记需要重新渲染
-  startRenderLoop() // 重新启动渲染循环
+  worldview.value?.markDirty()
+  worldview.value?.paint()
 }
 
 // 切换坐标轴显示
 function toggleAxes(): void {
   axesVisible.value = !axesVisible.value
   sceneManager.value?.setAxesVisible(axesVisible.value)
-  renderer.value?.markDirty() // 标记需要重新渲染
-  startRenderLoop() // 重新启动渲染循环
+  worldview.value?.markDirty()
+  worldview.value?.paint()
 }
 
 // 监听属性变化
-watch(() => props.pointCloud, (newData) => {
-  if (newData && sceneManager.value) {
-    sceneManager.value.updatePointCloud(newData)
-    renderer.value?.markDirty() // 标记需要重新渲染
-    startRenderLoop() // 重新启动渲染循环
-  }
-}, { deep: true })
+watch(
+  () => props.pointCloud,
+  (newData) => {
+    if (newData && sceneManager.value) {
+      sceneManager.value.updatePointCloud(newData)
+      worldview.value?.markDirty()
+      worldview.value?.paint()
+    }
+  },
+  { deep: true }
+)
 
-watch(() => props.paths, (newPaths) => {
-  if (sceneManager.value) {
-    sceneManager.value.clearPaths()
-    newPaths.forEach(path => {
-      sceneManager.value?.addPath(path)
-    })
-    renderer.value?.markDirty() // 标记需要重新渲染
-    startRenderLoop() // 重新启动渲染循环
-  }
-}, { deep: true })
+watch(
+  () => props.paths,
+  (newPaths) => {
+    if (sceneManager.value) {
+      sceneManager.value.clearPaths()
+      newPaths.forEach((path) => {
+        sceneManager.value?.addPath(path)
+      })
+      worldview.value?.markDirty()
+      worldview.value?.paint()
+    }
+  },
+  { deep: true }
+)
 
 // 清理
 onUnmounted(() => {
-  stopRenderLoop()
-  if (renderer.value) {
-    renderer.value.destroy()
+  if (worldview.value) {
+    worldview.value.destroy()
   }
   if (sceneManager.value) {
     sceneManager.value.destroy()

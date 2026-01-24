@@ -13,8 +13,54 @@ export type Mat4 = [
   number, number, number, number
 ]
 
-// 视图端口类型
+// 视图端口类型（用于 cameraProject）
 export type Viewport = Vec4 // [x, y, width, height]
+
+// regl-worldview 类型定义
+export type Dimensions = {
+  width: number
+  height: number
+  left: number
+  top: number
+}
+
+export type RawCommand = (regl: any) => any
+export type CompiledReglCommand = (props: any, isHitmap?: boolean) => void
+
+export type CameraCommand = {
+  getProjection(): Mat4
+  getView(): Mat4
+  toScreenCoord(viewport: Viewport, point: Vec3): [number, number, number] | undefined
+  draw(props: any, callback: (ctx: any) => void): void
+  viewportWidth: number
+  viewportHeight: number
+  cameraState: import('./camera/CameraStore').CameraState
+}
+
+export type GetChildrenForHitmap<T> = (
+  props: T,
+  assignNextColors: AssignNextColorsFn,
+  excludedObjects: MouseEventObject[]
+) => T | null
+
+export type AssignNextColorsFn = (object: any, count: number) => Vec4[]
+
+export type ObjectHitmapId = number
+
+export type MouseEventObject = {
+  object: any
+  instanceIndex?: number
+}
+
+export type PaintFn = () => void
+
+export type DrawInput = {
+  instance: any
+  reglCommand: RawCommand<any>
+  children: any
+  layerIndex?: number
+  getChildrenForHitmap?: GetChildrenForHitmap<any>
+}
 
 // 兼容旧版本的 CameraState（用于渲染器）
 export interface CameraState {
@@ -26,10 +72,8 @@ export interface CameraState {
   far: number
 }
 
-export interface Viewport {
-  width: number
-  height: number
-}
+// Viewport 接口已由上面的 Viewport 类型定义（Vec4）替代
+// 如果需要对象形式，使用 Dimensions
 
 export interface RenderOptions {
   clearColor?: [number, number, number, number]
