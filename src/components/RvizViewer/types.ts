@@ -2,6 +2,21 @@
  * 三维可视化类型定义
  */
 
+// 基础向量和矩阵类型（基于 regl-worldview）
+export type Vec2 = [number, number]
+export type Vec3 = [number, number, number]
+export type Vec4 = [number, number, number, number]
+export type Mat4 = [
+  number, number, number, number,
+  number, number, number, number,
+  number, number, number, number,
+  number, number, number, number
+]
+
+// 视图端口类型
+export type Viewport = Vec4 // [x, y, width, height]
+
+// 兼容旧版本的 CameraState（用于渲染器）
 export interface CameraState {
   position: [number, number, number]
   target: [number, number, number]

@@ -1,155 +1,123 @@
 /**
- * 相机状态管理（基于 regl-worldview 的 CameraStore）
+ * 相机状态管理
+ * 完全基于 regl-worldview 的 CameraStore 实现
  */
 import { vec3, quat } from 'gl-matrix'
-import type { CameraState } from '../types'
+import type { Vec2, Vec3, Vec4 } from '../types'
 
-export interface WorldviewCameraState {
-  distance: number // 相机距离
-  perspective: boolean // 是否透视投影
-  phi: number // 垂直角度（0 到 PI）
-  target: [number, number, number] // 目标点
-  targetOffset: [number, number, number] // 目标偏移
-  targetOrientation: [number, number, number, number] // 目标方向
-  thetaOffset: number // 水平角度偏移
-  fovy: number // 垂直视角
-  near: number // 近截面
-  far: number // 远截面
+export type CameraState = {
+  distance: number
+  perspective: boolean
+  phi: number
+  target: Vec3
+  targetOffset: Vec3
+  targetOrientation: Vec4
+  thetaOffset: number
+  fovy: number
+  near: number
+  far: number
 }
 
-const UNIT_Z_VECTOR: [number, number, number] = [0, 0, 1]
+// we use up on the +z axis
+const UNIT_Z_VECTOR: Vec3 = Object.freeze([0, 0, 1]) as Vec3
+// reusable array for intermediate calculations
 const TEMP_QUAT = quat.create()
 
-export const DEFAULT_CAMERA_STATE: WorldviewCameraState = {
-  distance: 10, // 相机距离
+export const DEFAULT_CAMERA_STATE: CameraState = {
+  distance: 75,
   perspective: true,
-  phi: Math.PI / 4, // 45度
+  phi: Math.PI / 4,
   target: [0, 0, 0],
   targetOffset: [0, 0, 0],
   targetOrientation: [0, 0, 0, 1],
-  thetaOffset: 1.0,
+  thetaOffset: 0,
   fovy: Math.PI / 4,
-  near: 0.1,
-  far: 1000
+  near: 0.01,
+  far: 5000
 }
 
 function distanceAfterZoom(startingDistance: number, zoomPercent: number): number {
+  // keep distance above 0 so that percentage-based zoom always works
   return Math.max(0.001, startingDistance * (1 - zoomPercent / 100))
 }
 
-export class CameraStore {
-  state: WorldviewCameraState
-  private onChange: (state: WorldviewCameraState) => void
+export default class CameraStore {
+  state: CameraState = DEFAULT_CAMERA_STATE
+  _onChange: (state: CameraState) => void
 
   constructor(
-    handler: (state: WorldviewCameraState) => void = () => {},
-    initialCameraState?: Partial<WorldviewCameraState>
+    handler: (state: CameraState) => void = () => {},
+    initialCameraState: Partial<CameraState> = DEFAULT_CAMERA_STATE
   ) {
-    this.onChange = handler
-    this.state = { ...DEFAULT_CAMERA_STATE, ...initialCameraState }
+    this._onChange = handler
+    this.setCameraState(initialCameraState)
   }
 
-  /**
-   * 旋转相机（基于 regl-worldview 的 cameraRotate）
-   */
-  cameraRotate([x, y]: [number, number]): void {
-    if (x === 0 && y === 0) return
+  setCameraState = (state: Partial<CameraState>) => {
+    // Fill in missing properties from DEFAULT_CAMERA_STATE.
+    // Mutate the `state` parameter instead of copying -- this
+    // matches the previous behavior of this method, which didn't
+    // fill in missing properties but also didn't copy `state`.
+    const filledState: CameraState = { ...DEFAULT_CAMERA_STATE }
+    for (const [key, value] of Object.entries(state)) {
+      if (value != null) {
+        ;(filledState as any)[key] = value
+      }
+    }
+    // `state` must be a valid CameraState now, because we filled in
+    // missing properties from DEFAULT_CAMERA_STATE.
+    this.state = filledState
+  }
 
+  cameraRotate = ([x, y]: Vec2) => {
+    // This can happen in 2D mode, when both e.movementX and e.movementY are evaluated as negative and mouseX move is 0
+    if (x === 0 && y === 0) {
+      return
+    }
     const { thetaOffset, phi } = this.state
-    this.state = {
+    this.setCameraState({
       ...this.state,
       thetaOffset: thetaOffset - x,
       phi: Math.max(0, Math.min(phi + y, Math.PI))
-    }
-    this.onChange(this.state)
+    })
+    this._onChange(this.state)
   }
 
-  /**
-   * 平移相机（基于 regl-worldview 的 cameraMove）
-   */
-  cameraMove([x, y]: [number, number]): void {
-    if (x === 0 && y === 0) return
+  // move the camera along x, y axis; do not move up/down
+  cameraMove = ([x, y]: Vec2) => {
+    // moveX and moveY both be 0 sometimes
+    if (x === 0 && y === 0) {
+      return
+    }
 
     const { targetOffset, thetaOffset } = this.state
 
-    // 根据 thetaOffset 旋转偏移量
-    const result: [number, number, number] = [x, y, 0]
-    const rotation = quat.setAxisAngle(TEMP_QUAT, UNIT_Z_VECTOR, -thetaOffset)
-    const offset = vec3.transformQuat([0, 0, 0], result, rotation) as [number, number, number]
+    // rotate around z axis so the offset is in the target's reference frame
+    const result: Vec3 = [x, y, 0]
+    const offset = vec3.transformQuat(
+      result,
+      result,
+      quat.setAxisAngle(TEMP_QUAT, UNIT_Z_VECTOR, -thetaOffset)
+    )
 
-    this.state = {
+    this.setCameraState({
       ...this.state,
-      targetOffset: vec3.add([0, 0, 0], targetOffset, offset) as [number, number, number]
-    }
-    this.onChange(this.state)
+      targetOffset: vec3.add([0, 0, 0], targetOffset, offset) as Vec3
+    })
+    this._onChange(this.state)
   }
 
-  /**
-   * 缩放相机（基于 regl-worldview 的 cameraZoom）
-   */
-  cameraZoom(zoomPercent: number): void {
+  cameraZoom = (zoomPercent: number) => {
     const { distance } = this.state
-    const newDistance = distanceAfterZoom(distance, zoomPercent)
-    
-    if (distance === newDistance) return
+    const newDistance: number = distanceAfterZoom(distance, zoomPercent)
+    if (distance === newDistance) {
+      return
+    }
 
-    this.state = {
+    this.setCameraState({
       ...this.state,
       distance: newDistance
-    }
-    this.onChange(this.state)
-  }
-
-  /**
-   * 转换为标准 CameraState（基于 regl-worldview 的 positionSelector）
-   */
-  toCameraState(): CameraState {
-    const { distance, phi, thetaOffset, target, targetOffset, fovy, near, far } = this.state
-    
-    // 基于 regl-worldview 的 fromSpherical 逻辑
-    // fromSpherical: x = r * sin(phi) * sin(theta), y = r * cos(phi), z = r * sin(phi) * cos(theta)
-    const rSinPhi = distance * Math.sin(phi)
-    const x = rSinPhi * Math.sin(thetaOffset)
-    const y = distance * Math.cos(phi)
-    const z = rSinPhi * Math.cos(thetaOffset)
-    
-    // regl-worldview 的坐标系统转换（poles 在 y 轴，需要转换到 z 轴）
-    // 从 cameraStateSelectors.js 的 positionSelector: position[0] = -x, position[1] = -z, position[2] = y
-    const position: [number, number, number] = [-x, -z, y]
-
-    // 计算实际目标点（包含偏移）
-    const actualTarget: [number, number, number] = [
-      target[0] + targetOffset[0],
-      target[1] + targetOffset[1],
-      target[2] + targetOffset[2]
-    ]
-
-    return {
-      position: [
-        actualTarget[0] + position[0],
-        actualTarget[1] + position[1],
-        actualTarget[2] + position[2]
-      ],
-      target: actualTarget,
-      up: [0, 0, 1],
-      fov: fovy,
-      near,
-      far
-    }
-  }
-
-  /**
-   * 重置相机
-   */
-  reset(): void {
-    this.state = { ...DEFAULT_CAMERA_STATE }
-    this.onChange(this.state)
-  }
-
-  /**
-   * 获取相机距离
-   */
-  getDistance(): number {
-    return this.state.distance
+    })
+    this._onChange(this.state)
   }
 }
