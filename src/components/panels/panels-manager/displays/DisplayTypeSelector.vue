@@ -83,7 +83,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, markRaw } from 'vue'
 import {
   ArrowRight,
   Search,
@@ -147,77 +147,77 @@ const categories = ref([
       {
         id: 'grid',
         name: 'Grid',
-        icon: Grid,
+        icon: markRaw(Grid),
         description: 'Displays a grid in a fixed frame.',
         category: 'rviz'
       },
       {
         id: 'axes',
         name: 'Axes',
-        icon: Position,
+        icon: markRaw(Position),
         description: 'Displays a set of axes.',
         category: 'rviz'
       },
       {
         id: 'camera',
         name: 'Camera',
-        icon: Camera,
+        icon: markRaw(Camera),
         description: 'Displays an image from a camera.',
         category: 'rviz'
       },
       {
         id: 'map',
         name: 'Map',
-        icon: Files,
+        icon: markRaw(Files),
         description: 'Displays a map.',
         category: 'rviz'
       },
       {
         id: 'path',
         name: 'Path',
-        icon: Connection,
+        icon: markRaw(Connection),
         description: 'Displays a path from a nav_msgs/Path message.',
         category: 'rviz'
       },
       {
         id: 'marker',
         name: 'Marker',
-        icon: Location,
+        icon: markRaw(Location),
         description: 'Displays markers from a visualization_msgs/Marker message.',
         category: 'rviz'
       },
       {
         id: 'image',
         name: 'Image',
-        icon: Picture,
+        icon: markRaw(Picture),
         description: 'Displays an image from a sensor_msgs/Image message.',
         category: 'rviz'
       },
       {
         id: 'laserscan',
         name: 'LaserScan',
-        icon: DataLine,
+        icon: markRaw(DataLine),
         description: 'Displays a sensor_msgs/LaserScan message.',
         category: 'rviz'
       },
       {
         id: 'pointcloud2',
         name: 'PointCloud2',
-        icon: Monitor,
+        icon: markRaw(Monitor),
         description: 'Displays a sensor_msgs/PointCloud2 message.',
         category: 'rviz'
       },
       {
         id: 'tf',
         name: 'TF',
-        icon: Share,
+        icon: markRaw(Share),
         description: 'Displays the transform tree.',
         category: 'rviz'
       },
       {
         id: 'robotmodel',
         name: 'RobotModel',
-        icon: Box,
+        icon: markRaw(Box),
         description: 'Displays a robot model from a URDF file.',
         category: 'rviz'
       }

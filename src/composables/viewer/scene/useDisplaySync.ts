@@ -20,6 +20,11 @@ export interface DisplaySyncContext {
     offsetZ?: number
   }) => void
   setAxesOptions: (options: { length?: number; radius?: number; alpha?: number }) => void
+  setMapOptions: (options: { 
+    alpha?: number
+    colorScheme?: string
+    drawBehind?: boolean
+  }) => void
   destroyGrid: () => void
   destroyAxes: () => void
   createGrid: () => void
@@ -99,11 +104,34 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
   }
 
   /**
+   * 同步 Map 显示状态
+   */
+  function syncMapDisplay(): void {
+    const mapComponent = rvizStore.displayComponents.find(c => c.type === 'map')
+    
+    if (!mapComponent) {
+      // Map 组件不存在，不处理
+      return
+    }
+
+    // Map 组件存在，更新配置选项
+    if (mapComponent.enabled) {
+      const options = mapComponent.options || {}
+      context.setMapOptions({
+        alpha: options.alpha,
+        colorScheme: options.colorScheme,
+        drawBehind: options.drawBehind
+      })
+    }
+  }
+
+  /**
    * 同步所有显示组件
    */
   function syncAllDisplays(): void {
     syncGridDisplay()
     syncAxesDisplay()
+    syncMapDisplay()
   }
 
   // 监听 displayComponents 数组的变化（添加、删除）
@@ -184,12 +212,37 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     { deep: true }
   )
 
+  // 监听 Map 组件的配置选项变化（透明度、颜色方案、绘制顺序等）
+  watch(
+    () => {
+      const mapComponent = rvizStore.displayComponents.find(c => c.type === 'map')
+      return mapComponent ? {
+        id: mapComponent.id,
+        enabled: mapComponent.enabled,
+        alpha: mapComponent.options?.alpha,
+        colorScheme: mapComponent.options?.colorScheme,
+        drawBehind: mapComponent.options?.drawBehind
+      } : null
+    },
+    (mapConfig) => {
+      if (mapConfig && mapConfig.enabled) {
+        context.setMapOptions({
+          alpha: mapConfig.alpha,
+          colorScheme: mapConfig.colorScheme,
+          drawBehind: mapConfig.drawBehind
+        })
+      }
+    },
+    { deep: true }
+  )
+
   // 初始同步
   syncAllDisplays()
 
   return {
     syncGridDisplay,
     syncAxesDisplay,
+    syncMapDisplay,
     syncAllDisplays
   }
 }

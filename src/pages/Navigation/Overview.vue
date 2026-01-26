@@ -130,6 +130,15 @@ watch(
               worldview.markDirty()
               worldview.paint()
             },
+            setMapOptions: (options: { 
+              alpha?: number
+              colorScheme?: string
+              drawBehind?: boolean
+            }) => {
+              sceneManager.setMapOptions(options)
+              worldview.markDirty()
+              worldview.paint()
+            },
             setGridOptions: (options: { 
               planeCellCount?: number
               normalCellCount?: number

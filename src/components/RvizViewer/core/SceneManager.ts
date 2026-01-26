@@ -18,6 +18,8 @@ export class SceneManager {
   private axesData: any = null
   private pointCloudData: any = null
   private pathsData: any[] = []
+  private mapData: any = null
+  private mapConfig: { alpha?: number; colorScheme?: string; drawBehind?: boolean } = {}
 
   private options: Required<Omit<RenderOptions, 'gridColor'>> & { gridColor: [number, number, number, number] }
   private gridVisible = true
@@ -466,6 +468,39 @@ export class SceneManager {
    */
   setAxesOptions(options: { length?: number; radius?: number; alpha?: number }): void {
     this.updateAxesOptions(options)
+  }
+
+  /**
+   * 更新 Map 配置选项（透明度、颜色方案、绘制顺序等）
+   */
+  updateMapOptions(options: { 
+    alpha?: number
+    colorScheme?: string
+    drawBehind?: boolean
+  }): void {
+    // 更新 Map 配置
+    this.mapConfig = {
+      ...this.mapConfig,
+      ...options
+    }
+    // 如果 Map 数据存在，应用新配置并重新渲染
+    if (this.mapData) {
+      // TODO: 应用配置到 Map 数据（alpha、colorScheme、drawBehind）
+      // 这里需要根据实际的 Map 渲染实现来更新
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
+    }
+  }
+
+  /**
+   * 设置 Map 配置选项（别名方法）
+   */
+  setMapOptions(options: { 
+    alpha?: number
+    colorScheme?: string
+    drawBehind?: boolean
+  }): void {
+    this.updateMapOptions(options)
   }
 
   /**
