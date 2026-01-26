@@ -109,6 +109,13 @@ class TFManager {
   }
 
   /**
+   * 获取固定帧的响应式引用
+   */
+  getFixedFrameRef() {
+    return this.fixedFrame
+  }
+
+  /**
    * 设置帧超时时间（秒）
    */
   setFrameTimeout(timeout: number) {

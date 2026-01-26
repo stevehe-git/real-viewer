@@ -82,9 +82,9 @@ interface Props {
 const props = defineProps<Props>()
 const rvizStore = useRvizStore()
 
-// 获取固定帧
+// 获取固定帧（响应式）
 const fixedFrame = computed(() => {
-  return rvizStore.globalOptions.fixedFrame || 'map'
+  return tfManager.getFixedFrameRef().value || 'map'
 })
 
 // 获取所有可用的 frame 列表
