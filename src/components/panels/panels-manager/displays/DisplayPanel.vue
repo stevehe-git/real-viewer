@@ -95,7 +95,6 @@ import { ref, computed, watch } from 'vue'
 import { useRvizStore } from '@/stores/rviz'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import BasePanel from '../../BasePanel.vue'
-import DisplayComponent from './DisplayComponent.vue'
 import DisplayTypeSelector from './DisplayTypeSelector.vue'
 import { View, Plus, Document, CopyDocument, Edit, Delete } from '@element-plus/icons-vue'
 
