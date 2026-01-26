@@ -3,16 +3,15 @@
  * 基于 regl-worldview 的架构，使用命令系统管理场景对象
  */
 import type { Regl, PointCloudData, PathData, RenderOptions } from '../types'
-import { grid, defaultAxes, lines, makePointsCommand } from '../commands'
-import type { CameraState } from '../camera'
+import { grid, defaultAxes, lines, makePointsCommand, cylinders } from '../commands'
 
 export class SceneManager {
   private reglContext: Regl
   private worldviewContext: any // WorldviewContext
   private gridCommand: any = null
-  private axesCommand: any = null
   private pointsCommand: any = null
   private linesCommand: any = null
+  private cylindersCommand: any = null
 
   private gridData: any = null
   private axesData: any = null
@@ -49,19 +48,17 @@ export class SceneManager {
       this.updateGridData()
     }
 
-    // 初始化 Axes 命令（使用 Lines）
+    // 初始化 Axes 命令（使用 Cylinders）
     if (this.options.enableAxes) {
-      this.linesCommand = lines(this.reglContext)
+      this.cylindersCommand = cylinders(this.reglContext)
       this.updateAxesData()
     }
 
     // 初始化 Points 命令
     this.pointsCommand = makePointsCommand({})(this.reglContext)
 
-    // 初始化 Lines 命令
-    if (!this.linesCommand) {
-      this.linesCommand = lines(this.reglContext)
-    }
+    // 初始化 Lines 命令（用于路径）
+    this.linesCommand = lines(this.reglContext)
   }
 
   private updateGridData(): void {
@@ -107,12 +104,12 @@ export class SceneManager {
       })
     }
 
-    // 注册 Axes
-    if (this.axesVisible && this.linesCommand && this.axesData) {
-      this.worldviewContext.onMount(this.axesInstance, lines)
+    // 注册 Axes（使用 Cylinders）
+    if (this.axesVisible && this.cylindersCommand && this.axesData) {
+      this.worldviewContext.onMount(this.axesInstance, cylinders)
       this.worldviewContext.registerDrawCall({
         instance: this.axesInstance,
-        reglCommand: lines,
+        reglCommand: cylinders,
         children: this.axesData,
         layerIndex: 1
       })
@@ -254,6 +251,19 @@ export class SceneManager {
    */
   setGridVisible(visible: boolean): void {
     this.gridVisible = visible
+    
+    // 如果设置为可见，确保命令和数据已初始化
+    if (visible) {
+      // 确保 gridCommand 已初始化
+      if (!this.gridCommand) {
+        this.gridCommand = grid(this.reglContext)
+      }
+      // 确保 gridData 已初始化
+      if (!this.gridData) {
+        this.updateGridData()
+      }
+    }
+    
     this.registerDrawCalls()
     this.worldviewContext.onDirty()
   }
@@ -263,6 +273,19 @@ export class SceneManager {
    */
   setAxesVisible(visible: boolean): void {
     this.axesVisible = visible
+    
+    // 如果设置为可见，确保命令和数据已初始化
+    if (visible) {
+      // 确保 cylindersCommand 已初始化（用于渲染坐标轴）
+      if (!this.cylindersCommand) {
+        this.cylindersCommand = cylinders(this.reglContext)
+      }
+      // 确保 axesData 已初始化
+      if (!this.axesData) {
+        this.updateAxesData()
+      }
+    }
+    
     this.registerDrawCalls()
     this.worldviewContext.onDirty()
   }
@@ -277,9 +300,9 @@ export class SceneManager {
     this.pathsData = []
     this.pointCloudData = null
     this.gridCommand = null
-    this.axesCommand = null
     this.pointsCommand = null
     this.linesCommand = null
+    this.cylindersCommand = null
     this.axesData = null
     this.gridData = null
   }
