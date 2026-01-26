@@ -125,6 +125,21 @@ watch(
               worldview.markDirty()
               worldview.paint()
             },
+            setGridOptions: (options: { 
+              planeCellCount?: number
+              normalCellCount?: number
+              cellSize?: number
+              color?: string
+              alpha?: number
+              plane?: string
+              offsetX?: number
+              offsetY?: number
+              offsetZ?: number
+            }) => {
+              sceneManager.setGridOptions(options)
+              worldview.markDirty()
+              worldview.paint()
+            },
             destroyGrid: () => {
               sceneManager.destroyGrid()
               worldview.markDirty()

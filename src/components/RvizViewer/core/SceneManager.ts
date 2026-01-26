@@ -61,14 +61,80 @@ export class SceneManager {
     this.linesCommand = lines(this.reglContext)
   }
 
-  private updateGridData(): void {
-    const count = this.options.gridDivisions
-    const gridColor = this.options.gridColor
+  private updateGridData(options?: { 
+    planeCellCount?: number
+    normalCellCount?: number
+    cellSize?: number
+    color?: string
+    alpha?: number
+    plane?: string
+    offsetX?: number
+    offsetY?: number
+    offsetZ?: number
+  }): void {
+    // 从配置选项或默认值获取参数
+    const planeCellCount = options?.planeCellCount ?? this.options.gridDivisions
+    const cellSize = options?.cellSize ?? 1.0
+    const alpha = options?.alpha ?? 1.0
+    const plane = options?.plane || 'XY'
+    const offsetX = options?.offsetX ?? 0
+    const offsetY = options?.offsetY ?? 0
+    const offsetZ = options?.offsetZ ?? 0
+    
+    // 处理颜色：如果是 hex 字符串，转换为 rgba 数组
+    let gridColor: [number, number, number, number] = this.options.gridColor
+    if (options?.color) {
+      if (typeof options.color === 'string' && options.color.startsWith('#')) {
+        const r = parseInt(options.color.slice(1, 3), 16) / 255
+        const g = parseInt(options.color.slice(3, 5), 16) / 255
+        const b = parseInt(options.color.slice(5, 7), 16) / 255
+        gridColor = [r, g, b, alpha]
+      } else {
+        gridColor = this.options.gridColor
+      }
+    } else {
+      // 使用默认颜色但应用 alpha
+      gridColor = [this.options.gridColor[0], this.options.gridColor[1], this.options.gridColor[2], alpha]
+    }
 
-    // Grid 命令需要 count 属性
+    // 计算实际的网格数量（基于 planeCellCount）
+    // count 表示网格的格子数（从 -count 到 +count）
+    const count = Math.floor(planeCellCount / 2)
+
+    // 根据 plane 计算旋转四元数
+    // XY: 默认平面，不需要旋转
+    // XZ: 绕 X 轴旋转 90 度
+    // YZ: 绕 Y 轴旋转 -90 度
+    let orientation = { x: 0, y: 0, z: 0, w: 1 } // 单位四元数
+    if (plane === 'XZ') {
+      // 绕 X 轴旋转 90 度 (π/2)
+      const angle = Math.PI / 2
+      orientation = {
+        x: Math.sin(angle / 2),
+        y: 0,
+        z: 0,
+        w: Math.cos(angle / 2)
+      }
+    } else if (plane === 'YZ') {
+      // 绕 Y 轴旋转 -90 度 (-π/2)
+      const angle = -Math.PI / 2
+      orientation = {
+        x: 0,
+        y: Math.sin(angle / 2),
+        z: 0,
+        w: Math.cos(angle / 2)
+      }
+    }
+
+    // Grid 命令需要 count、cellSize、color 和 pose 属性
     this.gridData = {
       count,
-      color: gridColor
+      cellSize,
+      color: gridColor,
+      pose: {
+        position: { x: offsetX, y: offsetY, z: offsetZ },
+        orientation
+      }
     }
   }
 
@@ -266,6 +332,44 @@ export class SceneManager {
     
     this.registerDrawCalls()
     this.worldviewContext.onDirty()
+  }
+
+  /**
+   * 更新网格配置选项
+   */
+  updateGridOptions(options: { 
+    planeCellCount?: number
+    normalCellCount?: number
+    cellSize?: number
+    color?: string
+    alpha?: number
+    plane?: string
+    offsetX?: number
+    offsetY?: number
+    offsetZ?: number
+  }): void {
+    // 更新网格数据
+    this.updateGridData(options)
+    // 重新注册绘制调用
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
+  }
+
+  /**
+   * 设置网格配置选项（别名方法）
+   */
+  setGridOptions(options: { 
+    planeCellCount?: number
+    normalCellCount?: number
+    cellSize?: number
+    color?: string
+    alpha?: number
+    plane?: string
+    offsetX?: number
+    offsetY?: number
+    offsetZ?: number
+  }): void {
+    this.updateGridOptions(options)
   }
 
   /**

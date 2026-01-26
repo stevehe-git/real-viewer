@@ -16,6 +16,7 @@ export function grid(regl: Regl) {
     vert: `
     precision mediump float;
     uniform mat4 projection, view;
+    #WITH_POSE
 
     attribute vec3 point;
     attribute vec4 color;
@@ -23,7 +24,7 @@ export function grid(regl: Regl) {
 
     void main () {
       fragColor = color;
-      vec3 p = point;
+      vec3 p = applyPose(point);
       gl_Position = projection * view * vec4(p, 1);
     }
     `,
@@ -38,16 +39,19 @@ export function grid(regl: Regl) {
     attributes: {
       point: (context: any, props: any) => {
         const points: number[][] = []
-        const bound = props.count
+        const count = props.count || 5
+        const cellSize = props.cellSize || 1.0
+        const bound = count * cellSize
         
         // 绘制内部网格线
-        for (let i = -props.count; i < props.count; i++) {
+        for (let i = -count; i <= count; i++) {
+          const pos = i * cellSize
           // 垂直线
-          points.push([-bound, i, 0])
-          points.push([bound, i, 0])
+          points.push([-bound, pos, 0])
+          points.push([bound, pos, 0])
           // 水平线
-          points.push([i, -bound, 0])
-          points.push([i, bound, 0])
+          points.push([pos, -bound, 0])
+          points.push([pos, bound, 0])
         }
         
         // 绘制边界框（封边）
@@ -68,17 +72,19 @@ export function grid(regl: Regl) {
       },
       color: (context: any, props: any) => {
         const color = props.color || DEFAULT_GRID_COLOR
-        // 内部网格线：props.count * 4 * 2 个点
+        const count = props.count || 5
+        // 内部网格线：(count * 2 + 1) * 4 个点（每条线2个点）
         // 边界框：8 个点（4条边，每条边2个点）
-        const totalPoints = props.count * 4 * 2 + 8
+        const totalPoints = (count * 2 + 1) * 4 + 8
         return new Array(totalPoints).fill(color)
       }
     },
     count: (context: any, props: any) => {
-      // 内部网格线：props.count * 4 * 2 个点
+      const count = props.count || 5
+      // 内部网格线：(count * 2 + 1) * 4 个点（每条线2个点）
       // 边界框：8 个点
-      const count = props.count * 4 * 2 + 8
-      return count
+      const totalCount = (count * 2 + 1) * 4 + 8
+      return totalCount
     }
   })
 }

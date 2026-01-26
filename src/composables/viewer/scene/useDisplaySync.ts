@@ -8,6 +8,17 @@ import { useRvizStore } from '@/stores/rviz'
 export interface DisplaySyncContext {
   setGridVisible: (visible: boolean) => void
   setAxesVisible: (visible: boolean) => void
+  setGridOptions: (options: { 
+    planeCellCount?: number
+    normalCellCount?: number
+    cellSize?: number
+    color?: string
+    alpha?: number
+    plane?: string
+    offsetX?: number
+    offsetY?: number
+    offsetZ?: number
+  }) => void
   destroyGrid: () => void
   destroyAxes: () => void
   createGrid: () => void
@@ -38,6 +49,20 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     if (gridComponent.enabled) {
       context.createGrid()
       context.setGridVisible(true)
+      
+      // 更新网格配置选项
+      const options = gridComponent.options || {}
+      context.setGridOptions({
+        planeCellCount: options.planeCellCount,
+        normalCellCount: options.normalCellCount,
+        cellSize: options.cellSize,
+        color: options.color,
+        alpha: options.alpha,
+        plane: options.plane,
+        offsetX: options.offsetX,
+        offsetY: options.offsetY,
+        offsetZ: options.offsetZ
+      })
     } else {
       context.setGridVisible(false)
     }
@@ -86,6 +111,42 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     () => rvizStore.displayComponents.map(c => ({ id: c.id, type: c.type, enabled: c.enabled })),
     () => {
       syncAllDisplays()
+    },
+    { deep: true }
+  )
+
+  // 监听 Grid 组件的配置选项变化
+  watch(
+    () => {
+      const gridComponent = rvizStore.displayComponents.find(c => c.type === 'grid')
+      return gridComponent ? {
+        id: gridComponent.id,
+        enabled: gridComponent.enabled,
+        planeCellCount: gridComponent.options?.planeCellCount,
+        normalCellCount: gridComponent.options?.normalCellCount,
+        cellSize: gridComponent.options?.cellSize,
+        color: gridComponent.options?.color,
+        alpha: gridComponent.options?.alpha,
+        plane: gridComponent.options?.plane,
+        offsetX: gridComponent.options?.offsetX,
+        offsetY: gridComponent.options?.offsetY,
+        offsetZ: gridComponent.options?.offsetZ
+      } : null
+    },
+    (gridConfig) => {
+      if (gridConfig && gridConfig.enabled) {
+        context.setGridOptions({
+          planeCellCount: gridConfig.planeCellCount,
+          normalCellCount: gridConfig.normalCellCount,
+          cellSize: gridConfig.cellSize,
+          color: gridConfig.color,
+          alpha: gridConfig.alpha,
+          plane: gridConfig.plane,
+          offsetX: gridConfig.offsetX,
+          offsetY: gridConfig.offsetY,
+          offsetZ: gridConfig.offsetZ
+        })
+      }
     },
     { deep: true }
   )
