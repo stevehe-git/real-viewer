@@ -1,15 +1,12 @@
+import * as ROSLIB from 'roslib'
 import type { CommunicationPlugin, ConnectionParams, ConnectionParam } from '@/stores/types'
-
-// ROS类型定义（如果roslib未安装）
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type ROSLibRos = any
 
 export class ROSPlugin implements CommunicationPlugin {
   id = 'ros'
   name = 'ROS'
   description = 'Robot Operating System WebSocket连接'
 
-  private rosInstance: ROSLibRos | null = null
+  private rosInstance: ROSLIB.Ros | null = null
 
   getConnectionParams(): ConnectionParam[] {
     return [
@@ -50,22 +47,9 @@ export class ROSPlugin implements CommunicationPlugin {
       this.currentParams = { ...params, connected: false }
 
       // 创建ROS连接
-      // 注意：需要安装roslib包: npm install roslib
-      // 暂时注释，等待roslib安装后启用
-      // const ROSLIB = await import('roslib')
-      // this.rosInstance = new ROSLIB.Ros({
-      //   url: `ws://${host}:${port}`
-      // })
-      
-      // 临时实现：模拟连接
-      console.warn('ROSLIB not installed. Please run: npm install roslib')
-      setTimeout(() => {
-        if (this.currentParams) {
-          this.currentParams.connected = true
-        }
-        resolve(true)
-      }, 1000)
-      return
+      this.rosInstance = new ROSLIB.Ros({
+        url: `ws://${host}:${port}`
+      })
 
       // 连接成功
       this.rosInstance.on('connection', () => {
@@ -77,21 +61,21 @@ export class ROSPlugin implements CommunicationPlugin {
       })
 
       // 连接错误
-      // this.rosInstance.on('error', (error: any) => {
-      //   console.error('ROS connection error:', error)
-      //   if (this.currentParams) {
-      //     this.currentParams.connected = false
-      //   }
-      //   reject(error)
-      // })
+      this.rosInstance.on('error', (error) => {
+        console.error('ROS connection error:', error)
+        if (this.currentParams) {
+          this.currentParams.connected = false
+        }
+        reject(error)
+      })
 
       // 连接关闭
-      // this.rosInstance.on('close', () => {
-      //   console.log('ROS connection closed')
-      //   if (this.currentParams) {
-      //     this.currentParams.connected = false
-      //   }
-      // })
+      this.rosInstance.on('close', () => {
+        console.log('ROS connection closed')
+        if (this.currentParams) {
+          this.currentParams.connected = false
+        }
+      })
 
       // 设置连接超时
       setTimeout(() => {
@@ -125,21 +109,12 @@ export class ROSPlugin implements CommunicationPlugin {
   }
 
   async getTopics(): Promise<string[]> {
-    if (!this.rosInstance || !this.isConnected()) {
-      return []
-    }
-    try {
-      // 这里需要实现获取ROS话题的逻辑
-      // 由于roslib可能未安装，先返回空数组
-      return []
-    } catch (error) {
-      console.error('Failed to get topics:', error)
-      return []
-    }
+    return []
   }
 
   // 获取 ROS 实例
-  getROSInstance(): ROSLibRos | null {
+  getROSInstance(): ROSLIB.Ros | null {
+    // 直接返回实例，不访问 isConnected 以避免在响应式代理中访问私有成员
     return this.rosInstance
   }
 }

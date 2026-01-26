@@ -460,6 +460,18 @@ export const useRvizStore = defineStore('rviz', () => {
   function initialize() {
     PluginRegistry.registerAll({ registerPlugin })
     loadPanelConfig()
+    
+    // 如果显示组件列表为空，添加默认的网格组件
+    if (displayComponents.value.length === 0) {
+      const defaultGridComponent: DisplayComponent = {
+        id: 'display-grid-default',
+        name: 'Grid',
+        type: 'grid',
+        enabled: true,
+        options: {}
+      }
+      displayComponents.value.push(defaultGridComponent)
+    }
   }
 
   return {
