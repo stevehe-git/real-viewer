@@ -3,7 +3,7 @@
  * 完全基于 regl-worldview 的 Grid.js 实现
  */
 import type { Regl } from '../../types'
-import { withPose } from './utils/commandUtils'
+import { withPose, defaultBlend } from './utils/commandUtils'
 
 const DEFAULT_GRID_COLOR: [number, number, number, number] = [0.3, 0.3, 0.3, 1]
 
@@ -76,7 +76,12 @@ export function grid(regl: Regl) {
         // 内部网格线：(count * 2 + 1) * 4 个点（每条线2个点）
         // 边界框：8 个点（4条边，每条边2个点）
         const totalPoints = (count * 2 + 1) * 4 + 8
-        return new Array(totalPoints).fill(color)
+        // 创建颜色数组，确保每个点都有独立的颜色值（包含 alpha）
+        const colors: number[][] = []
+        for (let i = 0; i < totalPoints; i++) {
+          colors.push([color[0], color[1], color[2], color[3] || 1.0])
+        }
+        return colors
       }
     },
     count: (context: any, props: any) => {
@@ -85,7 +90,8 @@ export function grid(regl: Regl) {
       // 边界框：8 个点
       const totalCount = (count * 2 + 1) * 4 + 8
       return totalCount
-    }
+    },
+    blend: defaultBlend
   })
 }
 

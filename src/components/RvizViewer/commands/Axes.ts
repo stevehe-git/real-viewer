@@ -37,8 +37,8 @@ function createRotationQuaternion(axis: 'x' | 'y' | 'z', angle: number): { x: nu
 }
 
 // X轴：红色，从原点向右延伸（正X方向，右手系）
-// 圆柱体默认沿Z轴，需要绕Y轴旋转90度使其指向+X方向
-const xAxisRotation = createRotationQuaternion('y', Math.PI / 2)
+// 圆柱体默认沿Z轴，需要绕Y轴旋转-90度使其指向+X方向（修正方向）
+const xAxisRotation = createRotationQuaternion('y', -Math.PI / 2)
 const xAxis: Cylinder = {
   pose: {
     position: { x: AXIS_LENGTH / 2, y: 0, z: 0 }, // 圆柱体中心在轴的中点
@@ -50,8 +50,8 @@ const xAxis: Cylinder = {
 }
 
 // Y轴：绿色，从原点向前延伸（正Y方向，右手系）
-// 圆柱体默认沿Z轴，需要绕X轴旋转90度使其指向+Y方向
-const yAxisRotation = createRotationQuaternion('x', Math.PI / 2)
+// 圆柱体默认沿Z轴，需要绕X轴旋转-90度使其指向+Y方向（修正方向）
+const yAxisRotation = createRotationQuaternion('x', -Math.PI / 2)
 const yAxis: Cylinder = {
   pose: {
     position: { x: 0, y: AXIS_LENGTH / 2, z: 0 }, // 圆柱体中心在轴的中点
