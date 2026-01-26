@@ -103,6 +103,14 @@ export class Worldview {
   }
 
   /**
+   * 设置画布背景颜色
+   */
+  setCanvasBackgroundColor(color: Vec4): void {
+    this.context.canvasBackgroundColor = color
+    this.context.onDirty()
+  }
+
+  /**
    * 注册绘制调用
    */
   registerDrawCall(drawInput: import('../types').DrawInput): void {

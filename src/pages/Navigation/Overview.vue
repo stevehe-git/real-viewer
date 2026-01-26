@@ -17,13 +17,14 @@
     </div>
 
     <!-- 主内容区域 -->
-    <div class="main-content" :class="{ resizing: isResizing }">
+    <div ref="mainContentRef" class="main-content" :class="{ resizing: isResizing }">
       <!-- 左侧3D视图 -->
       <div 
         class="viewer-container" 
         :style="{ width: hasPanels ? `calc(100% - ${panelWidth}px - 4px)` : '100%' }"
       >
         <RvizViewer
+          ref="viewerRef"
           :width="viewerWidth"
           :height="viewerHeight"
           :point-cloud="pointCloudData"
@@ -77,7 +78,9 @@ import RvizViewer from '../../components/RvizViewer/RvizViewer.vue'
 import PanelManager from '../../components/panels/panels-manager/PanelManager.vue'
 import PanelSettingsDrawer from '../../components/panels/panel-setting/PanelSettingsDrawer.vue'
 import { useRvizStore } from '../../stores/rviz'
-import { useSplitter } from '../../composables/viewer/useSplitter'
+import { useSplitter } from '../../composables/viewer/layout/useSplitter'
+import { useViewControl } from '../../composables/viewer/view-control/useViewControl'
+import { useFullscreen } from '../../composables/viewer/view-control/useFullscreen'
 import type { PointCloudData, PathData } from '../../components/RvizViewer/types'
 
 // 使用RViz store
@@ -86,11 +89,29 @@ const rvizStore = useRvizStore()
 // 使用分割器
 const { panelWidth, isResizing, startResize, cleanup } = useSplitter({ rvizStore })
 
+// RvizViewer引用
+const viewerRef = ref<InstanceType<typeof RvizViewer> | null>(null)
+
+// 网格和坐标轴可见性状态（用于同步）
+const gridVisible = ref(true)
+const axesVisible = ref(true)
+
+// 使用视图控制composable
+const viewControl = useViewControl({
+  viewerRef,
+  gridVisible,
+  axesVisible
+})
+
 // 面板设置抽屉可见性
 const panelSettingsVisible = ref(false)
 
-// 全屏状态
-const isFullscreen = ref(false)
+// 主内容区域引用（用于全屏）
+const mainContentRef = ref<HTMLElement | null>(null)
+
+// 使用全屏控制
+const fullscreen = useFullscreen({ target: null })
+const isFullscreen = fullscreen.isFullscreen
 
 // 视口尺寸
 const viewerWidth = ref(1200)
@@ -133,22 +154,21 @@ function toggleMenu() {
   console.log('Toggle menu')
 }
 
-// 事件处理函数
+// 事件处理函数（使用viewControl composable）
 function handleResetCamera() {
-  // 重置相机逻辑
-  console.log('Reset camera')
+  viewControl.handleResetCamera()
 }
 
 function handleToggleGrid() {
-  rvizStore.sceneState.showGrid = !rvizStore.sceneState.showGrid
+  viewControl.handleToggleGrid()
 }
 
 function handleToggleAxes() {
-  rvizStore.sceneState.showAxes = !rvizStore.sceneState.showAxes
+  viewControl.handleToggleAxes()
 }
 
 function handleUpdateCameraMode(mode: string) {
-  rvizStore.sceneState.cameraMode = mode as 'orbit' | 'firstPerson'
+  viewControl.handleUpdateCameraMode(mode)
 }
 
 function handleUpdateShowRobot(show: boolean) {
@@ -164,11 +184,13 @@ function handleUpdateShowLaser(show: boolean) {
 }
 
 function handleUpdateBackgroundColor(color: string) {
-  rvizStore.sceneState.backgroundColor = color
+  viewControl.handleUpdateBackgroundColor(color)
 }
 
 function handleToggleFullscreen() {
-  isFullscreen.value = !isFullscreen.value
+  // 使用主内容区域作为全屏目标，如果没有则使用整个页面
+  const targetElement = mainContentRef.value || document.documentElement
+  fullscreen.toggleFullscreen(targetElement)
 }
 
 function handleTakeScreenshot() {
@@ -318,6 +340,16 @@ onUnmounted(() => {
   display: flex;
   position: relative;
   overflow: hidden;
+}
+
+/* 全屏时的样式 */
+.main-content:fullscreen,
+.main-content:-webkit-full-screen,
+.main-content:-moz-full-screen,
+.main-content:-ms-fullscreen {
+  width: 100vw;
+  height: 100vh;
+  background: #333333;
 }
 
 .main-content.resizing {

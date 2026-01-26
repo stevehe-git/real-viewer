@@ -63,8 +63,8 @@ const containerRef = ref<HTMLElement | null>(null)
 const worldview = ref<Worldview | null>(null)
 const sceneManager = ref<SceneManager | null>(null)
 const cameraController = ref<WorldviewCameraController | null>(null)
-const gridVisible = ref(true)
-const axesVisible = ref(true)
+const gridVisible = ref(props.options?.enableGrid ?? true)
+const axesVisible = ref(props.options?.enableAxes ?? true)
 let resizeObserver: ResizeObserver | null = null
 
 // 初始化
@@ -286,6 +286,47 @@ function toggleAxes(): void {
   worldview.value?.paint()
 }
 
+// 设置网格可见性
+function setGridVisible(visible: boolean): void {
+  gridVisible.value = visible
+  sceneManager.value?.setGridVisible(visible)
+  worldview.value?.markDirty()
+  worldview.value?.paint()
+}
+
+// 设置坐标轴可见性
+function setAxesVisible(visible: boolean): void {
+  axesVisible.value = visible
+  sceneManager.value?.setAxesVisible(visible)
+  worldview.value?.markDirty()
+  worldview.value?.paint()
+}
+
+// 设置背景颜色
+function setBackgroundColor(color: string): void {
+  if (!worldview.value) return
+  // 将hex颜色转换为rgba数组
+  const hexToRgba = (hex: string): [number, number, number, number] => {
+    const r = parseInt(hex.slice(1, 3), 16) / 255
+    const g = parseInt(hex.slice(3, 5), 16) / 255
+    const b = parseInt(hex.slice(5, 7), 16) / 255
+    return [r, g, b, 1.0]
+  }
+  worldview.value.setCanvasBackgroundColor(hexToRgba(color))
+  worldview.value.markDirty()
+  worldview.value.paint()
+}
+
+// 暴露方法供父组件调用
+defineExpose({
+  resetCamera,
+  toggleGrid,
+  toggleAxes,
+  setGridVisible,
+  setAxesVisible,
+  setBackgroundColor
+})
+
 // 监听属性变化
 watch(
   () => props.pointCloud,
@@ -312,6 +353,37 @@ watch(
     }
   },
   { deep: true }
+)
+
+// 监听options变化，同步网格和坐标轴状态
+watch(
+  () => props.options?.enableGrid,
+  (newValue) => {
+    if (newValue !== undefined && newValue !== gridVisible.value) {
+      setGridVisible(newValue)
+    }
+  }
+)
+
+watch(
+  () => props.options?.enableAxes,
+  (newValue) => {
+    if (newValue !== undefined && newValue !== axesVisible.value) {
+      setAxesVisible(newValue)
+    }
+  }
+)
+
+// 监听背景颜色变化
+watch(
+  () => props.options?.clearColor,
+  (newColor) => {
+    if (newColor && worldview.value) {
+      worldview.value.setCanvasBackgroundColor(newColor)
+      worldview.value.markDirty()
+      worldview.value.paint()
+    }
+  }
 )
 
 // 清理

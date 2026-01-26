@@ -132,7 +132,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useRvizStore } from '@/stores/rviz'
-import { useTopicSubscription } from '@/composables/useTopicSubscription'
+import { useTopicSubscription } from '@/composables/communication/useTopicSubscription'
 import { ArrowRight } from '@element-plus/icons-vue'
 
 interface Props {

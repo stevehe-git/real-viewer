@@ -6,12 +6,12 @@ import { watch } from 'vue'
 import * as THREE from 'three'
 import type { Scene } from 'three'
 import type { useRvizStore } from '@/stores/rviz'
-import type { ReturnType as Renderer3DType } from '../use3DRenderer'
+import type { ReturnType as Renderer3DType } from '../../use3DRenderer'
 
 export interface SceneWatchersContext {
   scene: Scene
   rvizStore: ReturnType<typeof useRvizStore>
-  renderer3D: Renderer3DType<typeof import('../use3DRenderer').use3DRenderer> | null
+  renderer3D: Renderer3DType<typeof import('../../use3DRenderer').use3DRenderer> | null
   gridHelper: THREE.GridHelper | null
   axesHelper: THREE.Group | null
   robotGroup: THREE.Group | null
