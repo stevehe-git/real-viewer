@@ -1,8 +1,21 @@
 import { createApp } from 'vue'
+import { createPinia } from 'pinia'
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
 import './style.css'
 import App from './App.vue'
 import router from './router'
+import { useRvizStore } from './stores/rviz'
 
-createApp(App).use(router).use(ElementPlus).mount('#app')
+const app = createApp(App)
+const pinia = createPinia()
+
+app.use(pinia)
+app.use(router)
+app.use(ElementPlus)
+
+// 初始化RViz store
+const rvizStore = useRvizStore()
+rvizStore.initialize()
+
+app.mount('#app')
