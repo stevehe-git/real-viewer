@@ -81,6 +81,7 @@ import { useRvizStore } from '../../stores/rviz'
 import { useSplitter } from '../../composables/viewer/layout/useSplitter'
 import { useViewControl } from '../../composables/viewer/view-control/useViewControl'
 import { useFullscreen } from '../../composables/viewer/view-control/useFullscreen'
+import { useDisplaySync } from '../../composables/viewer/scene/useDisplaySync'
 import type { PointCloudData, PathData } from '../../components/RvizViewer/types'
 
 // 使用RViz store
@@ -102,6 +103,55 @@ const viewControl = useViewControl({
   gridVisible,
   axesVisible
 })
+
+// 显示配置同步（监听 displayComponents 变化，实时同步到渲染器）
+let displaySyncInstance: ReturnType<typeof useDisplaySync> | null = null
+
+watch(
+  () => viewerRef.value?.getSceneManager(),
+  (sceneManager) => {
+    if (sceneManager && !displaySyncInstance) {
+      const worldview = viewerRef.value?.getWorldview()
+      if (worldview) {
+        displaySyncInstance = useDisplaySync({
+          context: {
+            setGridVisible: (visible: boolean) => {
+              sceneManager.setGridVisible(visible)
+              worldview.markDirty()
+              worldview.paint()
+            },
+            setAxesVisible: (visible: boolean) => {
+              sceneManager.setAxesVisible(visible)
+              worldview.markDirty()
+              worldview.paint()
+            },
+            destroyGrid: () => {
+              sceneManager.destroyGrid()
+              worldview.markDirty()
+              worldview.paint()
+            },
+            destroyAxes: () => {
+              sceneManager.destroyAxes()
+              worldview.markDirty()
+              worldview.paint()
+            },
+            createGrid: () => {
+              sceneManager.createGrid()
+              worldview.markDirty()
+              worldview.paint()
+            },
+            createAxes: () => {
+              sceneManager.createAxes()
+              worldview.markDirty()
+              worldview.paint()
+            }
+          }
+        })
+      }
+    }
+  },
+  { immediate: true }
+)
 
 // 面板设置抽屉可见性
 const panelSettingsVisible = ref(false)

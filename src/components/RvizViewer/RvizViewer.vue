@@ -324,7 +324,9 @@ defineExpose({
   toggleAxes,
   setGridVisible,
   setAxesVisible,
-  setBackgroundColor
+  setBackgroundColor,
+  getSceneManager: () => sceneManager.value,
+  getWorldview: () => worldview.value
 })
 
 // 监听属性变化

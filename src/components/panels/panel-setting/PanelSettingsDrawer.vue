@@ -3,7 +3,6 @@
     v-model="visible"
     title="面板设置"
     :size="400"
-    :before-close="handleClose"
   >
     <div class="panel-settings">
       <div class="setting-description">
@@ -36,7 +35,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { useRvizStore } from '@/stores/rviz'
 import { Monitor, InfoFilled, Tools, View } from '@element-plus/icons-vue'
 
@@ -61,16 +60,10 @@ interface Emits {
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
-const visible = ref(false)
-
-// 监听父组件的visible状态
-watch(() => props.modelValue, (newVal) => {
-  visible.value = newVal
-})
-
-// 监听visible的变化，通知父组件
-watch(visible, (newVal) => {
-  emit('update:modelValue', newVal)
+// 使用 computed 来同步 v-model，避免循环更新和初始化问题
+const visible = computed({
+  get: () => props.modelValue,
+  set: (val) => emit('update:modelValue', val)
 })
 
 const availablePanels = ref<Panel[]>([
@@ -121,10 +114,7 @@ const applySettings = () => {
   visible.value = false
 }
 
-const handleClose = (done: () => void) => {
-  // 可以在这里添加确认逻辑
-  done()
-}
+// 移除 handleClose，直接使用 v-model 控制
 
 // 初始化时从localStorage加载设置
 const loadSettings = () => {

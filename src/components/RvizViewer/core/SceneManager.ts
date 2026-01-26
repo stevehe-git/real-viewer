@@ -291,6 +291,60 @@ export class SceneManager {
   }
 
   /**
+   * 销毁网格
+   */
+  destroyGrid(): void {
+    this.gridVisible = false
+    this.gridCommand = null
+    this.gridData = null
+    this.worldviewContext.onUnmount(this.gridInstance)
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
+  }
+
+  /**
+   * 销毁坐标轴
+   */
+  destroyAxes(): void {
+    this.axesVisible = false
+    this.cylindersCommand = null
+    this.axesData = null
+    this.worldviewContext.onUnmount(this.axesInstance)
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
+  }
+
+  /**
+   * 创建网格
+   */
+  createGrid(): void {
+    if (!this.gridCommand) {
+      this.gridCommand = grid(this.reglContext)
+    }
+    if (!this.gridData) {
+      this.updateGridData()
+    }
+    this.gridVisible = true
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
+  }
+
+  /**
+   * 创建坐标轴
+   */
+  createAxes(): void {
+    if (!this.cylindersCommand) {
+      this.cylindersCommand = cylinders(this.reglContext)
+    }
+    if (!this.axesData) {
+      this.updateAxesData()
+    }
+    this.axesVisible = true
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
+  }
+
+  /**
    * 销毁场景
    */
   destroy(): void {
