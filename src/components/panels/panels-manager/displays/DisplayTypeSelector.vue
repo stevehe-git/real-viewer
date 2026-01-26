@@ -72,7 +72,7 @@
       <div class="selector-actions">
         <el-divider />
         <div class="action-buttons">
-          <el-button @click="handleClose">Cancel</el-button>
+          <el-button @click="handleCancel">Cancel</el-button>
           <el-button type="primary" :disabled="!selectedType" @click="confirmSelection">
             OK
           </el-button>
@@ -252,16 +252,19 @@ const selectType = (type: DisplayType) => {
 
 const selectTopic = (topic: string) => {
   // 根据topic推断显示类型
+  const firstCategory = categories.value[0]
+  if (!firstCategory) return
+  
   if (topic.indexOf('image') !== -1) {
-    selectedType.value = categories.value[0].types.find((t: DisplayType) => t.id === 'image') || null
+    selectedType.value = firstCategory.types.find((t: DisplayType) => t.id === 'image') || null
   } else if (topic.indexOf('scan') !== -1) {
-    selectedType.value = categories.value[0].types.find((t: DisplayType) => t.id === 'laserscan') || null
+    selectedType.value = firstCategory.types.find((t: DisplayType) => t.id === 'laserscan') || null
   } else if (topic.indexOf('pointcloud') !== -1) {
-    selectedType.value = categories.value[0].types.find((t: DisplayType) => t.id === 'pointcloud2') || null
+    selectedType.value = firstCategory.types.find((t: DisplayType) => t.id === 'pointcloud2') || null
   } else if (topic.indexOf('path') !== -1) {
-    selectedType.value = categories.value[0].types.find((t: DisplayType) => t.id === 'path') || null
+    selectedType.value = firstCategory.types.find((t: DisplayType) => t.id === 'path') || null
   } else if (topic.indexOf('map') !== -1) {
-    selectedType.value = categories.value[0].types.find((t: DisplayType) => t.id === 'map') || null
+    selectedType.value = firstCategory.types.find((t: DisplayType) => t.id === 'map') || null
   }
 }
 
@@ -273,11 +276,20 @@ const confirmSelection = () => {
   }
 }
 
+// 处理取消按钮点击
+const handleCancel = () => {
+  selectedType.value = null
+  visible.value = false
+}
+
+// 处理 drawer 关闭前的回调（由 Element Plus 的 before-close 触发）
 const handleClose = (done?: () => void) => {
   selectedType.value = null
-  if (done) {
+  // done 是 Element Plus 提供的关闭函数，如果存在且是函数则调用它
+  if (done && typeof done === 'function') {
     done()
   } else {
+    // 如果没有 done 函数，直接关闭
     visible.value = false
   }
 }

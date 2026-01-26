@@ -1,6 +1,6 @@
 <template>
   <div class="rviz-viewer">
-    <div class="viewer-container">
+    <div ref="containerRef" class="viewer-container">
       <canvas ref="canvasRef" class="viewer-canvas"></canvas>
       <div class="viewer-controls">
         <el-button-group>
@@ -59,11 +59,13 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
+const containerRef = ref<HTMLElement | null>(null)
 const worldview = ref<Worldview | null>(null)
 const sceneManager = ref<SceneManager | null>(null)
 const cameraController = ref<WorldviewCameraController | null>(null)
 const gridVisible = ref(true)
 const axesVisible = ref(true)
+let resizeObserver: ResizeObserver | null = null
 
 // 初始化
 onMounted(async () => {
@@ -121,6 +123,10 @@ onMounted(async () => {
 
   // 设置事件监听
   setupEventListeners()
+
+  // 设置容器尺寸监听（需要等待容器 ref 可用）
+  await nextTick()
+  setupResizeObserver()
 
   // 初始渲染
   worldview.value.paint()
@@ -199,16 +205,61 @@ function setupEventListeners(): void {
 
   // 窗口大小变化
   const handleResize = () => {
-    if (!canvasRef.value || !worldview.value) return
-    const rect = canvasRef.value.getBoundingClientRect()
-    worldview.value.setDimension({
-      width: rect.width,
-      height: rect.height,
-      left: rect.left,
-      top: rect.top
-    })
+    updateDimensions()
   }
   window.addEventListener('resize', handleResize)
+}
+
+// 更新画布和世界观尺寸
+function updateDimensions(): void {
+  if (!canvasRef.value || !worldview.value || !containerRef.value) return
+  
+  const rect = containerRef.value.getBoundingClientRect()
+  const width = Math.max(1, Math.floor(rect.width))
+  const height = Math.max(1, Math.floor(rect.height))
+  
+  // 更新画布尺寸
+  canvasRef.value.width = width
+  canvasRef.value.height = height
+  
+  // 更新世界观尺寸
+  worldview.value.setDimension({
+    width,
+    height,
+    left: rect.left,
+    top: rect.top
+  })
+  
+  // 触发重新渲染
+  worldview.value.markDirty()
+  worldview.value.paint()
+}
+
+// 设置容器尺寸监听（使用 ResizeObserver 监听容器尺寸变化）
+function setupResizeObserver(): void {
+  if (!containerRef.value) {
+    console.warn('Container ref is not available for ResizeObserver')
+    return
+  }
+  
+  if (!window.ResizeObserver) {
+    console.warn('ResizeObserver is not supported in this browser')
+    return
+  }
+
+  resizeObserver = new ResizeObserver((entries) => {
+    // 使用 requestAnimationFrame 来节流，避免频繁更新
+    requestAnimationFrame(() => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect
+        if (width > 0 && height > 0) {
+          updateDimensions()
+        }
+      }
+    })
+  })
+  
+  resizeObserver.observe(containerRef.value)
 }
 
 // 重置相机
@@ -265,6 +316,13 @@ watch(
 
 // 清理
 onUnmounted(() => {
+  // 清理 ResizeObserver
+  if (resizeObserver && containerRef.value) {
+    resizeObserver.unobserve(containerRef.value)
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
+  
   if (worldview.value) {
     worldview.value.destroy()
   }

@@ -82,7 +82,7 @@ interface Props {
 const props = defineProps<Props>()
 const rvizStore = useRvizStore()
 
-// 获取固定帧（响应式）
+// 获取固定帧（使用响应式引用）
 const fixedFrame = computed(() => {
   return tfManager.getFixedFrameRef().value || 'map'
 })

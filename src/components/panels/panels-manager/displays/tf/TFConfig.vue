@@ -305,7 +305,7 @@ const dataUpdateTrigger = tfManager.getDataUpdateTrigger()
 const allFramesInfo = computed(() => {
   // 访问触发器以确保响应式追踪
   dataUpdateTrigger.value
-  const fixedFrame = tfManager.getFixedFrameRef().value || 'map'
+  const fixedFrame = tfManager.getFixedFrame() || 'map'
   
   const infoMap = new Map<string, ReturnType<typeof tfManager.getFrameInfo>>()
   frames.value.forEach(frame => {

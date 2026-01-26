@@ -3,8 +3,7 @@
  * 组合所有功能模块，提供统一的访问接口，保持向后兼容
  */
 import { defineStore } from 'pinia'
-import { computed } from 'vue'
-import { storeToRefs } from 'pinia'
+import { computed, toRef } from 'vue'
 import { useSceneStore } from './scene'
 import { usePanelStore } from './panel'
 import { useCommunicationStore } from './communication'
@@ -17,12 +16,11 @@ export const useRvizStore = defineStore('rviz', () => {
   const communicationStore = useCommunicationStore()
   const displayStore = useDisplayStore()
 
-  // 使用 storeToRefs 提取 ref（保持响应式）
-  const { sceneState } = storeToRefs(sceneStore)
-  const { panelConfig } = storeToRefs(panelStore)
-  const { communicationState } = storeToRefs(communicationStore)
-  const { displayComponents } = storeToRefs(displayStore)
-  
+  // 重新导出状态（保持向后兼容，使用 toRef 保持响应式）
+  const sceneState = toRef(sceneStore, 'sceneState')
+  const panelConfig = toRef(panelStore, 'panelConfig')
+  const communicationState = toRef(communicationStore, 'communicationState')
+  const displayComponents = toRef(displayStore, 'displayComponents')
   const robotConnection = computed(() => communicationStore.robotConnection)
   const availablePlugins = computed(() => communicationStore.availablePlugins)
 
@@ -30,9 +28,9 @@ export const useRvizStore = defineStore('rviz', () => {
   function saveCurrentConfig() {
     try {
       const config = {
-        sceneState: (sceneState as any).value,
-        panelConfig: (panelConfig as any).value,
-        communicationState: (communicationState as any).value
+        sceneState: sceneState.value,
+        panelConfig: panelConfig.value,
+        communicationState: communicationState.value
       }
       localStorage.setItem('rviz-full-config', JSON.stringify(config))
     } catch (error) {
@@ -43,9 +41,9 @@ export const useRvizStore = defineStore('rviz', () => {
   function exportConfig() {
     try {
       const config = {
-        sceneState: (sceneState as any).value,
-        panelConfig: (panelConfig as any).value,
-        communicationState: (communicationState as any).value,
+        sceneState: sceneState.value,
+        panelConfig: panelConfig.value,
+        communicationState: communicationState.value,
         version: '1.0.0',
         exportDate: new Date().toISOString()
       }
@@ -64,14 +62,14 @@ export const useRvizStore = defineStore('rviz', () => {
   function importConfig(configData: any): boolean {
     try {
       if (configData.sceneState) {
-        Object.assign((sceneState as any).value, configData.sceneState)
+        Object.assign(sceneState.value, configData.sceneState)
       }
       if (configData.panelConfig) {
-        Object.assign((panelConfig as any).value, configData.panelConfig)
+        Object.assign(panelConfig.value, configData.panelConfig)
         panelStore.savePanelConfig()
       }
       if (configData.communicationState) {
-        Object.assign((communicationState as any).value, configData.communicationState)
+        Object.assign(communicationState.value, configData.communicationState)
       }
       return true
     } catch (error) {
