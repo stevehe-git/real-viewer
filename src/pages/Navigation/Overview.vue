@@ -125,6 +125,11 @@ watch(
               worldview.markDirty()
               worldview.paint()
             },
+            setAxesOptions: (options: { length?: number; radius?: number; alpha?: number }) => {
+              sceneManager.setAxesOptions(options)
+              worldview.markDirty()
+              worldview.paint()
+            },
             setGridOptions: (options: { 
               planeCellCount?: number
               normalCellCount?: number

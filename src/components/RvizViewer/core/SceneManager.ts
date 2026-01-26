@@ -3,7 +3,8 @@
  * 基于 regl-worldview 的架构，使用命令系统管理场景对象
  */
 import type { Regl, PointCloudData, PathData, RenderOptions } from '../types'
-import { grid, defaultAxes, lines, makePointsCommand, cylinders } from '../commands'
+import { grid, lines, makePointsCommand, cylinders } from '../commands'
+import { quat } from 'gl-matrix'
 
 export class SceneManager {
   private reglContext: Regl
@@ -138,11 +139,66 @@ export class SceneManager {
     }
   }
 
-  private updateAxesData(): void {
-    if (this.axesData) return
+  private updateAxesData(options?: { length?: number; radius?: number; alpha?: number }): void {
+    // 根据配置选项动态生成坐标轴数据
+    const length = options?.length ?? 1.0
+    const radius = options?.radius ?? 0.02
+    const alpha = options?.alpha ?? 1.0
 
-    // 使用 defaultAxes 数据
-    this.axesData = defaultAxes
+    // 创建旋转四元数
+    const createRotationQuaternion = (axis: 'x' | 'y' | 'z', angle: number) => {
+      const q = quat.create()
+      switch (axis) {
+        case 'x':
+          quat.setAxisAngle(q, [1, 0, 0], angle)
+          break
+        case 'y':
+          quat.setAxisAngle(q, [0, 1, 0], angle)
+          break
+        case 'z':
+          quat.setAxisAngle(q, [0, 0, 1], angle)
+          break
+      }
+      return { x: q[0], y: q[1], z: q[2], w: q[3] }
+    }
+
+    const origin = { x: 0, y: 0, z: 0 }
+    // X轴：红色，绕Y轴旋转-90度
+    const xAxisRotation = createRotationQuaternion('y', -Math.PI / 2)
+    const xAxis = {
+      pose: {
+        position: { x: length / 2, y: 0, z: 0 },
+        orientation: xAxisRotation
+      },
+      points: [origin],
+      scale: { x: radius, y: radius, z: length },
+      color: { r: 1.0, g: 0.0, b: 0.0, a: alpha }
+    }
+
+    // Y轴：绿色，绕X轴旋转-90度
+    const yAxisRotation = createRotationQuaternion('x', -Math.PI / 2)
+    const yAxis = {
+      pose: {
+        position: { x: 0, y: length / 2, z: 0 },
+        orientation: yAxisRotation
+      },
+      points: [origin],
+      scale: { x: radius, y: radius, z: length },
+      color: { r: 0.0, g: 1.0, b: 0.0, a: alpha }
+    }
+
+    // Z轴：蓝色，不需要旋转
+    const zAxis = {
+      pose: {
+        position: { x: 0, y: 0, z: length / 2 },
+        orientation: { x: 0, y: 0, z: 0, w: 1 }
+      },
+      points: [origin],
+      scale: { x: radius, y: radius, z: length },
+      color: { r: 0.0, g: 0.0, b: 1.0, a: alpha }
+    }
+
+    this.axesData = [xAxis, yAxis, zAxis]
   }
 
   // 保存实例引用以便正确管理
@@ -392,6 +448,24 @@ export class SceneManager {
     
     this.registerDrawCalls()
     this.worldviewContext.onDirty()
+  }
+
+  /**
+   * 更新坐标轴配置（长度、半径、透明度等）
+   */
+  updateAxesOptions(options: { length?: number; radius?: number; alpha?: number }): void {
+    // 更新坐标轴数据
+    this.updateAxesData(options)
+    // 重新注册绘制调用
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
+  }
+
+  /**
+   * 设置坐标轴配置选项（别名方法）
+   */
+  setAxesOptions(options: { length?: number; radius?: number; alpha?: number }): void {
+    this.updateAxesOptions(options)
   }
 
   /**

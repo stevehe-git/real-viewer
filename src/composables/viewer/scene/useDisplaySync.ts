@@ -19,6 +19,7 @@ export interface DisplaySyncContext {
     offsetY?: number
     offsetZ?: number
   }) => void
+  setAxesOptions: (options: { length?: number; radius?: number; alpha?: number }) => void
   destroyGrid: () => void
   destroyAxes: () => void
   createGrid: () => void
@@ -84,6 +85,14 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     if (axesComponent.enabled) {
       context.createAxes()
       context.setAxesVisible(true)
+      
+      // 更新坐标轴配置选项（长度、半径、透明度等）
+      const options = axesComponent.options || {}
+      context.setAxesOptions({
+        length: options.length,
+        radius: options.radius,
+        alpha: options.alpha
+      })
     } else {
       context.setAxesVisible(false)
     }
@@ -145,6 +154,30 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
           offsetX: gridConfig.offsetX,
           offsetY: gridConfig.offsetY,
           offsetZ: gridConfig.offsetZ
+        })
+      }
+    },
+    { deep: true }
+  )
+
+  // 监听 Axes 组件的配置选项变化（长度、半径、透明度等）
+  watch(
+    () => {
+      const axesComponent = rvizStore.displayComponents.find(c => c.type === 'axes')
+      return axesComponent ? {
+        id: axesComponent.id,
+        enabled: axesComponent.enabled,
+        length: axesComponent.options?.length,
+        radius: axesComponent.options?.radius,
+        alpha: axesComponent.options?.alpha
+      } : null
+    },
+    (axesConfig) => {
+      if (axesConfig && axesConfig.enabled) {
+        context.setAxesOptions({
+          length: axesConfig.length,
+          radius: axesConfig.radius,
+          alpha: axesConfig.alpha
         })
       }
     },
