@@ -20,6 +20,19 @@ export class SceneManager {
   private pathsData: any[] = []
   private mapData: any = null
   private mapConfig: { alpha?: number; colorScheme?: string; drawBehind?: boolean } = {}
+  private laserScanData: any = null
+  private laserScanConfig: { 
+    style?: string
+    size?: number
+    alpha?: number
+    colorTransformer?: string
+    useRainbow?: boolean
+    minColor?: { r: number; g: number; b: number }
+    maxColor?: { r: number; g: number; b: number }
+    autocomputeIntensityBounds?: boolean
+    minIntensity?: number
+    maxIntensity?: number
+  } = {}
 
   private options: Required<Omit<RenderOptions, 'gridColor'>> & { gridColor: [number, number, number, number] }
   private gridVisible = true
@@ -501,6 +514,53 @@ export class SceneManager {
     drawBehind?: boolean
   }): void {
     this.updateMapOptions(options)
+  }
+
+  /**
+   * 更新 LaserScan 配置选项（样式、大小、透明度、颜色转换器等）
+   */
+  updateLaserScanOptions(options: { 
+    style?: string
+    size?: number
+    alpha?: number
+    colorTransformer?: string
+    useRainbow?: boolean
+    minColor?: { r: number; g: number; b: number }
+    maxColor?: { r: number; g: number; b: number }
+    autocomputeIntensityBounds?: boolean
+    minIntensity?: number
+    maxIntensity?: number
+  }): void {
+    // 更新 LaserScan 配置
+    this.laserScanConfig = {
+      ...this.laserScanConfig,
+      ...options
+    }
+    // 如果 LaserScan 数据存在，应用新配置并重新渲染
+    if (this.laserScanData) {
+      // TODO: 应用配置到 LaserScan 数据（style、size、alpha、colorTransformer等）
+      // 这里需要根据实际的 LaserScan 渲染实现来更新
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
+    }
+  }
+
+  /**
+   * 设置 LaserScan 配置选项（别名方法）
+   */
+  setLaserScanOptions(options: { 
+    style?: string
+    size?: number
+    alpha?: number
+    colorTransformer?: string
+    useRainbow?: boolean
+    minColor?: { r: number; g: number; b: number }
+    maxColor?: { r: number; g: number; b: number }
+    autocomputeIntensityBounds?: boolean
+    minIntensity?: number
+    maxIntensity?: number
+  }): void {
+    this.updateLaserScanOptions(options)
   }
 
   /**

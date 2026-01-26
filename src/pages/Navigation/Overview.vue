@@ -139,6 +139,22 @@ watch(
               worldview.markDirty()
               worldview.paint()
             },
+            setLaserScanOptions: (options: { 
+              style?: string
+              size?: number
+              alpha?: number
+              colorTransformer?: string
+              useRainbow?: boolean
+              minColor?: { r: number; g: number; b: number }
+              maxColor?: { r: number; g: number; b: number }
+              autocomputeIntensityBounds?: boolean
+              minIntensity?: number
+              maxIntensity?: number
+            }) => {
+              sceneManager.setLaserScanOptions(options)
+              worldview.markDirty()
+              worldview.paint()
+            },
             setGridOptions: (options: { 
               planeCellCount?: number
               normalCellCount?: number

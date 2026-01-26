@@ -25,6 +25,18 @@ export interface DisplaySyncContext {
     colorScheme?: string
     drawBehind?: boolean
   }) => void
+  setLaserScanOptions: (options: { 
+    style?: string
+    size?: number
+    alpha?: number
+    colorTransformer?: string
+    useRainbow?: boolean
+    minColor?: { r: number; g: number; b: number }
+    maxColor?: { r: number; g: number; b: number }
+    autocomputeIntensityBounds?: boolean
+    minIntensity?: number
+    maxIntensity?: number
+  }) => void
   destroyGrid: () => void
   destroyAxes: () => void
   createGrid: () => void
@@ -126,12 +138,42 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
   }
 
   /**
+   * 同步 LaserScan 显示状态
+   */
+  function syncLaserScanDisplay(): void {
+    const laserScanComponent = rvizStore.displayComponents.find(c => c.type === 'laserscan')
+    
+    if (!laserScanComponent) {
+      // LaserScan 组件不存在，不处理
+      return
+    }
+
+    // LaserScan 组件存在，更新配置选项
+    if (laserScanComponent.enabled) {
+      const options = laserScanComponent.options || {}
+      context.setLaserScanOptions({
+        style: options.style,
+        size: options.size,
+        alpha: options.alpha,
+        colorTransformer: options.colorTransformer,
+        useRainbow: options.useRainbow,
+        minColor: options.minColor,
+        maxColor: options.maxColor,
+        autocomputeIntensityBounds: options.autocomputeIntensityBounds,
+        minIntensity: options.minIntensity,
+        maxIntensity: options.maxIntensity
+      })
+    }
+  }
+
+  /**
    * 同步所有显示组件
    */
   function syncAllDisplays(): void {
     syncGridDisplay()
     syncAxesDisplay()
     syncMapDisplay()
+    syncLaserScanDisplay()
   }
 
   // 监听 displayComponents 数组的变化（添加、删除）
@@ -236,6 +278,44 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     { deep: true }
   )
 
+  // 监听 LaserScan 组件的配置选项变化（样式、大小、透明度、颜色转换器等）
+  watch(
+    () => {
+      const laserScanComponent = rvizStore.displayComponents.find(c => c.type === 'laserscan')
+      return laserScanComponent ? {
+        id: laserScanComponent.id,
+        enabled: laserScanComponent.enabled,
+        style: laserScanComponent.options?.style,
+        size: laserScanComponent.options?.size,
+        alpha: laserScanComponent.options?.alpha,
+        colorTransformer: laserScanComponent.options?.colorTransformer,
+        useRainbow: laserScanComponent.options?.useRainbow,
+        minColor: laserScanComponent.options?.minColor,
+        maxColor: laserScanComponent.options?.maxColor,
+        autocomputeIntensityBounds: laserScanComponent.options?.autocomputeIntensityBounds,
+        minIntensity: laserScanComponent.options?.minIntensity,
+        maxIntensity: laserScanComponent.options?.maxIntensity
+      } : null
+    },
+    (laserScanConfig) => {
+      if (laserScanConfig && laserScanConfig.enabled) {
+        context.setLaserScanOptions({
+          style: laserScanConfig.style,
+          size: laserScanConfig.size,
+          alpha: laserScanConfig.alpha,
+          colorTransformer: laserScanConfig.colorTransformer,
+          useRainbow: laserScanConfig.useRainbow,
+          minColor: laserScanConfig.minColor,
+          maxColor: laserScanConfig.maxColor,
+          autocomputeIntensityBounds: laserScanConfig.autocomputeIntensityBounds,
+          minIntensity: laserScanConfig.minIntensity,
+          maxIntensity: laserScanConfig.maxIntensity
+        })
+      }
+    },
+    { deep: true }
+  )
+
   // 初始同步
   syncAllDisplays()
 
@@ -243,6 +323,7 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     syncGridDisplay,
     syncAxesDisplay,
     syncMapDisplay,
+    syncLaserScanDisplay,
     syncAllDisplays
   }
 }
