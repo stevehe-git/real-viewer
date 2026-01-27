@@ -33,15 +33,40 @@ export interface PointCloudProcessResult {
   error?: string
 }
 
-type WorkerRequest = MapProcessRequest | PointCloudProcessRequest
-type WorkerResponse = MapProcessResult | PointCloudProcessResult
+export interface ImageProcessRequest {
+  type: 'processImage'
+  message: any
+  targetWidth: number
+  targetHeight: number
+}
+
+export interface ImageProcessResult {
+  type: 'imageProcessed'
+  imageData: ImageData | null
+  error?: string
+}
+
+export interface PathProcessRequest {
+  type: 'processPath'
+  data: any
+}
+
+export interface PathProcessResult {
+  type: 'pathProcessed'
+  pathData: any
+  error?: string
+}
+
+type WorkerRequest = MapProcessRequest | PointCloudProcessRequest | ImageProcessRequest | PathProcessRequest
+type WorkerResponse = MapProcessResult | PointCloudProcessResult | ImageProcessResult | PathProcessResult
 
 /**
  * 处理地图数据（OccupancyGrid 转三角形）
  */
 function processMap(request: MapProcessRequest): MapProcessResult {
+  const { componentId } = request
   try {
-    const { componentId, message, config } = request
+    const { message, config } = request
     const { alpha = 0.7, colorScheme = 'map', maxOptimalSize = 200 } = config
 
     if (!message || !message.info || !message.data || !Array.isArray(message.data)) {
@@ -161,13 +186,13 @@ function processMap(request: MapProcessRequest): MapProcessResult {
 
     return {
       type: 'mapProcessed',
-      componentId,
+      componentId: componentId,
       triangles: triangles.length > 0 ? triangles : null
     }
   } catch (error: any) {
     return {
       type: 'mapProcessed',
-      componentId,
+      componentId: componentId,
       triangles: null,
       error: error?.message || 'Unknown error'
     }
@@ -179,15 +204,240 @@ function processMap(request: MapProcessRequest): MapProcessResult {
  */
 function processPointCloud(request: PointCloudProcessRequest): PointCloudProcessResult {
   try {
-    // TODO: 实现点云数据处理
+    const { data } = request
+    if (!data || !data.points || data.points.length === 0) {
+      return {
+        type: 'pointCloudProcessed',
+        data: null
+      }
+    }
+
+    const points: any[] = []
+    const colors: any[] = []
+    const defaultColor = { r: 1, g: 1, b: 1, a: 1 }
+    const pointSize = data.pointSize || 3.0
+
+    // 优化：使用 for 循环而不是 forEach，性能更好
+    const pointsArray = data.points
+    const colorsArray = data.colors
+    for (let i = 0; i < pointsArray.length; i++) {
+      const point = pointsArray[i]
+      points.push({ x: point.x, y: point.y, z: point.z })
+      const color = colorsArray?.[i] || defaultColor
+      colors.push(color)
+    }
+
     return {
       type: 'pointCloudProcessed',
-      data: request.data
+      data: {
+        pose: {
+          position: { x: 0, y: 0, z: 0 },
+          orientation: { x: 0, y: 0, z: 0, w: 1 }
+        },
+        points,
+        colors: colors.length > 0 ? colors : undefined,
+        color: colors.length === 0 ? defaultColor : undefined,
+        scale: { x: pointSize, y: pointSize, z: pointSize }
+      }
     }
   } catch (error: any) {
     return {
       type: 'pointCloudProcessed',
       data: null,
+      error: error?.message || 'Unknown error'
+    }
+  }
+}
+
+/**
+ * 处理图像数据（像素转换）
+ */
+function processImage(request: ImageProcessRequest): ImageProcessResult {
+  try {
+    const { message, targetWidth, targetHeight } = request
+    
+    if (!message || !message.data) {
+      return {
+        type: 'imageProcessed',
+        imageData: null
+      }
+    }
+
+    const originalWidth = message.width ?? 0
+    const originalHeight = message.height ?? 0
+    const encoding = message.encoding || 'rgb8'
+    const step = message.step ?? (originalWidth * 3)
+    
+    if (originalWidth === 0 || originalHeight === 0) {
+      return {
+        type: 'imageProcessed',
+        imageData: null
+      }
+    }
+
+    // 处理 data 字段
+    let data: Uint8Array
+    if (typeof message.data === 'string') {
+      // Base64 解码（在 Worker 中处理）
+      const binaryString = atob(message.data)
+      const bytes = new Uint8Array(binaryString.length)
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i)
+      }
+      data = bytes
+    } else if (message.data instanceof Uint8Array) {
+      data = message.data
+    } else if (Array.isArray(message.data)) {
+      data = new Uint8Array(message.data)
+    } else {
+      return {
+        type: 'imageProcessed',
+        imageData: null,
+        error: 'Unsupported image data type'
+      }
+    }
+
+    // 创建 ImageData
+    const imageData = new ImageData(targetWidth, targetHeight)
+    const dstData = imageData.data
+    const scaleX = originalWidth / targetWidth
+    const scaleY = originalHeight / targetHeight
+
+    // 优化的像素转换（与主线程版本相同）
+    if (encoding === 'rgb8' || encoding === 'bgr8') {
+      const isBGR = encoding === 'bgr8'
+      const bytesPerPixel = 3
+      for (let dstY = 0; dstY < targetHeight; dstY++) {
+        const srcY = Math.floor(dstY * scaleY)
+        const srcRowStart = srcY * step
+        const dstRowStart = dstY * targetWidth * 4
+        
+        for (let dstX = 0; dstX < targetWidth; dstX++) {
+          const srcX = Math.floor(dstX * scaleX)
+          const srcIndex = srcRowStart + srcX * bytesPerPixel
+          const dstIndex = dstRowStart + dstX * 4
+          
+          if (srcIndex + 2 < data.length) {
+            if (isBGR) {
+              dstData[dstIndex] = data[srcIndex + 2] ?? 0
+              dstData[dstIndex + 1] = data[srcIndex + 1] ?? 0
+              dstData[dstIndex + 2] = data[srcIndex] ?? 0
+            } else {
+              dstData[dstIndex] = data[srcIndex] ?? 0
+              dstData[dstIndex + 1] = data[srcIndex + 1] ?? 0
+              dstData[dstIndex + 2] = data[srcIndex + 2] ?? 0
+            }
+            dstData[dstIndex + 3] = 255
+          }
+        }
+      }
+    } else if (encoding === 'rgba8' || encoding === 'bgra8') {
+      const isBGRA = encoding === 'bgra8'
+      const bytesPerPixel = 4
+      for (let dstY = 0; dstY < targetHeight; dstY++) {
+        const srcY = Math.floor(dstY * scaleY)
+        const srcRowStart = srcY * step
+        const dstRowStart = dstY * targetWidth * 4
+        
+        for (let dstX = 0; dstX < targetWidth; dstX++) {
+          const srcX = Math.floor(dstX * scaleX)
+          const srcIndex = srcRowStart + srcX * bytesPerPixel
+          const dstIndex = dstRowStart + dstX * 4
+          
+          if (srcIndex + 3 < data.length) {
+            if (isBGRA) {
+              dstData[dstIndex] = data[srcIndex + 2] ?? 0
+              dstData[dstIndex + 1] = data[srcIndex + 1] ?? 0
+              dstData[dstIndex + 2] = data[srcIndex] ?? 0
+              dstData[dstIndex + 3] = data[srcIndex + 3] ?? 0
+            } else {
+              dstData[dstIndex] = data[srcIndex] ?? 0
+              dstData[dstIndex + 1] = data[srcIndex + 1] ?? 0
+              dstData[dstIndex + 2] = data[srcIndex + 2] ?? 0
+              dstData[dstIndex + 3] = data[srcIndex + 3] ?? 0
+            }
+          }
+        }
+      }
+    } else if (encoding === 'mono8') {
+      const bytesPerPixel = 1
+      for (let dstY = 0; dstY < targetHeight; dstY++) {
+        const srcY = Math.floor(dstY * scaleY)
+        const srcRowStart = srcY * step
+        const dstRowStart = dstY * targetWidth * 4
+        
+        for (let dstX = 0; dstX < targetWidth; dstX++) {
+          const srcX = Math.floor(dstX * scaleX)
+          const srcIndex = srcRowStart + srcX * bytesPerPixel
+          const dstIndex = dstRowStart + dstX * 4
+          
+          if (srcIndex < data.length) {
+            const gray = data[srcIndex] ?? 0
+            dstData[dstIndex] = gray
+            dstData[dstIndex + 1] = gray
+            dstData[dstIndex + 2] = gray
+            dstData[dstIndex + 3] = 255
+          }
+        }
+      }
+    }
+
+    return {
+      type: 'imageProcessed',
+      imageData
+    }
+  } catch (error: any) {
+    return {
+      type: 'imageProcessed',
+      imageData: null,
+      error: error?.message || 'Unknown error'
+    }
+  }
+}
+
+/**
+ * 处理路径数据
+ */
+function processPath(request: PathProcessRequest): PathProcessResult {
+  try {
+    const { data } = request
+    if (!data || !data.waypoints || data.waypoints.length < 2) {
+      return {
+        type: 'pathProcessed',
+        pathData: null,
+        error: 'Invalid path data'
+      }
+    }
+
+    const points: any[] = []
+    const defaultColor = data.color || { r: 0, g: 1, b: 0, a: 1 }
+
+    // 优化：使用 for 循环而不是 forEach
+    const waypoints = data.waypoints
+    for (let i = 0; i < waypoints.length; i++) {
+      const point = waypoints[i]
+      if (point) {
+        points.push({ x: point.x, y: point.y, z: point.z })
+      }
+    }
+
+    return {
+      type: 'pathProcessed',
+      pathData: {
+        pose: {
+          position: { x: 0, y: 0, z: 0 },
+          orientation: { x: 0, y: 0, z: 0, w: 1 }
+        },
+        points,
+        color: defaultColor,
+        scale: { x: data.lineWidth || 1, y: data.lineWidth || 1, z: data.lineWidth || 1 },
+        primitive: 'line strip' as const
+      }
+    }
+  } catch (error: any) {
+    return {
+      type: 'pathProcessed',
+      pathData: null,
       error: error?.message || 'Unknown error'
     }
   }
@@ -206,20 +456,54 @@ self.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
       case 'processPointCloud':
         response = processPointCloud(request)
         break
+      case 'processImage':
+        response = processImage(request)
+        break
+      case 'processPath':
+        response = processPath(request)
+        break
       default:
         throw new Error(`Unknown request type: ${(request as any).type}`)
     }
 
-    // 使用 Transferable Objects 优化大数据传输（如果可能）
-    self.postMessage(response)
+    // 使用 Transferable Objects 优化大数据传输（ImageData 可以传输）
+    if (response.type === 'imageProcessed') {
+      const imageResult = response as ImageProcessResult
+      if (imageResult.imageData) {
+        // ImageData.data 是 Uint8ClampedArray，可以作为 Transferable 传输
+        // Worker 的 postMessage 支持第二个参数作为 transfer 数组
+        // Worker postMessage 的 transfer 参数需要作为第二个参数传递
+        // 注意：Worker 的 postMessage 第二个参数是 transfer 数组，不是 options 对象
+        const transferList = [imageResult.imageData.data.buffer]
+        ;(self.postMessage as any)(response, transferList)
+      } else {
+        self.postMessage(response)
+      }
+    } else {
+      self.postMessage(response)
+    }
   } catch (error: any) {
-    self.postMessage({
-      type: request.type === 'processMap' ? 'mapProcessed' : 'pointCloudProcessed',
-      componentId: request.type === 'processMap' ? (request as MapProcessRequest).componentId : '',
-      triangles: null,
-      data: null,
+    const errorResponse: any = {
       error: error?.message || 'Unknown error'
-    } as any)
+    }
+    
+    // 根据请求类型返回相应的错误响应
+    if (request.type === 'processMap') {
+      errorResponse.type = 'mapProcessed'
+      errorResponse.componentId = (request as MapProcessRequest).componentId
+      errorResponse.triangles = null
+    } else if (request.type === 'processPointCloud') {
+      errorResponse.type = 'pointCloudProcessed'
+      errorResponse.data = null
+    } else if (request.type === 'processImage') {
+      errorResponse.type = 'imageProcessed'
+      errorResponse.imageData = null
+    } else if (request.type === 'processPath') {
+      errorResponse.type = 'pathProcessed'
+      errorResponse.pathData = null
+    }
+    
+    self.postMessage(errorResponse)
   }
 })
 

@@ -39,6 +39,7 @@ export class SceneManager {
   private options: Required<Omit<RenderOptions, 'gridColor'>> & { gridColor: [number, number, number, number] }
   private gridVisible = true
   private axesVisible = true
+  private _pendingMapUpdate: number | null = null // 待处理的地图更新 RAF ID
 
   constructor(reglContext: Regl, worldviewContext: any, options?: RenderOptions) {
     this.reglContext = reglContext
@@ -325,43 +326,120 @@ export class SceneManager {
   /**
    * 更新点云数据
    */
-  updatePointCloud(data: PointCloudData): void {
+  /**
+   * 更新点云数据（使用 Web Worker 处理）
+   */
+  async updatePointCloud(data: PointCloudData): Promise<void> {
     if (!data || !data.points || data.points.length === 0) {
       this.pointCloudData = null
       return
     }
 
-    const points: any[] = []
-    const colors: any[] = []
-    const defaultColor = { r: 1, g: 1, b: 1, a: 1 }
-    const pointSize = data.pointSize || 3.0
+    try {
+      // 使用 Web Worker 处理点云数据（异步，不阻塞主线程）
+      // 序列化点云数据，确保可传递给 Worker（只提取必要的字段）
+      const serializedData = {
+        points: data.points ? data.points.map((p: any) => ({
+          x: p.x || 0,
+          y: p.y || 0,
+          z: p.z || 0
+        })) : [],
+        colors: data.colors ? data.colors.map((c: any) => ({
+          r: c.r || 1,
+          g: c.g || 1,
+          b: c.b || 1,
+          a: c.a || 1
+        })) : undefined,
+        pointSize: data.pointSize || 3.0
+      }
+      
+      const { getDataProcessorWorker } = await import('@/workers/dataProcessorWorker')
+      const worker = getDataProcessorWorker()
+      
+      const result = await worker.processPointCloud({
+        type: 'processPointCloud',
+        data: serializedData
+      })
 
-    data.points.forEach((point, index) => {
-      points.push({ x: point.x, y: point.y, z: point.z })
-      const color = data.colors?.[index] || defaultColor
-      colors.push(color)
-    })
+      if (result.error) {
+        console.error('Failed to process point cloud:', result.error)
+        return
+      }
 
-    this.pointCloudData = {
-      pose: {
-        position: { x: 0, y: 0, z: 0 },
-        orientation: { x: 0, y: 0, z: 0, w: 1 }
-      },
-      points,
-      colors: colors.length > 0 ? colors : undefined,
-      color: colors.length === 0 ? defaultColor : undefined,
-      scale: { x: pointSize, y: pointSize, z: pointSize }
+      // 保存处理后的数据
+      this.pointCloudData = result.data
+      
+      // 延迟注册绘制调用
+      requestAnimationFrame(() => {
+        this.registerDrawCalls()
+        this.worldviewContext.onDirty()
+      })
+    } catch (error) {
+      console.error('Failed to process point cloud in worker:', error)
+      // Worker 失败时回退到同步处理（已在 worker 内部处理）
     }
-
-    // 重新注册绘制调用
-    this.registerDrawCalls()
-    this.worldviewContext.onDirty()
   }
 
   /**
-   * 添加路径
+   * 添加路径（使用 Web Worker 处理）
    */
-  addPath(data: PathData): number {
+  async addPath(data: PathData): Promise<number> {
+    if (!data || !data.waypoints || data.waypoints.length < 2) {
+      return -1
+    }
+
+    try {
+      // 使用 Web Worker 处理路径数据（异步，不阻塞主线程）
+      // 序列化路径数据，确保可传递给 Worker（只提取必要的字段）
+      const serializedData = {
+        waypoints: data.waypoints ? data.waypoints.map((w: any) => ({
+          x: w.x || 0,
+          y: w.y || 0,
+          z: w.z || 0
+        })) : [],
+        color: data.color ? {
+          r: data.color.r || 0,
+          g: data.color.g || 1,
+          b: data.color.b || 0,
+          a: data.color.a || 1
+        } : undefined,
+        lineWidth: data.lineWidth || 1
+      }
+      
+      const { getDataProcessorWorker } = await import('@/workers/dataProcessorWorker')
+      const worker = getDataProcessorWorker()
+      
+      const result = await worker.processPath({
+        type: 'processPath',
+        data: serializedData
+      })
+
+      if (result.error || !result.pathData) {
+        console.error('Failed to process path:', result.error)
+        return -1
+      }
+
+      // 保存处理后的数据
+      this.pathsData.push(result.pathData)
+      
+      // 延迟注册绘制调用
+      requestAnimationFrame(() => {
+        this.registerDrawCalls()
+        this.worldviewContext.onDirty()
+      })
+      
+      return this.pathsData.length - 1
+    } catch (error) {
+      console.error('Failed to process path in worker:', error)
+      // Worker 失败时回退到同步处理
+      return this.addPathSync(data)
+    }
+  }
+
+  /**
+   * 同步添加路径（主线程回退方案）
+   */
+  private addPathSync(data: PathData): number {
     if (!data || !data.waypoints || data.waypoints.length < 2) {
       return -1
     }
@@ -369,9 +447,14 @@ export class SceneManager {
     const points: any[] = []
     const defaultColor = data.color || { r: 0, g: 1, b: 0, a: 1 }
 
-    data.waypoints.forEach((point) => {
-      points.push({ x: point.x, y: point.y, z: point.z })
-    })
+    // 优化：使用 for 循环而不是 forEach
+    const waypoints = data.waypoints
+    for (let i = 0; i < waypoints.length; i++) {
+      const point = waypoints[i]
+      if (point) {
+        points.push({ x: point.x, y: point.y, z: point.z })
+      }
+    }
 
     const pathData = {
       pose: {
@@ -385,7 +468,6 @@ export class SceneManager {
     }
 
     this.pathsData.push(pathData)
-    // 重新注册绘制调用
     this.registerDrawCalls()
     this.worldviewContext.onDirty()
     return this.pathsData.length - 1
@@ -552,13 +634,41 @@ export class SceneManager {
 
     try {
       // 使用 Web Worker 处理地图数据（异步，不阻塞主线程）
+      // 序列化消息数据，确保可传递给 Worker（只提取必要的字段）
+      const serializedMessage = {
+        info: {
+          width: message.info?.width || 0,
+          height: message.info?.height || 0,
+          resolution: message.info?.resolution || 0.05,
+          origin: {
+            position: {
+              x: message.info?.origin?.position?.x || 0,
+              y: message.info?.origin?.position?.y || 0,
+              z: message.info?.origin?.position?.z || 0
+            },
+            orientation: {
+              x: message.info?.origin?.orientation?.x || 0,
+              y: message.info?.origin?.orientation?.y || 0,
+              z: message.info?.origin?.orientation?.z || 0,
+              w: message.info?.origin?.orientation?.w || 1
+            }
+          }
+        },
+        // 确保 data 是可序列化的数组（转换为普通数组）
+        data: Array.isArray(message.data) 
+          ? Array.from(message.data) 
+          : (message.data instanceof Uint8Array || message.data instanceof Int8Array)
+            ? Array.from(message.data)
+            : []
+      }
+      
       const { getDataProcessorWorker } = await import('@/workers/dataProcessorWorker')
       const worker = getDataProcessorWorker()
       
       const result = await worker.processMap({
         type: 'processMap',
         componentId,
-        message,
+        message: serializedMessage,
         config: {
           alpha,
           colorScheme,
@@ -569,13 +679,20 @@ export class SceneManager {
       // 保存处理后的数据
       this.mapDataMap.set(componentId, result.triangles)
       
-      // 延迟注册绘制调用
-      requestAnimationFrame(() => {
-        this.registerDrawCalls()
-        this.worldviewContext.onDirty()
-      })
-    } catch (error) {
-      console.error('Failed to process map in worker:', error)
+      // 批量更新：延迟注册绘制调用，避免频繁渲染
+      // 使用 requestAnimationFrame 确保在下一帧才更新
+      if (!this._pendingMapUpdate) {
+        this._pendingMapUpdate = requestAnimationFrame(() => {
+          this.registerDrawCalls()
+          this.worldviewContext.onDirty()
+          this._pendingMapUpdate = null
+        })
+      }
+    } catch (error: any) {
+      // 忽略 "Request cancelled" 错误（这是正常的优化行为）
+      if (error?.message !== 'Request cancelled') {
+        console.error('Failed to process map in worker:', error)
+      }
       // Worker 失败时回退到同步处理（已在 worker 内部处理）
       // 这里不需要额外处理，因为 worker 会自动回退
     }

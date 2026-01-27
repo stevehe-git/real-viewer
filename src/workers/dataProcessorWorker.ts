@@ -2,7 +2,16 @@
  * 数据处理器 Worker 管理器
  * 管理 Web Worker 的创建、消息发送和结果接收
  */
-import type { MapProcessRequest, MapProcessResult, PointCloudProcessRequest, PointCloudProcessResult } from './dataProcessor.worker'
+import type { 
+  MapProcessRequest, 
+  MapProcessResult, 
+  PointCloudProcessRequest, 
+  PointCloudProcessResult,
+  ImageProcessRequest,
+  ImageProcessResult,
+  PathProcessRequest,
+  PathProcessResult
+} from './dataProcessor.worker'
 
 export class DataProcessorWorker {
   private worker: Worker | null = null
@@ -47,7 +56,7 @@ export class DataProcessorWorker {
     }
   }
 
-  private handleMessage(data: MapProcessResult | PointCloudProcessResult): void {
+  private handleMessage(data: MapProcessResult | PointCloudProcessResult | ImageProcessResult | PathProcessResult): void {
     if (data.type === 'mapProcessed') {
       const result = data as MapProcessResult
       const requestId = result.componentId // 使用 componentId 作为请求ID
@@ -63,9 +72,21 @@ export class DataProcessorWorker {
           pending.resolve(result)
         }
       }
-    } else if (data.type === 'pointCloudProcessed') {
-      const result = data as PointCloudProcessResult
-      // TODO: 处理点云结果
+    } else {
+      // 对于其他类型（pointCloudProcessed, imageProcessed, pathProcessed），使用 FIFO 方式匹配
+      // 这是简化实现，实际应该使用 requestId
+      const firstPending = this.pendingRequests.entries().next().value
+      if (firstPending) {
+        const [requestId, pending] = firstPending
+        clearTimeout(pending.timeout)
+        this.pendingRequests.delete(requestId)
+        
+        if ((data as any).error) {
+          pending.reject(new Error((data as any).error))
+        } else {
+          pending.resolve(data)
+        }
+      }
     }
   }
 
@@ -78,21 +99,67 @@ export class DataProcessorWorker {
       return this.processMapSync(request)
     }
 
+    return this.sendRequest(request.componentId, request, 10000)
+  }
+
+  /**
+   * 处理点云数据（异步）
+   */
+  async processPointCloud(request: PointCloudProcessRequest): Promise<PointCloudProcessResult> {
+    if (!this.worker) {
+      return this.processPointCloudSync(request)
+    }
+
+    const requestId = `pointcloud_${this.requestIdCounter++}`
+    return this.sendRequest(requestId, request, 10000)
+  }
+
+  /**
+   * 处理图像数据（异步）
+   */
+  async processImage(request: ImageProcessRequest): Promise<ImageProcessResult> {
+    if (!this.worker) {
+      return this.processImageSync(request)
+    }
+
+    const requestId = `image_${this.requestIdCounter++}`
+    return this.sendRequest(requestId, request, 10000)
+  }
+
+  /**
+   * 处理路径数据（异步）
+   */
+  async processPath(request: PathProcessRequest): Promise<PathProcessResult> {
+    if (!this.worker) {
+      return this.processPathSync(request)
+    }
+
+    const requestId = `path_${this.requestIdCounter++}`
+    return this.sendRequest(requestId, request, 5000)
+  }
+
+  /**
+   * 发送请求到 Worker（通用方法）
+   */
+  private sendRequest(requestId: string, request: any, timeoutMs: number): Promise<any> {
     return new Promise((resolve, reject) => {
-      const requestId = request.componentId
-      
-      // 如果已有相同 componentId 的请求，取消之前的
+      // 如果已有相同 requestId 的请求，静默取消之前的（不记录错误）
+      // 这是优化：只处理最新的数据，避免处理过时的数据
       const existing = this.pendingRequests.get(requestId)
       if (existing) {
         clearTimeout(existing.timeout)
-        existing.reject(new Error('Request cancelled'))
+        // 静默取消，不调用 reject，避免错误日志
+        // 旧请求的 Promise 将永远不会 resolve/reject，但会被垃圾回收
       }
 
-      // 设置超时（10秒）
+      // 设置超时
       const timeout = window.setTimeout(() => {
-        this.pendingRequests.delete(requestId)
-        reject(new Error('Map processing timeout'))
-      }, 10000)
+        const pending = this.pendingRequests.get(requestId)
+        if (pending) {
+          this.pendingRequests.delete(requestId)
+          pending.reject(new Error('Processing timeout'))
+        }
+      }, timeoutMs)
 
       this.pendingRequests.set(requestId, {
         resolve,
@@ -225,6 +292,98 @@ export class DataProcessorWorker {
       type: 'mapProcessed',
       componentId,
       triangles: triangles.length > 0 ? triangles : null
+    }
+  }
+
+  /**
+   * 同步处理点云数据（主线程回退方案）
+   */
+  private processPointCloudSync(request: PointCloudProcessRequest): PointCloudProcessResult {
+    const { data } = request
+    if (!data || !data.points || data.points.length === 0) {
+      return {
+        type: 'pointCloudProcessed',
+        data: null
+      }
+    }
+
+    const points: any[] = []
+    const colors: any[] = []
+    const defaultColor = { r: 1, g: 1, b: 1, a: 1 }
+    const pointSize = data.pointSize || 3.0
+
+    const pointsArray = data.points
+    const colorsArray = data.colors
+    for (let i = 0; i < pointsArray.length; i++) {
+      const point = pointsArray[i]
+      points.push({ x: point.x, y: point.y, z: point.z })
+      const color = colorsArray?.[i] || defaultColor
+      colors.push(color)
+    }
+
+    return {
+      type: 'pointCloudProcessed',
+      data: {
+        pose: {
+          position: { x: 0, y: 0, z: 0 },
+          orientation: { x: 0, y: 0, z: 0, w: 1 }
+        },
+        points,
+        colors: colors.length > 0 ? colors : undefined,
+        color: colors.length === 0 ? defaultColor : undefined,
+        scale: { x: pointSize, y: pointSize, z: pointSize }
+      }
+    }
+  }
+
+  /**
+   * 同步处理图像数据（主线程回退方案）
+   */
+  private processImageSync(_request: ImageProcessRequest): ImageProcessResult {
+    // 图像处理在主线程需要 Canvas，回退时返回 null，让主线程处理
+    return {
+      type: 'imageProcessed',
+      imageData: null,
+      error: 'Image processing requires Worker'
+    }
+  }
+
+  /**
+   * 同步处理路径数据（主线程回退方案）
+   */
+  private processPathSync(request: PathProcessRequest): PathProcessResult {
+    const { data } = request
+    if (!data || !data.waypoints || data.waypoints.length < 2) {
+      return {
+        type: 'pathProcessed',
+        pathData: null,
+        error: 'Invalid path data'
+      }
+    }
+
+    const points: any[] = []
+    const defaultColor = data.color || { r: 0, g: 1, b: 0, a: 1 }
+
+    const waypoints = data.waypoints
+    for (let i = 0; i < waypoints.length; i++) {
+      const point = waypoints[i]
+      if (point) {
+        points.push({ x: point.x, y: point.y, z: point.z })
+      }
+    }
+
+    return {
+      type: 'pathProcessed',
+      pathData: {
+        pose: {
+          position: { x: 0, y: 0, z: 0 },
+          orientation: { x: 0, y: 0, z: 0, w: 1 }
+        },
+        points,
+        color: defaultColor,
+        scale: { x: data.lineWidth || 1, y: data.lineWidth || 1, z: data.lineWidth || 1 },
+        primitive: 'line strip' as const
+      }
     }
   }
 

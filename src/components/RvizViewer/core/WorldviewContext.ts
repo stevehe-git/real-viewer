@@ -244,16 +244,17 @@ export class WorldviewContext {
 
   _paint(): void {
     this._needsPaint = false
-    const start = Date.now()
-    
-    // 优化：只在有统计对象时才重置
-    if (this.reglCommandObjects.length > 0) {
-      this.reglCommandObjects.forEach((cmd) => (cmd.stats.count = 0))
-    }
     
     if (!this.initializedData) {
       return
     }
+    
+    // 优化：只在有统计对象时才重置（使用 for 循环）
+    const cmdObjects = this.reglCommandObjects
+    for (let i = 0; i < cmdObjects.length; i++) {
+      cmdObjects[i].stats.count = 0
+    }
+    
     this._cachedReadHitmapCall = null // clear the cache every time we paint
     const { regl, camera } = this.initializedData
     this._clearCanvas(regl)
@@ -261,14 +262,13 @@ export class WorldviewContext {
       this._drawInput()
     })
 
-    // 优化：只在有回调时才遍历
+    // 优化：只在有回调时才遍历（使用 for...of 循环，性能更好）
     if (this._paintCalls.size > 0) {
-      this._paintCalls.forEach((paintCall) => {
+      for (const paintCall of this._paintCalls.values()) {
         paintCall()
-      })
+      }
     }
     
-    this.counters.render = Date.now() - start
     // More React state updates may have happened while we were painting, since paint happens
     // outside the normal React render flow. If this is the case, we need to paint again.
     if (this._needsPaint) {
