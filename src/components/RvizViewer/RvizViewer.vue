@@ -212,29 +212,45 @@ function setupEventListeners(): void {
   window.addEventListener('resize', handleResize)
 }
 
-// 更新画布和世界观尺寸
+// 更新画布和世界观尺寸（优化：使用防抖减少频繁更新）
+let resizeTimeout: number | null = null
 function updateDimensions(): void {
   if (!canvasRef.value || !worldview.value || !containerRef.value) return
   
-  const rect = containerRef.value.getBoundingClientRect()
-  const width = Math.max(1, Math.floor(rect.width))
-  const height = Math.max(1, Math.floor(rect.height))
+  // 清除之前的延迟调用
+  if (resizeTimeout !== null) {
+    cancelAnimationFrame(resizeTimeout)
+  }
   
-  // 更新画布尺寸
-  canvasRef.value.width = width
-  canvasRef.value.height = height
-  
-  // 更新世界观尺寸
-  worldview.value.setDimension({
-    width,
-    height,
-    left: rect.left,
-    top: rect.top
+  // 使用 requestAnimationFrame 延迟执行，避免频繁更新
+  resizeTimeout = requestAnimationFrame(() => {
+    const rect = containerRef.value!.getBoundingClientRect()
+    const width = Math.max(1, Math.floor(rect.width))
+    const height = Math.max(1, Math.floor(rect.height))
+    
+    // 检查尺寸是否真的改变了
+    if (canvasRef.value!.width === width && canvasRef.value!.height === height) {
+      return
+    }
+    
+    // 更新画布尺寸
+    canvasRef.value!.width = width
+    canvasRef.value!.height = height
+    
+    // 更新世界观尺寸
+    worldview.value!.setDimension({
+      width,
+      height,
+      left: rect.left,
+      top: rect.top
+    })
+    
+    // 触发重新渲染（仅在尺寸真正改变时）
+    worldview.value!.markDirty()
+    worldview.value!.paint()
+    
+    resizeTimeout = null
   })
-  
-  // 触发重新渲染
-  worldview.value.markDirty()
-  worldview.value.paint()
 }
 
 // 设置容器尺寸监听（使用 ResizeObserver 监听容器尺寸变化）
@@ -250,15 +266,13 @@ function setupResizeObserver(): void {
   }
 
   resizeObserver = new ResizeObserver((entries) => {
-    // 使用 requestAnimationFrame 来节流，避免频繁更新
-    requestAnimationFrame(() => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect
-        if (width > 0 && height > 0) {
-          updateDimensions()
-        }
+    // 直接调用 updateDimensions，它内部已经有防抖处理
+    for (const entry of entries) {
+      const { width, height } = entry.contentRect
+      if (width > 0 && height > 0) {
+        updateDimensions()
       }
-    })
+    }
   })
   
   resizeObserver.observe(containerRef.value)

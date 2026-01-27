@@ -19,9 +19,9 @@ export class SceneManager {
   private axesData: any = null
   private pointCloudData: any = null
   private pathsData: any[] = []
-  private mapData: any = null
-  private mapConfig: { alpha?: number; colorScheme?: string; drawBehind?: boolean } = {}
-  private mapRawMessage: any = null // 保存原始地图消息，用于配置变化时重新处理
+  private mapDataMap = new Map<string, any>() // 支持多个地图，key 为 componentId
+  private mapConfigMap = new Map<string, { alpha?: number; colorScheme?: string; drawBehind?: boolean }>() // 每个地图的配置
+  private mapRawMessageMap = new Map<string, any>() // 保存每个地图的原始消息
   private laserScanData: any = null
   private laserScanConfig: { 
     style?: string
@@ -226,7 +226,7 @@ export class SceneManager {
   private axesInstance: any = { displayName: 'Axes' }
   private pointsInstance: any = { displayName: 'Points' }
   private pathInstances: any[] = []
-  private mapInstance: any = { displayName: 'Map' }
+  private mapInstances = new Map<string, any>() // 每个地图的实例，key 为 componentId
 
   /**
    * 注册所有绘制调用到 WorldviewContext
@@ -285,16 +285,24 @@ export class SceneManager {
       }
     })
 
-    // 注册地图（使用 Triangles）
-    if (this.trianglesCommand && this.mapData) {
-      this.worldviewContext.onMount(this.mapInstance, triangles)
-      this.worldviewContext.registerDrawCall({
-        instance: this.mapInstance,
-        reglCommand: triangles,
-        children: this.mapData,
-        layerIndex: this.mapConfig.drawBehind ? -1 : 4
-      })
-    }
+    // 注册所有地图（使用 Triangles）
+    this.mapDataMap.forEach((mapData, componentId) => {
+      if (this.trianglesCommand && mapData) {
+        let mapInstance = this.mapInstances.get(componentId)
+        if (!mapInstance) {
+          mapInstance = { displayName: `Map-${componentId}` }
+          this.mapInstances.set(componentId, mapInstance)
+        }
+        const mapConfig = this.mapConfigMap.get(componentId) || {}
+        this.worldviewContext.onMount(mapInstance, triangles)
+        this.worldviewContext.registerDrawCall({
+          instance: mapInstance,
+          reglCommand: triangles,
+          children: mapData,
+          layerIndex: mapConfig.drawBehind ? -1 : 4
+        })
+      }
+    })
   }
 
   /**
@@ -305,7 +313,9 @@ export class SceneManager {
     this.worldviewContext.onUnmount(this.gridInstance)
     this.worldviewContext.onUnmount(this.axesInstance)
     this.worldviewContext.onUnmount(this.pointsInstance)
-    this.worldviewContext.onUnmount(this.mapInstance)
+    this.mapInstances.forEach((instance) => {
+      this.worldviewContext.onUnmount(instance)
+    })
     this.pathInstances.forEach((instance) => {
       this.worldviewContext.onUnmount(instance)
     })
@@ -389,7 +399,7 @@ export class SceneManager {
     // 只有在 WorldviewContext 已初始化时才重新注册绘制调用
     if (this.worldviewContext.initializedData) {
       this.registerDrawCalls()
-      this.worldviewContext.onDirty()
+      // 不调用 onDirty，由调用者统一处理最终渲染
     }
   }
 
@@ -398,7 +408,7 @@ export class SceneManager {
    */
   clearPointCloud(): void {
     this.pointCloudData = null
-    this.worldviewContext.onDirty()
+    // 不调用 onDirty，由调用者统一处理最终渲染
   }
 
   /**
@@ -504,10 +514,15 @@ export class SceneManager {
   /**
    * 更新地图数据（从 ROS OccupancyGrid 消息）
    */
-  updateMap(message: any): void {
+  updateMap(message: any, componentId: string): void {
+    if (!componentId) {
+      console.warn('updateMap: componentId is required')
+      return
+    }
+
     if (!message || !message.info || !message.data || !Array.isArray(message.data)) {
-      this.mapData = null
-      this.mapRawMessage = null
+      this.mapDataMap.delete(componentId)
+      this.mapRawMessageMap.delete(componentId)
       this.registerDrawCalls()
       this.worldviewContext.onDirty()
       return
@@ -521,46 +536,78 @@ export class SceneManager {
     const originPos = origin.position || { x: 0, y: 0, z: 0 }
 
     if (width === 0 || height === 0 || resolution === 0) {
-      this.mapData = null
-      this.mapRawMessage = null
+      this.mapDataMap.delete(componentId)
+      this.mapRawMessageMap.delete(componentId)
       this.registerDrawCalls()
       this.worldviewContext.onDirty()
       return
     }
 
     // 保存原始消息
-    this.mapRawMessage = message
+    this.mapRawMessageMap.set(componentId, message)
+    
+    // 获取该地图的配置
+    const mapConfig = this.mapConfigMap.get(componentId) || {}
+    const alpha = mapConfig.alpha ?? 0.7
+    const colorScheme = mapConfig.colorScheme || 'map'
 
-    // 将 OccupancyGrid 转换为三角形
-    const triangles: any[] = []
-    const alpha = this.mapConfig.alpha ?? 0.7
-    const colorScheme = this.mapConfig.colorScheme || 'map'
+    // 性能优化：根据地图大小决定降采样因子
+    // 目标：将地图尺寸控制在合理范围内（约200x200），减少三角形数量
+    const MAX_OPTIMAL_SIZE = 200
+    const downscaleFactor = Math.max(1, Math.ceil(Math.max(width, height) / MAX_OPTIMAL_SIZE))
+    const sampledWidth = Math.ceil(width / downscaleFactor)
+    const sampledHeight = Math.ceil(height / downscaleFactor)
+    const sampledResolution = resolution * downscaleFactor
 
-    // 遍历每个单元格
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const index = y * width + x
-        const occupancy = message.data[index]
-
-        // 跳过未知区域（-1）和自由空间（0），只渲染占用区域（>0）
-        if (occupancy <= 0 || occupancy === undefined) {
+    // 优化策略：批量渲染 - 合并所有三角形到一个数组中
+    // 使用类型化数组提升性能
+    const allPoints: any[] = []
+    const allColors: any[] = []
+    
+    // 遍历降采样后的单元格
+    for (let sy = 0; sy < sampledHeight; sy++) {
+      for (let sx = 0; sx < sampledWidth; sx++) {
+        // 计算原始坐标范围
+        const startX = sx * downscaleFactor
+        const startY = sy * downscaleFactor
+        const endX = Math.min(startX + downscaleFactor, width)
+        const endY = Math.min(startY + downscaleFactor, height)
+        
+        // 检查采样区域是否包含占用单元格
+        let hasOccupied = false
+        let maxOccupancy = 0
+        
+        // 在采样区域内查找占用单元格
+        for (let y = startY; y < endY; y++) {
+          for (let x = startX; x < endX; x++) {
+            const index = y * width + x
+            const occupancy = message.data[index]
+            if (occupancy > 0) {
+              hasOccupied = true
+              maxOccupancy = Math.max(maxOccupancy, occupancy)
+            }
+          }
+        }
+        
+        // 如果采样区域没有占用单元格，跳过
+        if (!hasOccupied) {
           continue
         }
 
-        // 计算单元格的世界坐标
-        const worldX = originPos.x + (x + 0.5) * resolution
-        const worldY = originPos.y + (y + 0.5) * resolution
+        // 计算采样单元格的世界坐标（使用采样后的分辨率）
+        const worldX = originPos.x + (sx + 0.5) * sampledResolution
+        const worldY = originPos.y + (sy + 0.5) * sampledResolution
         const worldZ = originPos.z
 
         // 计算单元格的四个角点
-        const halfRes = resolution * 0.5
+        const halfRes = sampledResolution * 0.5
         const p1 = { x: worldX - halfRes, y: worldY - halfRes, z: worldZ }
         const p2 = { x: worldX + halfRes, y: worldY - halfRes, z: worldZ }
         const p3 = { x: worldX + halfRes, y: worldY + halfRes, z: worldZ }
         const p4 = { x: worldX - halfRes, y: worldY + halfRes, z: worldZ }
 
-        // 根据占用值和颜色方案计算颜色
-        const occupancyValue = occupancy / 100.0 // ROS 中占用值是 0-100
+        // 根据占用值和颜色方案计算颜色（使用最大占用值）
+        const occupancyValue = maxOccupancy / 100.0
         let color: { r: number; g: number; b: number; a: number }
 
         if (colorScheme === 'map') {
@@ -580,53 +627,114 @@ export class SceneManager {
           color = { r: 1.0, g: 1.0, b: 1.0, a: alpha }
         }
 
-        // 创建两个三角形组成一个矩形
-        // 注意：pose 使用地图原点，points 已经是世界坐标
-        triangles.push({
-          pose: {
-            position: { x: 0, y: 0, z: 0 },
-            orientation: { x: 0, y: 0, z: 0, w: 1 }
-          },
-          points: [p1, p2, p3, p1, p3, p4],
-          color: color
-        })
+        // 添加两个三角形（组成矩形）到批量数组
+        // 第一个三角形：p1, p2, p3
+        allPoints.push(p1, p2, p3)
+        allColors.push(color, color, color)
+        // 第二个三角形：p1, p3, p4
+        allPoints.push(p1, p3, p4)
+        allColors.push(color, color, color)
       }
     }
 
-    this.mapData = triangles.length > 0 ? triangles : null
+    // 创建单个合并的三角形列表（大幅减少绘制调用）
+    // 从数千个独立的三角形对象减少到1个合并的对象
+    const triangles: any[] = []
+    if (allPoints.length > 0) {
+      triangles.push({
+        pose: {
+          position: { x: 0, y: 0, z: 0 },
+          orientation: { x: 0, y: 0, z: 0, w: 1 }
+        },
+        points: allPoints,
+        colors: allColors, // 使用顶点颜色数组，支持每个顶点不同颜色
+        color: undefined // 不使用单一颜色
+      })
+    }
+
+    // 保存该地图的数据
+    this.mapDataMap.set(componentId, triangles.length > 0 ? triangles : null)
+    
+    // 延迟注册绘制调用，避免在数据更新过程中频繁调用
+    // 使用 requestAnimationFrame 确保在下一帧才注册
+    requestAnimationFrame(() => {
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
+    })
+  }
+
+  /**
+   * 移除地图数据
+   * @param componentId 组件ID
+   */
+  removeMap(componentId: string): void {
+    this.mapDataMap.delete(componentId)
+    this.mapConfigMap.delete(componentId)
+    this.mapRawMessageMap.delete(componentId)
+    this.mapInstances.delete(componentId)
+    
+    // 延迟注册绘制调用，避免频繁调用
+    requestAnimationFrame(() => {
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
+    })
+  }
+
+  /**
+   * 清除所有地图数据（用于断开连接时）
+   */
+  clearAllMaps(): void {
+    this.mapDataMap.clear()
+    this.mapConfigMap.clear()
+    this.mapRawMessageMap.clear()
+    this.mapInstances.clear()
+    
+    // 立即重新注册绘制调用（清除地图后）
     this.registerDrawCalls()
-    this.worldviewContext.onDirty()
+    // 不调用 onDirty，由调用者统一处理最终渲染
   }
 
   /**
    * 更新 Map 配置选项（透明度、颜色方案、绘制顺序等）
+   * @param options 配置选项
+   * @param componentId 组件ID，用于区分不同的地图
    */
   updateMapOptions(options: { 
     alpha?: number
     colorScheme?: string
     drawBehind?: boolean
-  }): void {
-    // 更新 Map 配置
-    this.mapConfig = {
-      ...this.mapConfig,
-      ...options
+  }, componentId: string): void {
+    if (!componentId) {
+      console.warn('updateMapOptions: componentId is required')
+      return
     }
-    // 如果 Map 原始消息存在，重新生成地图数据以应用新配置
-    if (this.mapRawMessage) {
+
+    // 更新该地图的配置
+    const currentConfig = this.mapConfigMap.get(componentId) || {}
+    this.mapConfigMap.set(componentId, {
+      ...currentConfig,
+      ...options
+    })
+    
+    // 如果该地图的原始消息存在，重新生成地图数据以应用新配置
+    const mapRawMessage = this.mapRawMessageMap.get(componentId)
+    if (mapRawMessage) {
       // 重新处理地图数据以应用新配置
-      this.updateMap(this.mapRawMessage)
+      this.updateMap(mapRawMessage, componentId)
     }
   }
 
   /**
    * 设置 Map 配置选项（别名方法）
+   * @param options 配置选项
+   * @param componentId 组件ID
    */
   setMapOptions(options: { 
     alpha?: number
     colorScheme?: string
     drawBehind?: boolean
-  }): void {
-    this.updateMapOptions(options)
+  }, componentId: string): void {
+    this.updateMapOptions(options, componentId)
   }
 
   /**

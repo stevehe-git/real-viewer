@@ -21,12 +21,14 @@ export interface DisplaySyncContext {
     offsetZ?: number
   }) => void
   setAxesOptions: (options: { length?: number; radius?: number; alpha?: number }) => void
-  updateMap: (message: any) => void
+  updateMap: (message: any, componentId: string) => void
+  removeMap: (componentId: string) => void
+  clearAllMaps?: () => void
   setMapOptions: (options: { 
     alpha?: number
     colorScheme?: string
     drawBehind?: boolean
-  }) => void
+  }, componentId: string) => void
   setLaserScanOptions: (options: { 
     style?: string
     size?: number
@@ -43,6 +45,9 @@ export interface DisplaySyncContext {
   destroyAxes: () => void
   createGrid: () => void
   createAxes: () => void
+  clearPointCloud?: () => void
+  clearPaths?: () => void
+  finalPaint?: () => void
 }
 
 export interface UseDisplaySyncOptions {
@@ -118,35 +123,31 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
   }
 
   /**
-   * 同步 Map 显示状态
+   * 同步 Map 显示状态（支持多个地图）
    */
   function syncMapDisplay(): void {
-    const mapComponent = rvizStore.displayComponents.find(c => c.type === 'map')
+    const mapComponents = rvizStore.displayComponents.filter(c => c.type === 'map')
     
-    if (!mapComponent) {
-      // Map 组件不存在，清除地图数据
-      context.updateMap(null)
-      return
-    }
+    // 处理每个地图组件
+    mapComponents.forEach((mapComponent) => {
+      if (mapComponent.enabled) {
+        const options = mapComponent.options || {}
+        context.setMapOptions({
+          alpha: options.alpha,
+          colorScheme: options.colorScheme,
+          drawBehind: options.drawBehind
+        }, mapComponent.id)
 
-    // Map 组件存在，更新配置选项和数据
-    if (mapComponent.enabled) {
-      const options = mapComponent.options || {}
-      context.setMapOptions({
-        alpha: options.alpha,
-        colorScheme: options.colorScheme,
-        drawBehind: options.drawBehind
-      })
-
-      // 获取地图数据并更新
-      const mapMessage = topicSubscriptionManager.getLatestMessage(mapComponent.id)
-      if (mapMessage) {
-        context.updateMap(mapMessage)
+        // 获取地图数据并更新
+        const mapMessage = topicSubscriptionManager.getLatestMessage(mapComponent.id)
+        if (mapMessage) {
+          context.updateMap(mapMessage, mapComponent.id)
+        }
+      } else {
+        // Map 组件被禁用，移除地图数据
+        context.removeMap(mapComponent.id)
       }
-    } else {
-      // Map 组件被禁用，清除地图数据
-      context.updateMap(null)
-    }
+    })
   }
 
   /**
@@ -266,51 +267,72 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     { deep: true }
   )
 
-  // 监听 Map 组件的配置选项变化（透明度、颜色方案、绘制顺序等）
+  // 监听所有 Map 组件的配置选项变化（透明度、颜色方案、绘制顺序等）
   watch(
     () => {
-      const mapComponent = rvizStore.displayComponents.find(c => c.type === 'map')
-      return mapComponent ? {
-        id: mapComponent.id,
-        enabled: mapComponent.enabled,
-        alpha: mapComponent.options?.alpha,
-        colorScheme: mapComponent.options?.colorScheme,
-        drawBehind: mapComponent.options?.drawBehind
-      } : null
+      return rvizStore.displayComponents
+        .filter(c => c.type === 'map')
+        .map(mapComponent => ({
+          id: mapComponent.id,
+          enabled: mapComponent.enabled,
+          alpha: mapComponent.options?.alpha,
+          colorScheme: mapComponent.options?.colorScheme,
+          drawBehind: mapComponent.options?.drawBehind
+        }))
     },
-    (mapConfig) => {
-      if (mapConfig && mapConfig.enabled) {
-        context.setMapOptions({
-          alpha: mapConfig.alpha,
-          colorScheme: mapConfig.colorScheme,
-          drawBehind: mapConfig.drawBehind
-        })
-        // 配置变化后，重新同步地图数据以应用新配置
-        syncMapDisplay()
-      }
+    (mapConfigs) => {
+      mapConfigs.forEach((mapConfig) => {
+        if (mapConfig && mapConfig.enabled) {
+          context.setMapOptions({
+            alpha: mapConfig.alpha,
+            colorScheme: mapConfig.colorScheme,
+            drawBehind: mapConfig.drawBehind
+          }, mapConfig.id)
+        }
+      })
+      // 配置变化后，重新同步地图数据以应用新配置
+      syncMapDisplay()
     },
     { deep: true }
   )
 
-  // 监听地图组件的数据变化（从 topicSubscriptionManager）
+  // 监听所有地图组件的数据变化（从 topicSubscriptionManager）
   watch(
     () => {
-      const mapComponent = rvizStore.displayComponents.find(c => c.type === 'map')
-      if (!mapComponent || !mapComponent.enabled) {
-        return null
-      }
+      const mapComponents = rvizStore.displayComponents.filter(c => c.type === 'map')
       // 访问状态更新触发器以确保响应式追踪
       const trigger = topicSubscriptionManager.getStatusUpdateTrigger()
       trigger.value
-      return topicSubscriptionManager.getLatestMessage(mapComponent.id)
+      
+      // 返回所有地图组件的消息映射
+      const messages: Record<string, any> = {}
+      mapComponents.forEach(mapComponent => {
+        if (mapComponent.enabled) {
+          const message = topicSubscriptionManager.getLatestMessage(mapComponent.id)
+          if (message) {
+            messages[mapComponent.id] = message
+          }
+        }
+      })
+      return messages
     },
-    (mapMessage) => {
-      if (mapMessage) {
-        context.updateMap(mapMessage)
-      } else {
-        // 如果没有消息，清除地图
-        context.updateMap(null)
-      }
+    (mapMessages) => {
+      // 更新所有地图
+      Object.entries(mapMessages).forEach(([componentId, mapMessage]) => {
+        if (mapMessage) {
+          context.updateMap(mapMessage, componentId)
+        }
+      })
+      
+      // 移除已禁用或已删除的地图
+      const currentMapIds = new Set(Object.keys(mapMessages))
+      rvizStore.displayComponents
+        .filter(c => c.type === 'map')
+        .forEach(mapComponent => {
+          if (!mapComponent.enabled || !currentMapIds.has(mapComponent.id)) {
+            context.removeMap(mapComponent.id)
+          }
+        })
     },
     { immediate: true, deep: true }
   )
@@ -351,6 +373,44 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
       }
     },
     { deep: true }
+  )
+
+  // 监听连接状态，断开连接时清理所有数据
+  watch(
+    () => rvizStore.communicationState.isConnected,
+    (isConnected, wasConnected) => {
+      if (!isConnected && wasConnected) {
+        // 只在从连接状态变为断开状态时清理（避免初始化时误清理）
+        // 使用 requestAnimationFrame 批量清理，减少渲染调用
+        requestAnimationFrame(() => {
+          // 清理所有地图数据
+          if (context.clearAllMaps) {
+            context.clearAllMaps()
+          } else {
+            const mapComponents = rvizStore.displayComponents.filter(c => c.type === 'map')
+            mapComponents.forEach(mapComponent => {
+              context.removeMap(mapComponent.id)
+            })
+          }
+          
+          // 清理点云数据
+          if (context.clearPointCloud) {
+            context.clearPointCloud()
+          }
+          
+          // 清理路径数据
+          if (context.clearPaths) {
+            context.clearPaths()
+          }
+          
+          // 清理后触发一次最终渲染，然后停止渲染循环
+          if (context.finalPaint) {
+            context.finalPaint()
+          }
+        })
+      }
+    },
+    { immediate: false }
   )
 
   // 初始同步

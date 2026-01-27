@@ -130,8 +130,18 @@ watch(
               worldview.markDirty()
               worldview.paint()
             },
-            updateMap: (message: any) => {
-              sceneManager.updateMap(message)
+            updateMap: (message: any, componentId: string) => {
+              sceneManager.updateMap(message, componentId)
+              worldview.markDirty()
+              worldview.paint()
+            },
+            removeMap: (componentId: string) => {
+              sceneManager.removeMap(componentId)
+              worldview.markDirty()
+              worldview.paint()
+            },
+            clearAllMaps: () => {
+              sceneManager.clearAllMaps()
               worldview.markDirty()
               worldview.paint()
             },
@@ -139,8 +149,23 @@ watch(
               alpha?: number
               colorScheme?: string
               drawBehind?: boolean
-            }) => {
-              sceneManager.setMapOptions(options)
+            }, componentId: string) => {
+              sceneManager.setMapOptions(options, componentId)
+              worldview.markDirty()
+              worldview.paint()
+            },
+            clearPointCloud: () => {
+              sceneManager.clearPointCloud()
+              worldview.markDirty()
+              worldview.paint()
+            },
+            clearPaths: () => {
+              sceneManager.clearPaths()
+              worldview.markDirty()
+              worldview.paint()
+            },
+            finalPaint: () => {
+              // 最终渲染，清理后只渲染一次
               worldview.markDirty()
               worldview.paint()
             },
