@@ -19,7 +19,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { ref, computed, watch, onUnmounted, onMounted, nextTick } from 'vue'
 import { Picture } from '@element-plus/icons-vue'
 // import { useTopicSubscription } from '@/composables/useTopicSubscription'
 // TODO: 实现话题订阅功能
@@ -62,13 +62,16 @@ const MAX_DISPLAY_WIDTH = 1920 // 最大显示宽度
 const MAX_DISPLAY_HEIGHT = 1080 // 最大显示高度
 const QUALITY_FACTOR = 1.2 // 质量因子（1.0 = 精确匹配，>1.0 = 稍高分辨率以提升质量）
 
-// 重用 canvas 和 context，避免频繁创建 DOM 元素
-let canvas: HTMLCanvasElement | null = null
-let ctx: CanvasRenderingContext2D | null = null
+// 重用 ImageBitmap，避免频繁创建 DOM 元素
 let currentBlobUrl: string | null = null
+let currentImageBitmap: ImageBitmap | null = null
 
 // 当前处理的请求 ID（用于取消过时的请求）
 let currentRequestId = 0
+
+// 可见性检测
+let isVisible = true
+let intersectionObserver: IntersectionObserver | null = null
 
 // 计算目标分辨率（根据显示容器尺寸）
 const calculateTargetSize = (originalWidth: number, originalHeight: number): { width: number; height: number; scale: number } => {
@@ -98,44 +101,73 @@ const calculateTargetSize = (originalWidth: number, originalHeight: number): { w
   return { width: targetWidth, height: targetHeight, scale }
 }
 
-// 将 ImageData 转换为 Blob URL（在主线程中快速完成）
-const imageDataToBlobURL = (imageData: ImageData): Promise<string> => {
-  return new Promise<string>((resolve) => {
-    // 重用 canvas 和 context
-    if (!canvas || canvas.width !== imageData.width || canvas.height !== imageData.height) {
-      canvas = document.createElement('canvas')
+// 将 ImageData 转换为 Blob URL（使用 ImageBitmap 优化性能）
+const imageDataToBlobURL = async (imageData: ImageData): Promise<string> => {
+  try {
+    // 使用 ImageBitmap API（更高效，GPU 加速）
+    if (typeof createImageBitmap !== 'undefined') {
+      // 释放旧的 ImageBitmap
+      if (currentImageBitmap) {
+        currentImageBitmap.close()
+        currentImageBitmap = null
+      }
+      
+      const imageBitmap = await createImageBitmap(imageData)
+      currentImageBitmap = imageBitmap
+      
+      // 创建 canvas 用于转换为 Blob
+      const canvas = new OffscreenCanvas(imageData.width, imageData.height)
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        imageBitmap.close()
+        return ''
+      }
+      
+      ctx.drawImage(imageBitmap, 0, 0)
+      
+      // 转换为 Blob URL
+      const blob = await canvas.convertToBlob({ type: 'image/png' })
+      
+      // 释放旧的 Blob URL
+      if (currentBlobUrl) {
+        URL.revokeObjectURL(currentBlobUrl)
+      }
+      
+      const blobUrl = URL.createObjectURL(blob)
+      currentBlobUrl = blobUrl
+      return blobUrl
+    } else {
+      // 回退到 Canvas API（兼容性方案）
+      const canvas = document.createElement('canvas')
       canvas.width = imageData.width
       canvas.height = imageData.height
-      ctx = canvas.getContext('2d', { willReadFrequently: false })
+      const ctx = canvas.getContext('2d', { willReadFrequently: false })
       if (!ctx) {
-        resolve('')
-        return
+        return ''
       }
+      
+      ctx.putImageData(imageData, 0, 0)
+      
+      return new Promise<string>((resolve) => {
+        canvas.toBlob((blob) => {
+          if (blob) {
+            // 释放旧的 Blob URL
+            if (currentBlobUrl) {
+              URL.revokeObjectURL(currentBlobUrl)
+            }
+            const blobUrl = URL.createObjectURL(blob)
+            currentBlobUrl = blobUrl
+            resolve(blobUrl)
+          } else {
+            resolve('')
+          }
+        }, 'image/png')
+      })
     }
-
-    if (!ctx) {
-      resolve('')
-      return
-    }
-
-    // 将 ImageData 绘制到 Canvas
-    ctx.putImageData(imageData, 0, 0)
-    
-    // 转换为 Blob URL
-    canvas.toBlob((blob) => {
-      if (blob) {
-        // 释放旧的 Blob URL
-        if (currentBlobUrl) {
-          URL.revokeObjectURL(currentBlobUrl)
-        }
-        const blobUrl = URL.createObjectURL(blob)
-        currentBlobUrl = blobUrl
-        resolve(blobUrl)
-      } else {
-        resolve('')
-      }
-    }, 'image/png')
-  })
+  } catch (error) {
+    console.error('Error converting ImageData to Blob URL:', error)
+    return ''
+  }
 }
 
 // 使用 Web Worker 处理图像转换（耗时操作在 Worker 中完成）
@@ -199,6 +231,12 @@ let lastProcessTime = 0 // 上次处理时间戳
 
 // 监听最新消息，转换为图像URL（使用帧率限制和 requestAnimationFrame）
 watch(() => getLatestMessage.value, (message) => {
+  // 如果面板不可见，跳过处理
+  if (!isVisible) {
+    pendingMessage = message // 保存最新消息，但暂不处理
+    return
+  }
+  
   // 保存最新消息（总是保存最新的，实现跳帧策略）
   pendingMessage = message
   
@@ -207,11 +245,32 @@ watch(() => getLatestMessage.value, (message) => {
     return
   }
   
-  // 帧率限制：检查是否达到最小帧间隔
   const now = performance.now()
+  
+  // 改进的帧率限制：检查是否达到最小帧间隔
   const timeSinceLastFrame = now - lastProcessTime
-  if (timeSinceLastFrame < MIN_FRAME_INTERVAL && rafId !== null) {
-    return // 跳过此帧，保持目标帧率
+  if (timeSinceLastFrame < MIN_FRAME_INTERVAL) {
+    // 如果已有待处理的更新，取消它（跳帧策略）
+    if (rafId !== null) {
+      cancelAnimationFrame(rafId)
+      rafId = null
+    }
+    
+    // 延迟调度，确保帧率限制
+    rafId = requestAnimationFrame(() => {
+      // 再次检查时间间隔
+      const currentTime = performance.now()
+      if (currentTime - lastProcessTime >= MIN_FRAME_INTERVAL) {
+        scheduleImageProcessing()
+      } else {
+        // 如果还不够时间，再次延迟
+        const remainingDelay = MIN_FRAME_INTERVAL - (currentTime - lastProcessTime)
+        rafId = window.setTimeout(() => {
+          scheduleImageProcessing()
+        }, remainingDelay) as unknown as number
+      }
+    })
+    return
   }
   
   // 如果已有待处理的更新，取消它（跳帧策略）
@@ -220,58 +279,112 @@ watch(() => getLatestMessage.value, (message) => {
     rafId = null
   }
   
+  // 立即调度处理
+  scheduleImageProcessing()
+}, { immediate: true })
+
+// 调度图像处理（统一入口）
+function scheduleImageProcessing() {
+  if (!isVisible || isProcessing) {
+    return
+  }
+  
+  const msg = pendingMessage
+  if (!msg) {
+    return
+  }
+  
   // 生成新的请求 ID（用于取消过时的请求）
   currentRequestId++
   const requestId = currentRequestId
   
   // 使用 requestAnimationFrame 优化更新时机，与浏览器渲染同步
   rafId = requestAnimationFrame(async () => {
-    const msg = pendingMessage
     rafId = null
     lastProcessTime = performance.now()
     
-    if (msg) {
-      isProcessing = true
-      try {
-        // 使用 Web Worker 处理图像（耗时操作在 Worker 中完成）
-        const blobUrl = await convertImageMessageToBlobURL(msg, requestId)
-        
-        // 检查请求是否已被取消（过时的请求）
-        if (requestId === currentRequestId && blobUrl) {
-          imageUrl.value = blobUrl
-        } else if (requestId === currentRequestId) {
-          imageUrl.value = ''
-          imageInfo.value = null
-        }
-      } catch (error) {
-        console.error('Error processing image:', error)
-        if (requestId === currentRequestId) {
-          imageUrl.value = ''
-          imageInfo.value = null
-        }
-      } finally {
-        isProcessing = false
-        pendingMessage = null
+    if (!isVisible) {
+      return // 如果变为不可见，跳过处理
+    }
+    
+    if (msg !== pendingMessage) {
+      // 如果消息已更新，跳过这个过时的消息
+      scheduleImageProcessing() // 重新调度处理最新消息
+      return
+    }
+    
+    isProcessing = true
+    try {
+      // 使用 Web Worker 处理图像（耗时操作在 Worker 中完成）
+      const blobUrl = await convertImageMessageToBlobURL(msg, requestId)
+      
+      // 检查请求是否已被取消（过时的请求）且面板仍然可见
+      if (requestId === currentRequestId && blobUrl && isVisible) {
+        imageUrl.value = blobUrl
+      } else if (requestId === currentRequestId) {
+        imageUrl.value = ''
+        imageInfo.value = null
       }
-    } else {
-      imageUrl.value = ''
-      imageInfo.value = null
+    } catch (error) {
+      console.error('Error processing image:', error)
+      if (requestId === currentRequestId) {
+        imageUrl.value = ''
+        imageInfo.value = null
+      }
+    } finally {
+      isProcessing = false
       pendingMessage = null
     }
   })
-}, { immediate: true })
+}
 
 const handleImageError = () => {
   console.error('Failed to load image')
   imageUrl.value = ''
 }
 
+// 设置可见性检测
+const setupVisibilityObserver = () => {
+  if (!containerRef.value || typeof IntersectionObserver === 'undefined') {
+    return
+  }
+  
+  intersectionObserver = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        isVisible = entry.isIntersecting && entry.intersectionRatio > 0
+        // 如果变为可见且有待处理的消息，立即处理
+        if (isVisible && pendingMessage && !isProcessing) {
+          scheduleImageProcessing()
+        }
+      })
+    },
+    {
+      threshold: 0.01 // 至少 1% 可见才认为可见
+    }
+  )
+  
+  intersectionObserver.observe(containerRef.value)
+}
+
 // 清理资源
 onUnmounted(() => {
+  // 取消可见性观察器
+  if (intersectionObserver) {
+    intersectionObserver.disconnect()
+    intersectionObserver = null
+  }
+  
   // 取消待处理的动画帧
   if (rafId !== null) {
     cancelAnimationFrame(rafId)
     rafId = null
+  }
+  
+  // 释放 ImageBitmap
+  if (currentImageBitmap) {
+    currentImageBitmap.close()
+    currentImageBitmap = null
   }
   
   // 释放 Blob URL
@@ -279,10 +392,13 @@ onUnmounted(() => {
     URL.revokeObjectURL(currentBlobUrl)
     currentBlobUrl = null
   }
-  
-  // 清理 canvas 和 context 引用
-  canvas = null
-  ctx = null
+})
+
+// 在组件挂载后设置可见性检测
+onMounted(() => {
+  nextTick(() => {
+    setupVisibilityObserver()
+  })
 })
 </script>
 

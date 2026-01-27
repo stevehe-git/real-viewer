@@ -124,9 +124,39 @@ export class DataProcessorWorker {
           pending.resolve(result)
         }
       }
+    } else if (data.type === 'imageProcessed') {
+      // 图像处理使用 requestId 匹配
+      const result = data as ImageProcessResult
+      const requestId = result.requestId
+      if (requestId) {
+        const pending = this.pendingRequests.get(requestId)
+        if (pending) {
+          clearTimeout(pending.timeout)
+          this.pendingRequests.delete(requestId)
+          
+          if (result.error) {
+            pending.reject(new Error(result.error))
+          } else {
+            pending.resolve(result)
+          }
+        }
+      } else {
+        // 如果没有 requestId，使用 FIFO 方式匹配（向后兼容）
+        const firstPending = this.pendingRequests.entries().next().value
+        if (firstPending) {
+          const [reqId, pending] = firstPending
+          clearTimeout(pending.timeout)
+          this.pendingRequests.delete(reqId)
+          
+          if ((data as any).error) {
+            pending.reject(new Error((data as any).error))
+          } else {
+            pending.resolve(data)
+          }
+        }
+      }
     } else {
-      // 对于其他类型（pointCloudProcessed, imageProcessed, pathProcessed），使用 FIFO 方式匹配
-      // 这是简化实现，实际应该使用 requestId
+      // 对于其他类型（pointCloudProcessed, pathProcessed），使用 FIFO 方式匹配
       const firstPending = this.pendingRequests.entries().next().value
       if (firstPending) {
         const [requestId, pending] = firstPending
@@ -178,7 +208,9 @@ export class DataProcessorWorker {
 
     // 如果没有提供 requestId，使用自动生成的 ID
     const finalRequestId = requestId || `image_${this.requestIdCounter++}`
-    return this.sendRequest(finalRequestId, request, 10000)
+    // 将 requestId 添加到请求中，以便 Worker 返回时能匹配
+    const requestWithId = { ...request, requestId: finalRequestId }
+    return this.sendRequest(finalRequestId, requestWithId, 10000)
   }
 
   /**

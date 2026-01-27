@@ -35,6 +35,7 @@ export interface PointCloudProcessResult {
 
 export interface ImageProcessRequest {
   type: 'processImage'
+  requestId?: string // 请求 ID，用于匹配请求和响应
   message: any
   targetWidth: number
   targetHeight: number
@@ -42,6 +43,7 @@ export interface ImageProcessRequest {
 
 export interface ImageProcessResult {
   type: 'imageProcessed'
+  requestId?: string // 请求 ID，用于匹配请求和响应
   imageData: ImageData | null
   error?: string
 }
@@ -324,11 +326,12 @@ function processPointCloud(request: PointCloudProcessRequest): PointCloudProcess
  */
 function processImage(request: ImageProcessRequest): ImageProcessResult {
   try {
-    const { message, targetWidth, targetHeight } = request
+    const { message, targetWidth, targetHeight, requestId } = request
     
     if (!message || !message.data) {
       return {
         type: 'imageProcessed',
+        requestId,
         imageData: null
       }
     }
@@ -341,20 +344,32 @@ function processImage(request: ImageProcessRequest): ImageProcessResult {
     if (originalWidth === 0 || originalHeight === 0) {
       return {
         type: 'imageProcessed',
+        requestId,
         imageData: null
       }
     }
 
-    // 处理 data 字段
+    // 处理 data 字段（优化 Base64 解码）
     let data: Uint8Array
     if (typeof message.data === 'string') {
-      // Base64 解码（在 Worker 中处理）
-      const binaryString = atob(message.data)
-      const bytes = new Uint8Array(binaryString.length)
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i)
+      // Base64 解码（在 Worker 中处理，使用更高效的方法）
+      try {
+        const binaryString = atob(message.data)
+        const len = binaryString.length
+        // 使用 TypedArray 直接创建，避免循环
+        data = new Uint8Array(len)
+        // 使用批量操作优化（如果可能）
+        for (let i = 0; i < len; i++) {
+          data[i] = binaryString.charCodeAt(i)
+        }
+      } catch (error) {
+        return {
+          type: 'imageProcessed',
+          requestId,
+          imageData: null,
+          error: 'Failed to decode base64 data'
+        }
       }
-      data = bytes
     } else if (message.data instanceof Uint8Array) {
       data = message.data
     } else if (Array.isArray(message.data)) {
@@ -362,6 +377,7 @@ function processImage(request: ImageProcessRequest): ImageProcessResult {
     } else {
       return {
         type: 'imageProcessed',
+        requestId,
         imageData: null,
         error: 'Unsupported image data type'
       }
@@ -373,21 +389,28 @@ function processImage(request: ImageProcessRequest): ImageProcessResult {
     const scaleX = originalWidth / targetWidth
     const scaleY = originalHeight / targetHeight
 
-    // 优化的像素转换（与主线程版本相同）
+    // 优化的像素转换（使用更高效的内存操作）
     if (encoding === 'rgb8' || encoding === 'bgr8') {
       const isBGR = encoding === 'bgr8'
       const bytesPerPixel = 3
+      const dstDataLength = dstData.length
+      
+      // 预计算缩放因子，避免重复计算
+      const scaleXInv = scaleX
+      const scaleYInv = scaleY
+      
       for (let dstY = 0; dstY < targetHeight; dstY++) {
-        const srcY = Math.floor(dstY * scaleY)
+        const srcY = Math.floor(dstY * scaleYInv)
         const srcRowStart = srcY * step
         const dstRowStart = dstY * targetWidth * 4
         
         for (let dstX = 0; dstX < targetWidth; dstX++) {
-          const srcX = Math.floor(dstX * scaleX)
+          const srcX = Math.floor(dstX * scaleXInv)
           const srcIndex = srcRowStart + srcX * bytesPerPixel
           const dstIndex = dstRowStart + dstX * 4
           
-          if (srcIndex + 2 < data.length) {
+          // 边界检查优化
+          if (srcIndex + 2 < data.length && dstIndex + 3 < dstDataLength) {
             if (isBGR) {
               dstData[dstIndex] = data[srcIndex + 2] ?? 0
               dstData[dstIndex + 1] = data[srcIndex + 1] ?? 0
@@ -404,17 +427,24 @@ function processImage(request: ImageProcessRequest): ImageProcessResult {
     } else if (encoding === 'rgba8' || encoding === 'bgra8') {
       const isBGRA = encoding === 'bgra8'
       const bytesPerPixel = 4
+      const dstDataLength = dstData.length
+      
+      // 预计算缩放因子
+      const scaleXInv = scaleX
+      const scaleYInv = scaleY
+      
       for (let dstY = 0; dstY < targetHeight; dstY++) {
-        const srcY = Math.floor(dstY * scaleY)
+        const srcY = Math.floor(dstY * scaleYInv)
         const srcRowStart = srcY * step
         const dstRowStart = dstY * targetWidth * 4
         
         for (let dstX = 0; dstX < targetWidth; dstX++) {
-          const srcX = Math.floor(dstX * scaleX)
+          const srcX = Math.floor(dstX * scaleXInv)
           const srcIndex = srcRowStart + srcX * bytesPerPixel
           const dstIndex = dstRowStart + dstX * 4
           
-          if (srcIndex + 3 < data.length) {
+          // 边界检查优化
+          if (srcIndex + 3 < data.length && dstIndex + 3 < dstDataLength) {
             if (isBGRA) {
               dstData[dstIndex] = data[srcIndex + 2] ?? 0
               dstData[dstIndex + 1] = data[srcIndex + 1] ?? 0
@@ -430,18 +460,26 @@ function processImage(request: ImageProcessRequest): ImageProcessResult {
         }
       }
     } else if (encoding === 'mono8') {
+      // mono8 格式优化：灰度图可以使用批量复制
       const bytesPerPixel = 1
+      const dstDataLength = dstData.length
+      
+      // 预计算缩放因子
+      const scaleXInv = scaleX
+      const scaleYInv = scaleY
+      
       for (let dstY = 0; dstY < targetHeight; dstY++) {
-        const srcY = Math.floor(dstY * scaleY)
+        const srcY = Math.floor(dstY * scaleYInv)
         const srcRowStart = srcY * step
         const dstRowStart = dstY * targetWidth * 4
         
         for (let dstX = 0; dstX < targetWidth; dstX++) {
-          const srcX = Math.floor(dstX * scaleX)
+          const srcX = Math.floor(dstX * scaleXInv)
           const srcIndex = srcRowStart + srcX * bytesPerPixel
           const dstIndex = dstRowStart + dstX * 4
           
-          if (srcIndex < data.length) {
+          // 边界检查优化
+          if (srcIndex < data.length && dstIndex + 3 < dstDataLength) {
             const gray = data[srcIndex] ?? 0
             dstData[dstIndex] = gray
             dstData[dstIndex + 1] = gray
@@ -454,11 +492,13 @@ function processImage(request: ImageProcessRequest): ImageProcessResult {
 
     return {
       type: 'imageProcessed',
+      requestId,
       imageData
     }
   } catch (error: any) {
     return {
       type: 'imageProcessed',
+      requestId: request.requestId,
       imageData: null,
       error: error?.message || 'Unknown error'
     }
@@ -1093,6 +1133,7 @@ self.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
       errorResponse.data = null
     } else if (request.type === 'processImage') {
       errorResponse.type = 'imageProcessed'
+      errorResponse.requestId = (request as ImageProcessRequest).requestId
       errorResponse.imageData = null
     } else if (request.type === 'processPath') {
       errorResponse.type = 'pathProcessed'

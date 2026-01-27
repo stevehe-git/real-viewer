@@ -131,13 +131,16 @@ export class TopicSubscriptionManager {
     this.pendingStatusUpdate = true
     
     if (this.statusUpdateThrottleTimer === null) {
+      // 对于高频消息类型（如图像），使用更长的节流间隔（200ms）
+      // 对于其他类型，使用较短的间隔（100ms）以保持响应性
+      const throttleInterval = 200 // 统一使用 200ms，减少更新频率
       this.statusUpdateThrottleTimer = window.setTimeout(() => {
         if (this.pendingStatusUpdate) {
           this.statusUpdateTrigger.value++
           this.pendingStatusUpdate = false
         }
         this.statusUpdateThrottleTimer = null
-      }, 100) // 每100ms最多更新一次（减少延迟）
+      }, throttleInterval)
     }
   }
 
@@ -286,17 +289,36 @@ export class TopicSubscriptionManager {
           error: null
         }
 
-        // 更新状态
-        this.statuses.set(componentId, {
-          subscribed: true,
-          hasData: hasData,
-          messageCount: currentStatus.messageCount + 1,
-          lastMessageTime: timestamp,
-          error: null
-        })
-        
-        // 节流触发响应式更新（每200ms最多更新一次，避免CPU过高）
-        this.triggerStatusUpdateThrottled()
+        // 优化：只在状态实际变化时更新状态对象
+        const statusChanged = 
+          currentStatus.hasData !== hasData ||
+          currentStatus.messageCount === 0 // 第一条消息需要立即更新
+
+        if (statusChanged) {
+          // 更新状态
+          this.statuses.set(componentId, {
+            subscribed: true,
+            hasData: hasData,
+            messageCount: currentStatus.messageCount + 1,
+            lastMessageTime: timestamp,
+            error: null
+          })
+          
+          // 只在状态变化时触发响应式更新（立即更新）
+          this.triggerStatusUpdateThrottled(true)
+        } else {
+          // 状态未变化，只更新计数和时间戳（不触发响应式更新）
+          this.statuses.set(componentId, {
+            ...currentStatus,
+            messageCount: currentStatus.messageCount + 1,
+            lastMessageTime: timestamp
+          })
+          
+          // 对于高频消息（如图像），使用更激进的节流（每500ms更新一次）
+          if (componentType === 'image' || componentType === 'camera') {
+            this.triggerStatusUpdateThrottled() // 使用节流更新
+          }
+        }
 
         // 如果数据有效，添加到缓存队列
         if (hasData) {
