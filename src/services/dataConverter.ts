@@ -23,21 +23,39 @@ export class ROSDataConverter {
   static isValidData(message: any, componentType: string): boolean {
     if (!message) return false
 
+    // 如果消息是对象但没有属性，认为无效
+    if (typeof message === 'object' && Object.keys(message).length === 0) {
+      return false
+    }
+
     switch (componentType) {
       case 'map':
-        return !!(message.info && message.data && message.data.length > 0)
+        // 检查必需字段：info 和 data
+        if (!message.info || !message.data) return false
+        // data 可以是数组或字符串（base64编码）
+        return Array.isArray(message.data) ? message.data.length > 0 : typeof message.data === 'string' && message.data.length > 0
       case 'path':
-        return !!(message.poses && message.poses.length > 0)
+        return !!(message.poses && Array.isArray(message.poses) && message.poses.length > 0)
       case 'laserscan':
-        return !!(message.ranges && message.ranges.length > 0)
+        return !!(message.ranges && Array.isArray(message.ranges) && message.ranges.length > 0)
       case 'pointcloud2':
-        return !!(message.data && message.data.length > 0)
+        // data 可以是数组或字符串
+        if (!message.data) return false
+        return Array.isArray(message.data) ? message.data.length > 0 : typeof message.data === 'string' && message.data.length > 0
       case 'marker':
+        // Marker 消息总是有效的（即使为空对象）
         return true
       case 'image':
       case 'camera':
-        return !!(message.data && message.data.length > 0)
+        // 检查必需字段：data, width, height
+        if (!message.data) return false
+        // data 可以是数组、字符串（base64）或 Uint8Array
+        const hasValidData = Array.isArray(message.data) ? message.data.length > 0 :
+                            typeof message.data === 'string' ? message.data.length > 0 :
+                            message.data instanceof Uint8Array ? message.data.length > 0 : false
+        return hasValidData && message.width > 0 && message.height > 0
       default:
+        // 对于未知类型，只要消息存在就认为有效
         return true
     }
   }

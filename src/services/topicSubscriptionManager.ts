@@ -289,34 +289,40 @@ export class TopicSubscriptionManager {
           error: null
         }
 
+        // 总是更新消息计数和时间戳（即使数据无效，也要记录收到了消息）
+        const newMessageCount = currentStatus.messageCount + 1
+        
         // 优化：只在状态实际变化时更新状态对象
         const statusChanged = 
           currentStatus.hasData !== hasData ||
           currentStatus.messageCount === 0 // 第一条消息需要立即更新
 
         if (statusChanged) {
-          // 更新状态
+          // 更新状态（包括 hasData 变化）
           this.statuses.set(componentId, {
             subscribed: true,
             hasData: hasData,
-            messageCount: currentStatus.messageCount + 1,
+            messageCount: newMessageCount,
             lastMessageTime: timestamp,
-            error: null
+            error: hasData ? null : 'Invalid message format or empty data'
           })
           
           // 只在状态变化时触发响应式更新（立即更新）
           this.triggerStatusUpdateThrottled(true)
         } else {
-          // 状态未变化，只更新计数和时间戳（不触发响应式更新）
+          // 状态未变化，但更新计数和时间戳（确保时间戳总是最新的）
           this.statuses.set(componentId, {
             ...currentStatus,
-            messageCount: currentStatus.messageCount + 1,
+            messageCount: newMessageCount,
             lastMessageTime: timestamp
           })
           
-          // 对于高频消息（如图像），使用更激进的节流（每500ms更新一次）
+          // 对于高频消息（如图像），使用更激进的节流（每200ms更新一次）
           if (componentType === 'image' || componentType === 'camera') {
             this.triggerStatusUpdateThrottled() // 使用节流更新
+          } else {
+            // 对于其他类型，也使用节流更新，但频率更低（确保时间戳能更新）
+            this.triggerStatusUpdateThrottled()
           }
         }
 
@@ -332,6 +338,15 @@ export class TopicSubscriptionManager {
           // 保持队列大小
           if (queue.length > queueSize) {
             queue.shift()
+          }
+        } else {
+          // 数据无效时，记录警告（仅在开发模式下）
+          if (!import.meta.env.PROD) {
+            console.warn(`[TopicSubscriptionManager] Invalid data for ${componentId} (${componentType}):`, {
+              messageKeys: message ? Object.keys(message) : [],
+              hasData: hasData,
+              messagePreview: message ? JSON.stringify(message).substring(0, 200) : 'null'
+            })
           }
         }
       })
