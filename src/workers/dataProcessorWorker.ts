@@ -116,14 +116,17 @@ export class DataProcessorWorker {
 
   /**
    * 处理图像数据（异步）
+   * @param request 图像处理请求
+   * @param requestId 可选的请求 ID，用于取消过时的请求。如果不提供，将自动生成
    */
-  async processImage(request: ImageProcessRequest): Promise<ImageProcessResult> {
+  async processImage(request: ImageProcessRequest, requestId?: string): Promise<ImageProcessResult> {
     if (!this.worker) {
       return this.processImageSync(request)
     }
 
-    const requestId = `image_${this.requestIdCounter++}`
-    return this.sendRequest(requestId, request, 10000)
+    // 如果没有提供 requestId，使用自动生成的 ID
+    const finalRequestId = requestId || `image_${this.requestIdCounter++}`
+    return this.sendRequest(finalRequestId, request, 10000)
   }
 
   /**

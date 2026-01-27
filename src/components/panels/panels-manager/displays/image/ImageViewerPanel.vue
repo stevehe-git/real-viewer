@@ -24,6 +24,8 @@ import { Picture } from '@element-plus/icons-vue'
 // import { useTopicSubscription } from '@/composables/useTopicSubscription'
 // TODO: 实现话题订阅功能
 import BasePanel from '../../../BasePanel.vue'
+import { getDataProcessorWorker } from '@/workers/dataProcessorWorker'
+import type { ImageProcessRequest } from '@/workers/dataProcessor.worker'
 
 interface Props {
   componentId: string
@@ -64,13 +66,9 @@ const QUALITY_FACTOR = 1.2 // 质量因子（1.0 = 精确匹配，>1.0 = 稍高�
 let canvas: HTMLCanvasElement | null = null
 let ctx: CanvasRenderingContext2D | null = null
 let currentBlobUrl: string | null = null
-let cachedImageData: ImageData | null = null // 重用 ImageData 对象
 
-// 优化 base64 解码：使用更高效的方法
-const decodeBase64ToUint8Array = (base64: string): Uint8Array => {
-  const binaryString = atob(base64)
-  return Uint8Array.from(binaryString, (char) => char.charCodeAt(0))
-}
+// 当前处理的请求 ID（用于取消过时的请求）
+let currentRequestId = 0
 
 // 计算目标分辨率（根据显示容器尺寸）
 const calculateTargetSize = (originalWidth: number, originalHeight: number): { width: number; height: number; scale: number } => {
@@ -100,102 +98,48 @@ const calculateTargetSize = (originalWidth: number, originalHeight: number): { w
   return { width: targetWidth, height: targetHeight, scale }
 }
 
-// 优化的像素转换函数（使用双层循环，减少计算）
-const convertPixelsOptimized = (
-  srcData: Uint8Array,
-  dstData: Uint8ClampedArray,
-  srcWidth: number,
-  srcHeight: number,
-  dstWidth: number,
-  dstHeight: number,
-  encoding: string,
-  step: number
-): void => {
-  const scaleX = srcWidth / dstWidth
-  const scaleY = srcHeight / dstHeight
-  
-  // 优化：使用双层循环，避免重复计算 Math.floor(i / width) 和 i % width
-  if (encoding === 'rgb8' || encoding === 'bgr8') {
-    const isBGR = encoding === 'bgr8'
-    const bytesPerPixel = 3
-    for (let dstY = 0; dstY < dstHeight; dstY++) {
-      const srcY = Math.floor(dstY * scaleY)
-      const srcRowStart = srcY * step
-      const dstRowStart = dstY * dstWidth * 4
-      
-      for (let dstX = 0; dstX < dstWidth; dstX++) {
-        const srcX = Math.floor(dstX * scaleX)
-        const srcIndex = srcRowStart + srcX * bytesPerPixel
-        const dstIndex = dstRowStart + dstX * 4
-        
-        if (srcIndex + 2 < srcData.length) {
-          if (isBGR) {
-            dstData[dstIndex] = srcData[srcIndex + 2] ?? 0     // R
-            dstData[dstIndex + 1] = srcData[srcIndex + 1] ?? 0 // G
-            dstData[dstIndex + 2] = srcData[srcIndex] ?? 0     // B
-          } else {
-            dstData[dstIndex] = srcData[srcIndex] ?? 0         // R
-            dstData[dstIndex + 1] = srcData[srcIndex + 1] ?? 0 // G
-            dstData[dstIndex + 2] = srcData[srcIndex + 2] ?? 0 // B
-          }
-          dstData[dstIndex + 3] = 255 // Alpha
-        }
+// 将 ImageData 转换为 Blob URL（在主线程中快速完成）
+const imageDataToBlobURL = (imageData: ImageData): Promise<string> => {
+  return new Promise<string>((resolve) => {
+    // 重用 canvas 和 context
+    if (!canvas || canvas.width !== imageData.width || canvas.height !== imageData.height) {
+      canvas = document.createElement('canvas')
+      canvas.width = imageData.width
+      canvas.height = imageData.height
+      ctx = canvas.getContext('2d', { willReadFrequently: false })
+      if (!ctx) {
+        resolve('')
+        return
       }
     }
-  } else if (encoding === 'rgba8' || encoding === 'bgra8') {
-    const isBGRA = encoding === 'bgra8'
-    const bytesPerPixel = 4
-    for (let dstY = 0; dstY < dstHeight; dstY++) {
-      const srcY = Math.floor(dstY * scaleY)
-      const srcRowStart = srcY * step
-      const dstRowStart = dstY * dstWidth * 4
-      
-      for (let dstX = 0; dstX < dstWidth; dstX++) {
-        const srcX = Math.floor(dstX * scaleX)
-        const srcIndex = srcRowStart + srcX * bytesPerPixel
-        const dstIndex = dstRowStart + dstX * 4
-        
-        if (srcIndex + 3 < srcData.length) {
-          if (isBGRA) {
-            dstData[dstIndex] = srcData[srcIndex + 2] ?? 0     // R
-            dstData[dstIndex + 1] = srcData[srcIndex + 1] ?? 0 // G
-            dstData[dstIndex + 2] = srcData[srcIndex] ?? 0     // B
-            dstData[dstIndex + 3] = srcData[srcIndex + 3] ?? 0 // A
-          } else {
-            dstData[dstIndex] = srcData[srcIndex] ?? 0         // R
-            dstData[dstIndex + 1] = srcData[srcIndex + 1] ?? 0 // G
-            dstData[dstIndex + 2] = srcData[srcIndex + 2] ?? 0 // B
-            dstData[dstIndex + 3] = srcData[srcIndex + 3] ?? 0 // A
-          }
-        }
-      }
+
+    if (!ctx) {
+      resolve('')
+      return
     }
-  } else if (encoding === 'mono8') {
-    const bytesPerPixel = 1
-    for (let dstY = 0; dstY < dstHeight; dstY++) {
-      const srcY = Math.floor(dstY * scaleY)
-      const srcRowStart = srcY * step
-      const dstRowStart = dstY * dstWidth * 4
-      
-      for (let dstX = 0; dstX < dstWidth; dstX++) {
-        const srcX = Math.floor(dstX * scaleX)
-        const srcIndex = srcRowStart + srcX * bytesPerPixel
-        const dstIndex = dstRowStart + dstX * 4
-        
-        if (srcIndex < srcData.length) {
-          const gray = srcData[srcIndex] ?? 0
-          dstData[dstIndex] = gray
-          dstData[dstIndex + 1] = gray
-          dstData[dstIndex + 2] = gray
-          dstData[dstIndex + 3] = 255
+
+    // 将 ImageData 绘制到 Canvas
+    ctx.putImageData(imageData, 0, 0)
+    
+    // 转换为 Blob URL
+    canvas.toBlob((blob) => {
+      if (blob) {
+        // 释放旧的 Blob URL
+        if (currentBlobUrl) {
+          URL.revokeObjectURL(currentBlobUrl)
         }
+        const blobUrl = URL.createObjectURL(blob)
+        currentBlobUrl = blobUrl
+        resolve(blobUrl)
+      } else {
+        resolve('')
       }
-    }
-  }
+    }, 'image/png')
+  })
 }
 
-// 使用批量操作优化像素转换（支持降采样）
-const convertImageMessageToBlobURL = async (message: any): Promise<string> => {
+// 使用 Web Worker 处理图像转换（耗时操作在 Worker 中完成）
+const convertImageMessageToBlobURL = async (message: any, requestId: number): Promise<string> => {
   try {
     if (!message || !message.data) {
       return Promise.resolve('')
@@ -205,7 +149,6 @@ const convertImageMessageToBlobURL = async (message: any): Promise<string> => {
     const originalWidth = message.width ?? 0
     const originalHeight = message.height ?? 0
     const encoding = message.encoding || 'rgb8'
-    const step = message.step ?? (originalWidth * 3) // 默认每行字节数
     
     if (originalWidth === 0 || originalHeight === 0) {
       return Promise.resolve('')
@@ -214,77 +157,34 @@ const convertImageMessageToBlobURL = async (message: any): Promise<string> => {
     // 计算目标分辨率（降采样）
     const { width: targetWidth, height: targetHeight } = calculateTargetSize(originalWidth, originalHeight)
 
-    // 处理 data 字段（可能是 Uint8Array 或 base64 字符串）
-    let data: Uint8Array
-    if (typeof message.data === 'string') {
-      // 优化：使用更高效的 base64 解码
-      try {
-        data = decodeBase64ToUint8Array(message.data)
-      } catch (e) {
-        console.error('Failed to decode base64 image data:', e)
-        return Promise.resolve('')
-      }
-    } else if (message.data instanceof Uint8Array) {
-      data = message.data
-    } else if (Array.isArray(message.data)) {
-      data = new Uint8Array(message.data)
-    } else {
-      console.error('Unsupported image data type:', typeof message.data)
+    // 使用 Web Worker 处理图像（耗时操作：base64 解码和像素转换）
+    const worker = getDataProcessorWorker()
+    const request: ImageProcessRequest = {
+      type: 'processImage',
+      message,
+      targetWidth,
+      targetHeight
+    }
+
+    // 传递 requestId，用于取消过时的请求
+    const requestIdStr = `image_${props.componentId}_${requestId}`
+    const result = await worker.processImage(request, requestIdStr)
+
+    // 检查请求是否已被取消（过时的请求）
+    if (requestId !== currentRequestId) {
       return Promise.resolve('')
     }
 
-    if (data.length === 0) {
+    if (result.error || !result.imageData) {
+      console.error('Failed to process image in worker:', result.error)
       return Promise.resolve('')
     }
 
-    // 重用 canvas 和 context，避免频繁创建
-    if (!canvas || canvas.width !== targetWidth || canvas.height !== targetHeight) {
-      canvas = document.createElement('canvas')
-      canvas.width = targetWidth
-      canvas.height = targetHeight
-      ctx = canvas.getContext('2d', { willReadFrequently: false })
-      if (!ctx) {
-        return Promise.resolve('')
-      }
-      // 重置缓存的 ImageData
-      cachedImageData = null
-    }
-
-    // 确保 ctx 不为 null（TypeScript 类型检查）
-    if (!ctx) {
-      return Promise.resolve('')
-    }
-
-    // 重用或创建 ImageData 对象
-    if (!cachedImageData || cachedImageData.width !== targetWidth || cachedImageData.height !== targetHeight) {
-      cachedImageData = ctx.createImageData(targetWidth, targetHeight)
-    }
-    
-    const dstData = cachedImageData.data
-    
-    // 使用优化的像素转换函数（支持降采样）
-    // 降采样：从原始图像采样到目标尺寸
-    convertPixelsOptimized(data, dstData, originalWidth, originalHeight, targetWidth, targetHeight, encoding, step)
-
-    ctx.putImageData(cachedImageData, 0, 0)
+    // 更新图像信息
     imageInfo.value = { width: targetWidth, height: targetHeight, encoding }
-    
-    // 使用 Blob URL 替代 Data URL，性能更好
-    return new Promise<string>((resolve) => {
-      canvas!.toBlob((blob) => {
-        if (blob) {
-          // 释放旧的 Blob URL
-          if (currentBlobUrl) {
-            URL.revokeObjectURL(currentBlobUrl)
-          }
-          const blobUrl = URL.createObjectURL(blob)
-          currentBlobUrl = blobUrl
-          resolve(blobUrl)
-        } else {
-          resolve('')
-        }
-      }, 'image/png')
-    })
+
+    // 在主线程中将 ImageData 转换为 Blob URL（快速操作）
+    return await imageDataToBlobURL(result.imageData)
   } catch (error) {
     console.error('Error converting image message:', error)
     return Promise.resolve('')
@@ -320,6 +220,10 @@ watch(() => getLatestMessage.value, (message) => {
     rafId = null
   }
   
+  // 生成新的请求 ID（用于取消过时的请求）
+  currentRequestId++
+  const requestId = currentRequestId
+  
   // 使用 requestAnimationFrame 优化更新时机，与浏览器渲染同步
   rafId = requestAnimationFrame(async () => {
     const msg = pendingMessage
@@ -329,17 +233,22 @@ watch(() => getLatestMessage.value, (message) => {
     if (msg) {
       isProcessing = true
       try {
-        const blobUrl = await convertImageMessageToBlobURL(msg)
-        if (blobUrl) {
+        // 使用 Web Worker 处理图像（耗时操作在 Worker 中完成）
+        const blobUrl = await convertImageMessageToBlobURL(msg, requestId)
+        
+        // 检查请求是否已被取消（过时的请求）
+        if (requestId === currentRequestId && blobUrl) {
           imageUrl.value = blobUrl
-        } else {
+        } else if (requestId === currentRequestId) {
           imageUrl.value = ''
           imageInfo.value = null
         }
       } catch (error) {
         console.error('Error processing image:', error)
-        imageUrl.value = ''
-        imageInfo.value = null
+        if (requestId === currentRequestId) {
+          imageUrl.value = ''
+          imageInfo.value = null
+        }
       } finally {
         isProcessing = false
         pendingMessage = null
