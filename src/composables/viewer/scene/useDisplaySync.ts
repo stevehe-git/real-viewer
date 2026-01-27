@@ -494,10 +494,13 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
   watch(
     () => tfDataUpdateTrigger.value,
     () => {
-      // TF 数据更新时，如果 TF 显示已启用，则更新渲染
+      // TF 数据更新时，如果 TF 显示已启用，则强制更新渲染
+      // 即使配置没变，frame 的位置可能已经变化，需要重新渲染
       const tfComponent = rvizStore.displayComponents.find(c => c.type === 'tf')
       if (tfComponent && tfComponent.enabled && context.setTFOptions) {
         const options = tfComponent.options || {}
+        // 强制更新：先清除数据哈希，然后重新设置选项
+        // 这样即使配置相同，也会重新处理数据
         context.setTFOptions({
           showNames: options.showNames,
           showAxes: options.showAxes,
@@ -510,7 +513,8 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
           frames: options.frames
         })
       }
-    }
+    },
+    { immediate: false }
   )
 
   // 监听 TF 组件配置变化

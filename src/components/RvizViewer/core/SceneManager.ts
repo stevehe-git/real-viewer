@@ -1154,12 +1154,18 @@ export class SceneManager {
     }
     
     // 生成数据哈希，用于检测是否需要重新处理
+    // 注意：这里只检查配置和 frames 列表，不检查 frame 的位置变化
+    // 因为 frame 位置变化时，需要重新渲染
+    // 为了支持动态渲染，我们移除哈希检查，每次都重新处理
+    // Worker 处理很快，不会造成性能问题
     const framesHash = filteredFrames.join(',')
     const configHash = `${showAxes}_${showArrows}_${markerScale}_${markerAlpha}_${framesHash}`
-    if (this.tfDataHash === configHash && this.tfData) {
-      return // 跳过重复处理
+    
+    // 只有当配置或 frames 列表变化时才更新哈希
+    // 但即使哈希相同，也继续处理（因为 frame 位置可能变化了）
+    if (this.tfDataHash !== configHash) {
+      this.tfDataHash = configHash
     }
-    this.tfDataHash = configHash
     
     // 收集所有 frame 的 frameInfo（在主线程中计算，因为需要访问 tfManager）
     // 确保数据完全可序列化（只包含基本类型和普通对象）
@@ -1205,6 +1211,8 @@ export class SceneManager {
       if (result.error) {
         console.error('TF processing error:', result.error)
         this.tfData = { axes: [], arrows: [] }
+        this.registerDrawCalls()
+        this.worldviewContext.onDirty()
         return
       }
       
@@ -1212,10 +1220,16 @@ export class SceneManager {
         axes: result.axes,
         arrows: result.arrows
       }
+      
+      // 更新完成后，重新注册绘制调用并触发渲染
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
     } catch (error) {
       console.error('Failed to process TF data in Worker:', error)
       // 回退到空数据
       this.tfData = { axes: [], arrows: [] }
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
     }
   }
 
