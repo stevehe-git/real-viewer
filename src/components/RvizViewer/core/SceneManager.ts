@@ -19,6 +19,7 @@ export class SceneManager {
   private cylindersCommand: any = null
   private trianglesCommand: any = null
   private arrowsCommand: any = null
+  private arrowsCommandFactory: any = null // Arrows 命令工厂函数（用于 onMount 和 registerDrawCall）
 
   private gridData: any = null
   private axesData: any = null
@@ -125,6 +126,8 @@ export class SceneManager {
 
     // 初始化 Arrows 命令（用于 TF 箭头）
     this.arrowsCommand = makeArrowsCommand()(this.reglContext)
+    // 保存 Arrows 命令工厂函数引用，确保 onMount 和 registerDrawCall 使用同一个引用
+    this.arrowsCommandFactory = makeArrowsCommand()
   }
 
   private updateGridData(options?: { 
@@ -470,11 +473,12 @@ export class SceneManager {
     }
 
     // 注册 TF Arrows（使用 Arrows）
-    if (this.tfVisible && this.arrowsCommand && this.tfData && this.tfData.arrows && this.tfData.arrows.length > 0) {
-      this.worldviewContext.onMount(this.tfArrowsInstance, makeArrowsCommand())
+    if (this.tfVisible && this.arrowsCommand && this.arrowsCommandFactory && this.tfData && this.tfData.arrows && this.tfData.arrows.length > 0) {
+      // 使用同一个命令工厂函数引用，确保编译和注册使用相同的函数
+      this.worldviewContext.onMount(this.tfArrowsInstance, this.arrowsCommandFactory)
       this.worldviewContext.registerDrawCall({
         instance: this.tfArrowsInstance,
-        reglCommand: makeArrowsCommand(),
+        reglCommand: this.arrowsCommandFactory,
         children: this.tfData.arrows,
         layerIndex: 5.6
       })
@@ -1535,6 +1539,8 @@ export class SceneManager {
       }
       if (!this.arrowsCommand) {
         this.arrowsCommand = makeArrowsCommand()(this.reglContext)
+        // 保存 Arrows 命令工厂函数引用，确保 onMount 和 registerDrawCall 使用同一个引用
+        this.arrowsCommandFactory = makeArrowsCommand()
       }
       // 更新 TF 数据
       this.updateTFData().catch(err => console.error('Failed to update TF data:', err))
