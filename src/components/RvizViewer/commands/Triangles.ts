@@ -76,6 +76,83 @@ const singleColor = (regl: Regl) =>
     count: (_context: any, props: any) => props.points.length
   })
 
+// 缓存地图数据的 regl buffer，避免每帧重新创建
+interface CachedTriangleData {
+  pointsBuffer: any
+  colorsBuffer: any
+  count: number
+  dataHash: string
+}
+
+const triangleCache = new Map<string, CachedTriangleData>()
+
+function getTriangleCacheKey(points: any, colors: any): string {
+  // 使用数据长度和第一个/最后一个元素生成简单的哈希
+  // 对于大地图，这可以快速判断数据是否变化
+  const pointsHash = Array.isArray(points) 
+    ? `${points.length}_${points[0]?.x || 0}_${points[points.length - 1]?.x || 0}`
+    : `${points?.length || 0}`
+  const colorsHash = Array.isArray(colors)
+    ? `${colors.length}_${colors[0]?.r || 0}_${colors[colors.length - 1]?.r || 0}`
+    : `${colors?.length || 0}`
+  return `${pointsHash}_${colorsHash}`
+}
+
+function getCachedTriangleBuffers(
+  regl: Regl,
+  props: any,
+  cacheKey: string
+): CachedTriangleData | null {
+  const cached = triangleCache.get(cacheKey)
+  if (cached) {
+    return cached
+  }
+  return null
+}
+
+function createTriangleBuffers(
+  regl: Regl,
+  props: any,
+  cacheKey: string
+): CachedTriangleData {
+  let pointsData: Float32Array | number[]
+  let colorsData: Float32Array | number[]
+
+  // 处理点数据
+  if (shouldConvert(props.points)) {
+    pointsData = pointToVec3Array(props.points)
+  } else if (Array.isArray(props.points)) {
+    // 如果已经是数组，直接使用
+    pointsData = props.points
+  } else {
+    pointsData = props.points || []
+  }
+
+  // 处理颜色数据
+  if (!props.colors || !props.colors.length) {
+    throw new Error(`Invalid empty or null prop "colors" when rendering triangles using vertex colors`)
+  }
+  if (shouldConvert(props.colors)) {
+    colorsData = getVertexColors(props) as Float32Array
+  } else {
+    colorsData = props.colors
+  }
+
+  // 创建 regl buffer
+  const pointsBuffer = regl.buffer(pointsData)
+  const colorsBuffer = regl.buffer(colorsData)
+
+  const cached: CachedTriangleData = {
+    pointsBuffer,
+    colorsBuffer,
+    count: Array.isArray(pointsData) ? pointsData.length / 3 : (pointsData as Float32Array).length / 3,
+    dataHash: cacheKey
+  }
+
+  triangleCache.set(cacheKey, cached)
+  return cached
+}
+
 const vertexColors = (regl: Regl) =>
   withPose({
     primitive: 'triangles',
@@ -106,19 +183,44 @@ const vertexColors = (regl: Regl) =>
   `,
     attributes: {
       point: (_context: any, props: any) => {
-        if (shouldConvert(props.points)) {
-          return pointToVec3Array(props.points)
+        // 性能优化：对于大地图数据，使用缓存机制
+        // 如果数据已经转换为 buffer，直接使用
+        if (props._cachedBuffers?.pointsBuffer) {
+          return props._cachedBuffers.pointsBuffer
         }
-        return props.points
+        
+        // 否则检查缓存
+        const cacheKey = getTriangleCacheKey(props.points, props.colors)
+        const cached = getCachedTriangleBuffers(regl, props, cacheKey)
+        
+        if (cached) {
+          // 将缓存的 buffer 附加到 props，避免重复查找
+          props._cachedBuffers = cached
+          return cached.pointsBuffer
+        }
+        
+        // 缓存未命中，创建新的 buffer
+        const newCached = createTriangleBuffers(regl, props, cacheKey)
+        props._cachedBuffers = newCached
+        return newCached.pointsBuffer
       },
       color: (_context: any, props: any) => {
-        if (!props.colors || !props.colors.length) {
-          throw new Error(`Invalid empty or null prop "colors" when rendering triangles using vertex colors`)
+        // 性能优化：使用缓存的 buffer
+        if (props._cachedBuffers?.colorsBuffer) {
+          return props._cachedBuffers.colorsBuffer
         }
-        if (shouldConvert(props.colors)) {
-          return getVertexColors(props)
+        
+        const cacheKey = getTriangleCacheKey(props.points, props.colors)
+        const cached = getCachedTriangleBuffers(regl, props, cacheKey)
+        
+        if (cached) {
+          props._cachedBuffers = cached
+          return cached.colorsBuffer
         }
-        return props.colors
+        
+        const newCached = createTriangleBuffers(regl, props, cacheKey)
+        props._cachedBuffers = newCached
+        return newCached.colorsBuffer
       }
     },
 
@@ -132,7 +234,13 @@ const vertexColors = (regl: Regl) =>
     },
     blend: defaultBlend,
 
-    count: (_context: any, props: any) => props.points.length
+    count: (_context: any, props: any) => {
+      // 使用缓存中的 count，避免重复计算
+      if (props._cachedBuffers?.count) {
+        return props._cachedBuffers.count
+      }
+      return props.points.length
+    }
   })
 
 // command to render triangle lists optionally supporting vertex colors for each triangle

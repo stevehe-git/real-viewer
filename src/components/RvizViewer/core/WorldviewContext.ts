@@ -74,11 +74,16 @@ export class WorldviewContext {
   
   // 性能优化：帧率限制和交互模式检测
   private _lastPaintTime = 0
-  private _targetFPS = 30 // 目标帧率
+  private _targetFPS = 60 // 正常模式目标帧率
+  private _interactionFPS = 30 // 交互模式目标帧率（降低以节省CPU）
+  private _largeMapInteractionFPS = 20 // 大地图交互模式目标帧率（进一步降低）
   private _minFrameInterval = 1000 / this._targetFPS // 最小帧间隔（ms）
+  private _interactionFrameInterval = 1000 / this._interactionFPS // 交互模式最小帧间隔（ms）
+  private _largeMapInteractionFrameInterval = 1000 / this._largeMapInteractionFPS // 大地图交互模式最小帧间隔（ms）
   private _isInteracting = false // 是否正在交互（旋转/平移）
+  private _hasLargeMap = false // 是否有大地图（用于进一步降低帧率）
   private _interactionTimeout: number | null = null // 交互超时定时器
-  private _interactionTimeoutMs = 150 // 交互结束后多久恢复正常渲染质量
+  private _interactionTimeoutMs = 200 // 交互结束后多久恢复正常渲染质量
 
   constructor({
     dimension,
@@ -261,7 +266,10 @@ export class WorldviewContext {
     // 优化：只在有统计对象时才重置（使用 for 循环）
     const cmdObjects = this.reglCommandObjects
     for (let i = 0; i < cmdObjects.length; i++) {
-      cmdObjects[i].stats.count = 0
+      const obj = cmdObjects[i]
+      if (obj && obj.stats) {
+        obj.stats.count = 0
+      }
     }
     
     this._cachedReadHitmapCall = null // clear the cache every time we paint
@@ -282,54 +290,64 @@ export class WorldviewContext {
     // outside the normal React render flow. If this is the case, we need to paint again.
     // 但在交互模式下，限制连续渲染以避免CPU飙升
     if (this._needsPaint) {
-      if (this._isInteracting) {
-        // 交互模式下，检查帧率限制
-        const now = performance.now()
-        const timeSinceLastPaint = now - this._lastPaintTime
-        if (timeSinceLastPaint >= this._minFrameInterval) {
-          // 已达到最小帧间隔，可以渲染
-          this._frame = requestAnimationFrame(() => this.paint())
-        } else {
-          // 未达到最小帧间隔，延迟渲染
-          this._frame = null
-          // 延迟到达到最小帧间隔后再渲染
-          setTimeout(() => {
-            if (this._needsPaint) {
-              this._frame = requestAnimationFrame(() => this.paint())
-            }
-          }, this._minFrameInterval - timeSinceLastPaint)
-        }
-      } else {
-        // 非交互模式，正常渲染
-        this._frame = requestAnimationFrame(() => this.paint())
-      }
+      this._scheduleNextPaint()
     } else {
       this._frame = null
     }
+  }
+  
+  /**
+   * 安排下一次渲染（带帧率限制）
+   */
+  private _scheduleNextPaint(): void {
+    if (this._frame !== null) {
+      // 已有待处理的渲染请求，标记需要重新渲染
+      this._needsPaint = true
+      return
+    }
+    
+    const now = performance.now()
+    const timeSinceLastPaint = now - this._lastPaintTime
+    
+    // 根据交互状态和地图大小选择帧率
+    let minInterval: number
+    if (this._isInteracting) {
+      // 交互模式下，如果有大地图，使用更低的帧率
+      minInterval = this._hasLargeMap 
+        ? this._largeMapInteractionFrameInterval 
+        : this._interactionFrameInterval
+    } else {
+      minInterval = this._minFrameInterval
+    }
+    
+    if (timeSinceLastPaint >= minInterval) {
+      // 已达到最小帧间隔，立即安排渲染
+      this._frame = requestAnimationFrame(() => this.paint())
+    } else {
+      // 未达到最小帧间隔，延迟渲染
+      const delay = minInterval - timeSinceLastPaint
+      this._frame = window.setTimeout(() => {
+        this._frame = requestAnimationFrame(() => this.paint())
+      }, delay) as any
+    }
+  }
+  
+  /**
+   * 设置是否有大地图（用于性能优化）
+   */
+  setHasLargeMap(hasLargeMap: boolean): void {
+    this._hasLargeMap = hasLargeMap
   }
 
   /**
    * 标记需要重新渲染（优化版本：带帧率限制和交互检测）
    */
   onDirty(): void {
-    // 交互模式下，使用帧率限制
-    if (this._isInteracting) {
-      const now = performance.now()
-      const timeSinceLastPaint = now - this._lastPaintTime
-      
-      // 如果距离上次渲染时间不够，跳过此次渲染请求
-      if (timeSinceLastPaint < this._minFrameInterval && this._frame !== null) {
-        this._needsPaint = true
-        return
-      }
-    }
+    this._needsPaint = true
     
-    // 正常模式或已达到帧率限制，安排渲染
+    // 如果没有待处理的渲染请求，安排下一次渲染
     if (this._frame === null) {
-      this._frame = requestAnimationFrame(() => this.paint())
-    } else {
-      // 已有待处理的渲染请求，标记需要重新渲染
-      this._needsPaint = true
+      this._scheduleNextPaint()
     }
   }
   
@@ -337,12 +355,26 @@ export class WorldviewContext {
    * 标记开始交互（旋转/平移）
    */
   markInteractionStart(): void {
-    this._isInteracting = true
-    
-    // 清除之前的超时定时器
-    if (this._interactionTimeout !== null) {
-      clearTimeout(this._interactionTimeout)
-      this._interactionTimeout = null
+    if (!this._isInteracting) {
+      this._isInteracting = true
+      
+      // 清除之前的超时定时器
+      if (this._interactionTimeout !== null) {
+        clearTimeout(this._interactionTimeout)
+        this._interactionTimeout = null
+      }
+      
+      // 如果当前有渲染请求，取消它并重新安排（使用交互模式的帧率）
+      if (this._frame !== null) {
+        if (typeof this._frame === 'number') {
+          cancelAnimationFrame(this._frame)
+        } else {
+          clearTimeout(this._frame as any)
+        }
+        this._frame = null
+        // 重新安排渲染，使用交互模式的帧率限制
+        this._scheduleNextPaint()
+      }
     }
   }
   
@@ -376,6 +408,14 @@ export class WorldviewContext {
   setTargetFPS(fps: number): void {
     this._targetFPS = Math.max(1, Math.min(120, fps)) // 限制在1-120fps之间
     this._minFrameInterval = 1000 / this._targetFPS
+  }
+  
+  /**
+   * 设置交互模式目标帧率（用于性能调优）
+   */
+  setInteractionFPS(fps: number): void {
+    this._interactionFPS = Math.max(1, Math.min(60, fps)) // 限制在1-60fps之间
+    this._interactionFrameInterval = 1000 / this._interactionFPS
   }
 
   readHitmap = queuePromise(

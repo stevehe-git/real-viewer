@@ -75,10 +75,18 @@ export default class CameraStore {
       return
     }
     const { thetaOffset, phi } = this.state
+    const newThetaOffset = thetaOffset - x
+    const newPhi = Math.max(0, Math.min(phi + y, Math.PI))
+    
+    // 性能优化：只在状态真正改变时才更新和触发回调
+    if (newThetaOffset === thetaOffset && newPhi === phi) {
+      return
+    }
+    
     this.setCameraState({
       ...this.state,
-      thetaOffset: thetaOffset - x,
-      phi: Math.max(0, Math.min(phi + y, Math.PI))
+      thetaOffset: newThetaOffset,
+      phi: newPhi
     })
     this._onChange(this.state)
   }
@@ -100,9 +108,20 @@ export default class CameraStore {
       quat.setAxisAngle(TEMP_QUAT, UNIT_Z_VECTOR, -thetaOffset)
     )
 
+    const newTargetOffset = vec3.add([0, 0, 0], targetOffset, offset) as Vec3
+    
+    // 性能优化：只在偏移量真正改变时才更新和触发回调
+    if (
+      newTargetOffset[0] === targetOffset[0] &&
+      newTargetOffset[1] === targetOffset[1] &&
+      newTargetOffset[2] === targetOffset[2]
+    ) {
+      return
+    }
+
     this.setCameraState({
       ...this.state,
-      targetOffset: vec3.add([0, 0, 0], targetOffset, offset) as Vec3
+      targetOffset: newTargetOffset
     })
     this._onChange(this.state)
   }

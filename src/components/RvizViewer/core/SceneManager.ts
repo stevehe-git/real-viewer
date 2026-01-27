@@ -22,6 +22,7 @@ export class SceneManager {
   private mapDataMap = new Map<string, any>() // 支持多个地图，key 为 componentId
   private mapConfigMap = new Map<string, { alpha?: number; colorScheme?: string; drawBehind?: boolean }>() // 每个地图的配置
   private mapRawMessageMap = new Map<string, any>() // 保存每个地图的原始消息
+  private mapDataHashMap = new Map<string, string>() // 地图数据哈希，用于检测数据是否变化
   private laserScanData: any = null
   private laserScanConfig: { 
     style?: string
@@ -609,6 +610,7 @@ export class SceneManager {
     if (!message || !message.info || !message.data || !Array.isArray(message.data)) {
       this.mapDataMap.delete(componentId)
       this.mapRawMessageMap.delete(componentId)
+      this.mapDataHashMap.delete(componentId)
       this.mapRequestIds.delete(componentId)
       this.registerDrawCalls()
       this.worldviewContext.onDirty()
@@ -623,6 +625,7 @@ export class SceneManager {
     if (width === 0 || height === 0 || resolution === 0) {
       this.mapDataMap.delete(componentId)
       this.mapRawMessageMap.delete(componentId)
+      this.mapDataHashMap.delete(componentId)
       this.mapRequestIds.delete(componentId)
       this.registerDrawCalls()
       this.worldviewContext.onDirty()
@@ -691,8 +694,41 @@ export class SceneManager {
         return
       }
 
+      // 性能优化：检查数据是否真的变化了
+      // 生成数据哈希（使用消息的宽度、高度、分辨率等关键信息）
+      const dataHash = `${width}_${height}_${resolution}_${message.info?.origin?.position?.x || 0}_${message.info?.origin?.position?.y || 0}`
+      const lastHash = this.mapDataHashMap.get(componentId)
+      
+      // 如果数据没有变化，跳过更新（避免不必要的重新渲染）
+      if (lastHash === dataHash && this.mapDataMap.has(componentId)) {
+        // 数据未变化，取消请求但不清除现有数据
+        return
+      }
+      
       // 保存处理后的数据（只保存最新的）
       this.mapDataMap.set(componentId, result.triangles)
+      this.mapDataHashMap.set(componentId, dataHash)
+      
+      // 性能优化：检测是否有大地图，用于调整渲染帧率
+      // 如果地图面积超过阈值（例如 10000 像素），认为是大地图
+      const mapArea = width * height
+      const isLargeMap = mapArea > 10000
+      if (typeof this.worldviewContext.setHasLargeMap === 'function') {
+        // 检查所有地图，如果有任何一个大地图，就标记为有大地图
+        let hasAnyLargeMap = isLargeMap
+        if (!hasAnyLargeMap) {
+          this.mapDataMap.forEach((_, id) => {
+            const msg = this.mapRawMessageMap.get(id)
+            if (msg?.info) {
+              const area = (msg.info.width || 0) * (msg.info.height || 0)
+              if (area > 10000) {
+                hasAnyLargeMap = true
+              }
+            }
+          })
+        }
+        this.worldviewContext.setHasLargeMap(hasAnyLargeMap)
+      }
       
       // 只在需要重新处理配置时才保存原始消息（用于 updateMapOptions）
       // 这样可以减少内存占用
@@ -739,6 +775,7 @@ export class SceneManager {
     this.mapDataMap.delete(componentId)
     this.mapConfigMap.delete(componentId)
     this.mapRawMessageMap.delete(componentId)
+    this.mapDataHashMap.delete(componentId) // 清理数据哈希
     this.mapInstances.delete(componentId)
     this.mapRequestIds.delete(componentId) // 清理请求 ID
     
@@ -756,6 +793,7 @@ export class SceneManager {
     this.mapDataMap.clear()
     this.mapConfigMap.clear()
     this.mapRawMessageMap.clear()
+    this.mapDataHashMap.clear() // 清理所有数据哈希
     this.mapInstances.clear()
     this.mapRequestIds.clear() // 清理所有请求 ID
     
