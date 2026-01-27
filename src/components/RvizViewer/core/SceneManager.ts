@@ -290,23 +290,45 @@ export class SceneManager {
     })
 
     // 注册所有地图（使用 Triangles）
-    this.mapDataMap.forEach((mapData, componentId) => {
-      if (this.trianglesCommand && mapData) {
-        let mapInstance = this.mapInstances.get(componentId)
-        if (!mapInstance) {
-          mapInstance = { displayName: `Map-${componentId}` }
-          this.mapInstances.set(componentId, mapInstance)
+    // 性能优化：批量渲染所有地图，减少 draw call 次数
+    if (this.trianglesCommand && this.mapDataMap.size > 0) {
+      // 收集所有地图数据，按 layerIndex 分组
+      const mapsByLayer = new Map<number, any[]>()
+      
+      this.mapDataMap.forEach((mapData, componentId) => {
+        if (mapData) {
+          const mapConfig = this.mapConfigMap.get(componentId) || {}
+          const layerIndex = mapConfig.drawBehind ? -1 : 4
+          
+          // 将地图数据添加到对应层级的数组中
+          if (!mapsByLayer.has(layerIndex)) {
+            mapsByLayer.set(layerIndex, [])
+          }
+          
+          // mapData 可能是数组（多个三角形）或单个对象
+          const triangles = Array.isArray(mapData) ? mapData : [mapData]
+          mapsByLayer.get(layerIndex)!.push(...triangles)
         }
-        const mapConfig = this.mapConfigMap.get(componentId) || {}
-        this.worldviewContext.onMount(mapInstance, triangles)
+      })
+      
+      // 为每个层级创建一个批量渲染的 draw call
+      mapsByLayer.forEach((allTriangles, layerIndex) => {
+        // 创建一个合并的地图实例用于批量渲染
+        const batchMapInstance = { 
+          displayName: `BatchMaps-Layer${layerIndex}`,
+          _isBatch: true,
+          _componentIds: Array.from(this.mapDataMap.keys())
+        }
+        
+        this.worldviewContext.onMount(batchMapInstance, triangles)
         this.worldviewContext.registerDrawCall({
-          instance: mapInstance,
+          instance: batchMapInstance,
           reglCommand: triangles,
-          children: mapData,
-          layerIndex: mapConfig.drawBehind ? -1 : 4
+          children: allTriangles, // 传入所有地图的三角形数据，实现批量渲染
+          layerIndex
         })
-      }
-    })
+      })
+    }
   }
 
   /**
@@ -317,9 +339,20 @@ export class SceneManager {
     this.worldviewContext.onUnmount(this.gridInstance)
     this.worldviewContext.onUnmount(this.axesInstance)
     this.worldviewContext.onUnmount(this.pointsInstance)
+    
+    // 清除地图实例（包括批量渲染实例）
     this.mapInstances.forEach((instance) => {
       this.worldviewContext.onUnmount(instance)
     })
+    // 清除批量渲染实例（如果有）
+    // 批量实例的 displayName 以 "BatchMaps-" 开头
+    const allDrawCalls = Array.from(this.worldviewContext._drawCalls?.values() || [])
+    allDrawCalls.forEach((drawCall: any) => {
+      if (drawCall?.instance?._isBatch || drawCall?.instance?.displayName?.startsWith('BatchMaps-')) {
+        this.worldviewContext.onUnmount(drawCall.instance)
+      }
+    })
+    
     this.pathInstances.forEach((instance) => {
       this.worldviewContext.onUnmount(instance)
     })
