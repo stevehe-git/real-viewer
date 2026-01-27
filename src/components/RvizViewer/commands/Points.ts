@@ -113,13 +113,13 @@ export const makePointsCommand = ({ useWorldSpaceSize }: PointsProps) => {
             console.warn(`Points: Invalid point data at index ${index}`, pointData)
             return
           }
-          console.log(`Points: Rendering point cloud ${index}:`, {
-            points: pointData.points?.length,
-            pose: pointData.pose,
-            color: pointData.color,
-            colors: pointData.colors?.length,
-            scale: pointData.scale
-          })
+          // console.log(`Points: Rendering point cloud ${index}:`, {
+          //   points: pointData.points?.length,
+          //   pose: pointData.pose,
+          //   color: pointData.color,
+          //   colors: pointData.colors?.length,
+          //   scale: pointData.scale
+          // })
           command(pointData)
         })
       } else {

@@ -438,26 +438,26 @@ export class SceneManager {
           children: allLaserScans,
           layerIndex: 5
         })
-        const totalPoints = allLaserScans.reduce((sum, scan) => sum + (scan.points?.length || 0), 0)
-        console.log(`Registered ${allLaserScans.length} LaserScan(s) for rendering, total points: ${totalPoints}`)
-        allLaserScans.forEach((scan, idx) => {
-          // 展开 Proxy 对象以查看实际值
-          const scaleValue = scan.scale ? { x: scan.scale.x, y: scan.scale.y, z: scan.scale.z } : null
-          const poseValue = scan.pose ? {
-            position: scan.pose.position ? { x: scan.pose.position.x, y: scan.pose.position.y, z: scan.pose.position.z } : null,
-            orientation: scan.pose.orientation ? { x: scan.pose.orientation.x, y: scan.pose.orientation.y, z: scan.pose.orientation.z, w: scan.pose.orientation.w } : null
-          } : null
-          console.log(`  LaserScan ${idx}:`, {
-            points: scan.points?.length || 0,
-            colors: scan.colors?.length || 0,
-            color: scan.color,
-            scale: scaleValue,
-            pose: poseValue,
-            firstPoint: scan.points?.[0],
-            firstColor: scan.colors?.[0],
-            lastPoint: scan.points?.[scan.points.length - 1]
-          })
-        })
+        // const totalPoints = allLaserScans.reduce((sum, scan) => sum + (scan.points?.length || 0), 0)
+        // console.log(`Registered ${allLaserScans.length} LaserScan(s) for rendering, total points: ${totalPoints}`)
+        // allLaserScans.forEach((scan, idx) => {
+        //   // 展开 Proxy 对象以查看实际值
+        //   const scaleValue = scan.scale ? { x: scan.scale.x, y: scan.scale.y, z: scan.scale.z } : null
+        //   const poseValue = scan.pose ? {
+        //     position: scan.pose.position ? { x: scan.pose.position.x, y: scan.pose.position.y, z: scan.pose.position.z } : null,
+        //     orientation: scan.pose.orientation ? { x: scan.pose.orientation.x, y: scan.pose.orientation.y, z: scan.pose.orientation.z, w: scan.pose.orientation.w } : null
+        //   } : null
+        //   console.log(`  LaserScan ${idx}:`, {
+        //     points: scan.points?.length || 0,
+        //     colors: scan.colors?.length || 0,
+        //     color: scan.color,
+        //     scale: scaleValue,
+        //     pose: poseValue,
+        //     firstPoint: scan.points?.[0],
+        //     firstColor: scan.colors?.[0],
+        //     lastPoint: scan.points?.[scan.points.length - 1]
+        //   })
+        // })
       }
     }
 
@@ -1197,40 +1197,40 @@ export class SceneManager {
             z: finalSize
           }
         }
-        console.log(`LaserScan ${componentId}: Increased point size from ${currentSize} to ${finalSize}`)
+        // console.log(`LaserScan ${componentId}: Increased point size from ${currentSize} to ${finalSize}`)
       }
 
       // 调试日志
-      if (transformedData.points && transformedData.points.length > 0) {
-        const firstPoint = transformedData.points[0]
-        const firstColor = transformedData.colors?.[0] || transformedData.color
-        const scaleValue = transformedData.scale ? { x: transformedData.scale.x, y: transformedData.scale.y, z: transformedData.scale.z } : null
-        const poseValue = transformedData.pose ? {
-          position: transformedData.pose.position ? { x: transformedData.pose.position.x, y: transformedData.pose.position.y, z: transformedData.pose.position.z } : null,
-          orientation: transformedData.pose.orientation ? { x: transformedData.pose.orientation.x, y: transformedData.pose.orientation.y, z: transformedData.pose.orientation.z, w: transformedData.pose.orientation.w } : null
-        } : null
-        console.log(`LaserScan ${componentId}: ${transformedData.points.length} points processed`, {
-          size: config.size || 0.01,
-          finalSize: finalSize,
-          alpha: config.alpha || 1.0,
-          scale: scaleValue,
-          pose: poseValue,
-          firstPoint,
-          firstColor,
-          hasColors: !!transformedData.colors,
-          hasColor: !!transformedData.color,
-          pointsRange: transformedData.points.length > 0 ? {
-            minX: Math.min(...transformedData.points.map((p: any) => p.x)),
-            maxX: Math.max(...transformedData.points.map((p: any) => p.x)),
-            minY: Math.min(...transformedData.points.map((p: any) => p.y)),
-            maxY: Math.max(...transformedData.points.map((p: any) => p.y)),
-            minZ: Math.min(...transformedData.points.map((p: any) => p.z)),
-            maxZ: Math.max(...transformedData.points.map((p: any) => p.z))
-          } : null
-        })
-      } else {
-        console.warn(`LaserScan ${componentId}: No points in processed data`)
-      }
+      // if (transformedData.points && transformedData.points.length > 0) {
+      //   const firstPoint = transformedData.points[0]
+      //   const firstColor = transformedData.colors?.[0] || transformedData.color
+      //   const scaleValue = transformedData.scale ? { x: transformedData.scale.x, y: transformedData.scale.y, z: transformedData.scale.z } : null
+      //   const poseValue = transformedData.pose ? {
+      //     position: transformedData.pose.position ? { x: transformedData.pose.position.x, y: transformedData.pose.position.y, z: transformedData.pose.position.z } : null,
+      //     orientation: transformedData.pose.orientation ? { x: transformedData.pose.orientation.x, y: transformedData.pose.orientation.y, z: transformedData.pose.orientation.z, w: transformedData.pose.orientation.w } : null
+      //   } : null
+      //   console.log(`LaserScan ${componentId}: ${transformedData.points.length} points processed`, {
+      //     size: config.size || 0.01,
+      //     finalSize: finalSize,
+      //     alpha: config.alpha || 1.0,
+      //     scale: scaleValue,
+      //     pose: poseValue,
+      //     firstPoint,
+      //     firstColor,
+      //     hasColors: !!transformedData.colors,
+      //     hasColor: !!transformedData.color,
+      //     pointsRange: transformedData.points.length > 0 ? {
+      //       minX: Math.min(...transformedData.points.map((p: any) => p.x)),
+      //       maxX: Math.max(...transformedData.points.map((p: any) => p.x)),
+      //       minY: Math.min(...transformedData.points.map((p: any) => p.y)),
+      //       maxY: Math.max(...transformedData.points.map((p: any) => p.y)),
+      //       minZ: Math.min(...transformedData.points.map((p: any) => p.z)),
+      //       maxZ: Math.max(...transformedData.points.map((p: any) => p.z))
+      //     } : null
+      //   })
+      // } else {
+      //   console.warn(`LaserScan ${componentId}: No points in processed data`)
+      // }
 
       // 保存处理后的数据
       this.laserScanDataMap.set(componentId, transformedData)
