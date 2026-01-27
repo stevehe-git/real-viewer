@@ -46,18 +46,15 @@ const panelTitle = computed(() => {
 
 // 使用统一的话题订阅管理器
 // 注意：camera 和 image 类型都使用 sensor_msgs/Image 消息类型
-// TODO: 实现话题订阅功能
-// const {
-//   getLatestMessage
-// } = useTopicSubscription(
-//   props.componentId,
-//   'camera', // 组件类型（camera 和 image 都使用相同的消息类型）
-//   props.topic,
-//   1 // 只保留最新的一帧
-// )
+import { topicSubscriptionManager } from '@/services/topicSubscriptionManager'
 
-// 临时实现
-const getLatestMessage = () => null
+// 获取最新消息（响应式）
+const getLatestMessage = computed(() => {
+  // 访问状态更新触发器以确保响应式追踪
+  const trigger = topicSubscriptionManager.getStatusUpdateTrigger()
+  trigger.value
+  return topicSubscriptionManager.getLatestMessage(props.componentId)
+})
 
 // 重用 canvas 和 context，避免频繁创建 DOM 元素
 let canvas: HTMLCanvasElement | null = null
@@ -229,7 +226,7 @@ let pendingMessage: any = null
 let isProcessing = false
 
 // 监听最新消息，转换为图像URL（使用节流和 requestAnimationFrame）
-watch(() => getLatestMessage(), (message) => {
+watch(() => getLatestMessage.value, (message) => {
   // 保存最新消息
   pendingMessage = message
   
