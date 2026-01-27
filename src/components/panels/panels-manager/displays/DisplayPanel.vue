@@ -504,11 +504,17 @@ function getSubscriptionStatus(componentId: string): SubscriptionStatus | null {
   return topicSubscriptionManager.getStatus(componentId)
 }
 
-// 获取 TF 订阅状态
+// 获取 TF 订阅状态（响应式）
+const tfSubscriptionStatusRef = computed(() => {
+  // 访问 ref 以确保响应式追踪
+  return tfManager.getSubscriptionStatusRef()
+})
+
 function getTFSubscriptionStatus(componentId: string) {
   const component = displayComponents.value.find(c => c.id === componentId)
   if (component?.type === 'tf') {
-    return tfManager.getSubscriptionStatusRef().value
+    // 访问 computed 以确保响应式追踪
+    return tfSubscriptionStatusRef.value.value
   }
   return null
 }

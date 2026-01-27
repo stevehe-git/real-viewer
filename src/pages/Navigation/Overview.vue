@@ -84,6 +84,32 @@ import { useFullscreen } from '../../composables/viewer/view-control/useFullscre
 import { useDisplaySync } from '../../composables/viewer/scene/useDisplaySync'
 import type { PointCloudData, PathData } from '../../components/RvizViewer/types'
 
+// 类型定义
+type ColorRGB = { r: number; g: number; b: number }
+type LaserScanOptions = {
+  style?: string
+  size?: number
+  alpha?: number
+  colorTransformer?: string
+  useRainbow?: boolean
+  minColor?: ColorRGB
+  maxColor?: ColorRGB
+  autocomputeIntensityBounds?: boolean
+  minIntensity?: number
+  maxIntensity?: number
+}
+type TFOptions = {
+  showNames?: boolean
+  showAxes?: boolean
+  showArrows?: boolean
+  markerScale?: number
+  markerAlpha?: number
+  frameTimeout?: number
+  filterWhitelist?: string
+  filterBlacklist?: string
+  frames?: Array<{ name: string; enabled: boolean }>
+}
+
 // 使用RViz store
 const rvizStore = useRvizStore()
 
@@ -110,119 +136,124 @@ let displaySyncInstance: ReturnType<typeof useDisplaySync> | null = null
 watch(
   () => viewerRef.value?.getSceneManager(),
   (sceneManager) => {
-    if (sceneManager && !displaySyncInstance) {
+    if (sceneManager) {
       const worldview = viewerRef.value?.getWorldview()
       if (worldview) {
-        displaySyncInstance = useDisplaySync({
-          context: {
-            setGridVisible: (visible: boolean) => {
-              sceneManager.setGridVisible(visible)
-              worldview.markDirty()
-              worldview.paint()
-            },
-            setAxesVisible: (visible: boolean) => {
-              sceneManager.setAxesVisible(visible)
-              worldview.markDirty()
-              worldview.paint()
-            },
-            setAxesOptions: (options: { length?: number; radius?: number; alpha?: number }) => {
-              sceneManager.setAxesOptions(options)
-              worldview.markDirty()
-              worldview.paint()
-            },
-            updateMap: async (message: any, componentId: string) => {
-              // 异步处理地图数据（在 Web Worker 中），不阻塞主线程
-              await sceneManager.updateMap(message, componentId)
-              worldview.markDirty()
-              worldview.paint()
-            },
-            removeMap: (componentId: string) => {
-              sceneManager.removeMap(componentId)
-              worldview.markDirty()
-              worldview.paint()
-            },
-            clearAllMaps: () => {
-              sceneManager.clearAllMaps()
-              worldview.markDirty()
-              worldview.paint()
-            },
-            setMapOptions: (options: { 
-              alpha?: number
-              colorScheme?: string
-              drawBehind?: boolean
-            }, componentId: string) => {
-              sceneManager.setMapOptions(options, componentId)
-              worldview.markDirty()
-              worldview.paint()
-            },
-            clearPointCloud: () => {
-              sceneManager.clearPointCloud()
-              worldview.markDirty()
-              worldview.paint()
-            },
-            clearPaths: () => {
-              sceneManager.clearPaths()
-              worldview.markDirty()
-              worldview.paint()
-            },
-            finalPaint: () => {
-              // 最终渲染，清理后只渲染一次
-              worldview.markDirty()
-              worldview.paint()
-            },
-            setLaserScanOptions: (options: { 
-              style?: string
-              size?: number
-              alpha?: number
-              colorTransformer?: string
-              useRainbow?: boolean
-              minColor?: { r: number; g: number; b: number }
-              maxColor?: { r: number; g: number; b: number }
-              autocomputeIntensityBounds?: boolean
-              minIntensity?: number
-              maxIntensity?: number
-            }) => {
-              sceneManager.setLaserScanOptions(options)
-              worldview.markDirty()
-              worldview.paint()
-            },
-            setGridOptions: (options: { 
-              planeCellCount?: number
-              normalCellCount?: number
-              cellSize?: number
-              color?: string
-              alpha?: number
-              plane?: string
-              offsetX?: number
-              offsetY?: number
-              offsetZ?: number
-            }) => {
-              sceneManager.setGridOptions(options)
-              worldview.markDirty()
-              worldview.paint()
-            },
-            destroyGrid: () => {
-              sceneManager.destroyGrid()
-              worldview.markDirty()
-              worldview.paint()
-            },
-            destroyAxes: () => {
-              sceneManager.destroyAxes()
-              worldview.markDirty()
-              worldview.paint()
-            },
-            createGrid: () => {
-              sceneManager.createGrid()
-              worldview.markDirty()
-              worldview.paint()
-            },
-            createAxes: () => {
-              sceneManager.createAxes()
-              worldview.markDirty()
-              worldview.paint()
+        // 检查 sceneManager 是否有 setTFVisible 方法
+        // 如果没有，说明是旧版本，需要重新创建 displaySyncInstance
+        const needsUpdate = !displaySyncInstance || typeof (sceneManager as any).setTFVisible !== 'function'
+        
+        if (needsUpdate) {
+          displaySyncInstance = useDisplaySync({
+            context: {
+              setGridVisible: (visible: boolean) => {
+                sceneManager.setGridVisible(visible)
+                worldview.markDirty()
+                worldview.paint()
+              },
+              setAxesVisible: (visible: boolean) => {
+                sceneManager.setAxesVisible(visible)
+                worldview.markDirty()
+                worldview.paint()
+              },
+              setAxesOptions: (options: { length?: number; radius?: number; alpha?: number }) => {
+                sceneManager.setAxesOptions(options)
+                worldview.markDirty()
+                worldview.paint()
+              },
+              updateMap: async (message: any, componentId: string) => {
+                // 异步处理地图数据（在 Web Worker 中），不阻塞主线程
+                await sceneManager.updateMap(message, componentId)
+                worldview.markDirty()
+                worldview.paint()
+              },
+              removeMap: (componentId: string) => {
+                sceneManager.removeMap(componentId)
+                worldview.markDirty()
+                worldview.paint()
+              },
+              clearAllMaps: () => {
+                sceneManager.clearAllMaps()
+                worldview.markDirty()
+                worldview.paint()
+              },
+              setMapOptions: (options: { 
+                alpha?: number
+                colorScheme?: string
+                drawBehind?: boolean
+              }, componentId: string) => {
+                sceneManager.setMapOptions(options, componentId)
+                worldview.markDirty()
+                worldview.paint()
+              },
+              clearPointCloud: () => {
+                sceneManager.clearPointCloud()
+                worldview.markDirty()
+                worldview.paint()
+              },
+              clearPaths: () => {
+                sceneManager.clearPaths()
+                worldview.markDirty()
+                worldview.paint()
+              },
+              finalPaint: () => {
+                // 最终渲染，清理后只渲染一次
+                worldview.markDirty()
+                worldview.paint()
+              },
+              setLaserScanOptions: (options: LaserScanOptions) => {
+                sceneManager.setLaserScanOptions(options)
+                worldview.markDirty()
+                worldview.paint()
+              },
+              setGridOptions: (options: { 
+                planeCellCount?: number
+                normalCellCount?: number
+                cellSize?: number
+                color?: string
+                alpha?: number
+                plane?: string
+                offsetX?: number
+                offsetY?: number
+                offsetZ?: number
+              }) => {
+                sceneManager.setGridOptions(options)
+                worldview.markDirty()
+                worldview.paint()
+              },
+              destroyGrid: () => {
+                sceneManager.destroyGrid()
+                worldview.markDirty()
+                worldview.paint()
+              },
+              destroyAxes: () => {
+                sceneManager.destroyAxes()
+                worldview.markDirty()
+                worldview.paint()
+              },
+              createGrid: () => {
+                sceneManager.createGrid()
+                worldview.markDirty()
+                worldview.paint()
+              },
+              createAxes: () => {
+                sceneManager.createAxes()
+                worldview.markDirty()
+                worldview.paint()
+              },
+              setTFVisible: (visible: boolean) => {
+                sceneManager.setTFVisible(visible)
+                worldview.markDirty()
+                worldview.paint()
+              },
+              setTFOptions: (options: TFOptions) => {
+                sceneManager.setTFOptions(options)
+                worldview.markDirty()
+                worldview.paint()
+              }
             }
-          }
-        })
+          })
+        }
       }
     }
   },

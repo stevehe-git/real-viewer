@@ -7,6 +7,7 @@ import { ref, computed } from 'vue'
 import { PluginRegistry } from '@/plugins/communication'
 import type { CommunicationPlugin, ConnectionParams, RobotConnection } from './types'
 import { topicSubscriptionManager } from '@/services/topicSubscriptionManager'
+import { tfManager } from '@/services/tfManager'
 
 export interface CommunicationState {
   currentPlugin: CommunicationPlugin | null
@@ -66,17 +67,26 @@ export const useCommunicationStore = defineStore('communication', () => {
         communicationState.value.isConnected = true
         communicationState.value.host = params.host
         communicationState.value.port = params.port
+        
+        // 如果是 ROS 插件，设置到 TopicSubscriptionManager 和 TFManager
+        if (pluginId === 'ros') {
+          topicSubscriptionManager.setROSPlugin(plugin)
+          // 初始化 TFManager（从 ROS 插件获取 ROS 实例）
+          const rosPlugin = plugin as any
+          if (rosPlugin.getROSInstance) {
+            const rosInstance = rosPlugin.getROSInstance()
+            if (rosInstance) {
+              tfManager.setROSInstance(rosInstance)
+            }
+          }
+        }
+        
         // 获取话题列表
         try {
           communicationState.value.topics = await plugin.getTopics()
         } catch (error) {
           console.warn('Failed to get topics:', error)
           communicationState.value.topics = []
-        }
-        
-        // 如果是 ROS 插件，设置到 TopicSubscriptionManager
-        if (pluginId === 'ros') {
-          topicSubscriptionManager.setROSPlugin(plugin)
         }
       }
       return success
@@ -95,9 +105,10 @@ export const useCommunicationStore = defineStore('communication', () => {
       communicationState.value.isConnected = false
       communicationState.value.topics = []
       
-      // 如果是 ROS 插件，清除 TopicSubscriptionManager 的插件引用
+      // 如果是 ROS 插件，清除 TopicSubscriptionManager 和 TFManager 的引用
       if (pluginId === 'ros') {
         topicSubscriptionManager.setROSPlugin(null)
+        tfManager.setROSInstance(null)
       }
     }
   }

@@ -3,8 +3,9 @@
  * 基于 regl-worldview 的架构，使用命令系统管理场景对象
  */
 import type { Regl, PointCloudData, PathData, RenderOptions } from '../types'
-import { grid, lines, makePointsCommand, cylinders, triangles } from '../commands'
-import { quat } from 'gl-matrix'
+import { grid, lines, makePointsCommand, cylinders, triangles, makeArrowsCommand } from '../commands'
+import { quat, vec3 } from 'gl-matrix'
+import { tfManager } from '@/services/tfManager'
 
 export class SceneManager {
   private reglContext: Regl
@@ -14,6 +15,7 @@ export class SceneManager {
   private linesCommand: any = null
   private cylindersCommand: any = null
   private trianglesCommand: any = null
+  private arrowsCommand: any = null
 
   private gridData: any = null
   private axesData: any = null
@@ -40,6 +42,23 @@ export class SceneManager {
   private options: Required<Omit<RenderOptions, 'gridColor'>> & { gridColor: [number, number, number, number] }
   private gridVisible = true
   private axesVisible = true
+  private tfVisible = false
+  private tfConfig: {
+    showNames?: boolean
+    showAxes?: boolean
+    showArrows?: boolean
+    markerScale?: number
+    markerAlpha?: number
+    frameTimeout?: number
+    filterWhitelist?: string
+    filterBlacklist?: string
+    frames?: Array<{ name: string; enabled: boolean }>
+  } = {}
+  private tfData: {
+    axes: any[]
+    arrows: any[]
+  } | null = null
+  private tfDataHash: string = '' // 用于检测数据是否变化
   private _pendingMapUpdate: number | null = null // 待处理的地图更新 RAF ID
   private mapRequestIds = new Map<string, number>() // 每个地图的当前请求 ID，用于取消过时的请求
   private mapRequestIdCounter = 0 // 请求 ID 计数器
@@ -84,6 +103,9 @@ export class SceneManager {
 
     // 初始化 Triangles 命令（用于地图）
     this.trianglesCommand = triangles(this.reglContext)
+
+    // 初始化 Arrows 命令（用于 TF 箭头）
+    this.arrowsCommand = makeArrowsCommand()(this.reglContext)
   }
 
   private updateGridData(options?: { 
@@ -231,6 +253,8 @@ export class SceneManager {
   private pointsInstance: any = { displayName: 'Points' }
   private pathInstances: any[] = []
   private mapInstances = new Map<string, any>() // 每个地图的实例，key 为 componentId
+  private tfAxesInstance: any = { displayName: 'TF-Axes' }
+  private tfArrowsInstance: any = { displayName: 'TF-Arrows' }
 
   /**
    * 注册所有绘制调用到 WorldviewContext
@@ -329,6 +353,39 @@ export class SceneManager {
         })
       })
     }
+
+    // 注册 LaserScan（使用 Points）
+    if (this.pointsCommand && this.laserScanData) {
+      this.worldviewContext.onMount(this.pointsInstance, makePointsCommand({}))
+      this.worldviewContext.registerDrawCall({
+        instance: this.pointsInstance,
+        reglCommand: makePointsCommand({}),
+        children: this.laserScanData,
+        layerIndex: 5
+      })
+    }
+
+    // 注册 TF Axes（使用 Cylinders）
+    if (this.tfVisible && this.cylindersCommand && this.tfData && this.tfData.axes && this.tfData.axes.length > 0) {
+      this.worldviewContext.onMount(this.tfAxesInstance, cylinders)
+      this.worldviewContext.registerDrawCall({
+        instance: this.tfAxesInstance,
+        reglCommand: cylinders,
+        children: this.tfData.axes,
+        layerIndex: 5.5
+      })
+    }
+
+    // 注册 TF Arrows（使用 Arrows）
+    if (this.tfVisible && this.arrowsCommand && this.tfData && this.tfData.arrows && this.tfData.arrows.length > 0) {
+      this.worldviewContext.onMount(this.tfArrowsInstance, makeArrowsCommand())
+      this.worldviewContext.registerDrawCall({
+        instance: this.tfArrowsInstance,
+        reglCommand: makeArrowsCommand(),
+        children: this.tfData.arrows,
+        layerIndex: 5.6
+      })
+    }
   }
 
   /**
@@ -357,6 +414,10 @@ export class SceneManager {
       this.worldviewContext.onUnmount(instance)
     })
     this.pathInstances = []
+    
+    // 清除 TF 实例
+    this.worldviewContext.onUnmount(this.tfAxesInstance)
+    this.worldviewContext.onUnmount(this.tfArrowsInstance)
   }
 
   /**
@@ -989,6 +1050,254 @@ export class SceneManager {
     this.axesVisible = true
     this.registerDrawCalls()
     this.worldviewContext.onDirty()
+  }
+
+  /**
+   * 设置 TF 可见性
+   */
+  setTFVisible(visible: boolean): void {
+    this.tfVisible = visible
+    
+    if (visible) {
+      // 确保命令已初始化
+      if (!this.cylindersCommand) {
+        this.cylindersCommand = cylinders(this.reglContext)
+      }
+      if (!this.arrowsCommand) {
+        this.arrowsCommand = makeArrowsCommand()(this.reglContext)
+      }
+      // 更新 TF 数据
+      this.updateTFData()
+    }
+    
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
+  }
+
+  /**
+   * 设置 TF 配置选项
+   */
+  setTFOptions(options: {
+    showNames?: boolean
+    showAxes?: boolean
+    showArrows?: boolean
+    markerScale?: number
+    markerAlpha?: number
+    frameTimeout?: number
+    filterWhitelist?: string
+    filterBlacklist?: string
+    frames?: Array<{ name: string; enabled: boolean }>
+  }): void {
+    this.tfConfig = {
+      ...this.tfConfig,
+      ...options
+    }
+    
+    // 如果设置了 frameTimeout，更新 tfManager
+    if (options.frameTimeout !== undefined) {
+      tfManager.setFrameTimeout(options.frameTimeout)
+    }
+    
+    // 更新 TF 数据
+    if (this.tfVisible) {
+      this.updateTFData()
+    }
+    
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
+  }
+
+  /**
+   * 清除 TF 数据
+   */
+  clearTFData(): void {
+    this.tfData = null
+    this.tfDataHash = ''
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
+  }
+
+  /**
+   * 更新 TF 数据（从 tfManager 获取）
+   * 参照 RViz 和 regl-worldview 的主流方案
+   */
+  private updateTFData(): void {
+    const showAxes = this.tfConfig.showAxes !== false // 默认显示
+    const showArrows = this.tfConfig.showArrows !== false // 默认显示
+    const markerScale = this.tfConfig.markerScale || 1.0
+    const markerAlpha = this.tfConfig.markerAlpha !== undefined ? this.tfConfig.markerAlpha : 1.0
+    const axisLength = 0.1 * markerScale
+    const axisRadius = 0.01 * markerScale
+    
+    // 获取固定帧
+    const fixedFrame = tfManager.getFixedFrame()
+    
+    // 获取所有 frames
+    const allFrames = tfManager.getFrames()
+    
+    // 过滤 frames（根据 filterWhitelist 和 filterBlacklist）
+    let filteredFrames = allFrames
+    if (this.tfConfig.filterWhitelist) {
+      const whitelist = this.tfConfig.filterWhitelist.split(',').map(f => f.trim())
+      filteredFrames = filteredFrames.filter(f => whitelist.includes(f))
+    }
+    if (this.tfConfig.filterBlacklist) {
+      const blacklist = this.tfConfig.filterBlacklist.split(',').map(f => f.trim())
+      filteredFrames = filteredFrames.filter(f => !blacklist.includes(f))
+    }
+    
+    // 如果配置了 frames，进一步过滤
+    if (this.tfConfig.frames && this.tfConfig.frames.length > 0) {
+      const enabledFrames = this.tfConfig.frames.filter(f => f.enabled).map(f => f.name)
+      filteredFrames = filteredFrames.filter(f => enabledFrames.includes(f))
+    }
+    
+    // 生成数据哈希，用于检测是否需要重新处理
+    const framesHash = filteredFrames.join(',')
+    const configHash = `${showAxes}_${showArrows}_${markerScale}_${markerAlpha}_${framesHash}`
+    if (this.tfDataHash === configHash && this.tfData) {
+      return // 跳过重复处理
+    }
+    this.tfDataHash = configHash
+    
+    const axes: any[] = []
+    const arrows: any[] = []
+    
+    // 创建旋转四元数辅助函数
+    const createRotationQuaternion = (axis: 'x' | 'y' | 'z', angle: number) => {
+      const q = quat.create()
+      switch (axis) {
+        case 'x':
+          quat.setAxisAngle(q, [1, 0, 0], angle)
+          break
+        case 'y':
+          quat.setAxisAngle(q, [0, 1, 0], angle)
+          break
+        case 'z':
+          quat.setAxisAngle(q, [0, 0, 1], angle)
+          break
+      }
+      return { x: q[0], y: q[1], z: q[2], w: q[3] }
+    }
+    
+    // 遍历所有 frames，生成 axes 和 arrows
+    filteredFrames.forEach(frameName => {
+      const frameInfo = tfManager.getFrameInfo(frameName, fixedFrame)
+      
+      if (!frameInfo.position || !frameInfo.orientation) {
+        return // 跳过无效的 frame
+      }
+      
+      const position = frameInfo.position
+      const orientation = frameInfo.orientation
+      
+      // 将 orientation 转换为 quat
+      const frameQuat = quat.fromValues(orientation.x, orientation.y, orientation.z, orientation.w)
+      
+      if (showAxes) {
+        // X轴：红色，沿 frame 的 X 方向
+        const xAxisBaseRotation = createRotationQuaternion('y', -Math.PI / 2)
+        const xAxisQuat = quat.create()
+        quat.multiply(
+          xAxisQuat,
+          frameQuat,
+          [xAxisBaseRotation.x, xAxisBaseRotation.y, xAxisBaseRotation.z, xAxisBaseRotation.w]
+        )
+        
+        const xAxisDir = vec3.fromValues(1, 0, 0)
+        vec3.transformQuat(xAxisDir, xAxisDir, frameQuat)
+        
+        axes.push({
+          pose: {
+            position: {
+              x: position.x + xAxisDir[0] * axisLength / 2,
+              y: position.y + xAxisDir[1] * axisLength / 2,
+              z: position.z + xAxisDir[2] * axisLength / 2
+            },
+            orientation: {
+              x: xAxisQuat[0],
+              y: xAxisQuat[1],
+              z: xAxisQuat[2],
+              w: xAxisQuat[3]
+            }
+          },
+          scale: { x: axisRadius, y: axisRadius, z: axisLength },
+          color: { r: 1.0, g: 0.0, b: 0.0, a: markerAlpha }
+        })
+        
+        // Y轴：绿色，沿 frame 的 Y 方向
+        const yAxisBaseRotation = createRotationQuaternion('x', -Math.PI / 2)
+        const yAxisQuat = quat.create()
+        quat.multiply(
+          yAxisQuat,
+          frameQuat,
+          [yAxisBaseRotation.x, yAxisBaseRotation.y, yAxisBaseRotation.z, yAxisBaseRotation.w]
+        )
+        
+        const yAxisDir = vec3.fromValues(0, 1, 0)
+        vec3.transformQuat(yAxisDir, yAxisDir, frameQuat)
+        
+        axes.push({
+          pose: {
+            position: {
+              x: position.x + yAxisDir[0] * axisLength / 2,
+              y: position.y + yAxisDir[1] * axisLength / 2,
+              z: position.z + yAxisDir[2] * axisLength / 2
+            },
+            orientation: {
+              x: yAxisQuat[0],
+              y: yAxisQuat[1],
+              z: yAxisQuat[2],
+              w: yAxisQuat[3]
+            }
+          },
+          scale: { x: axisRadius, y: axisRadius, z: axisLength },
+          color: { r: 0.0, g: 1.0, b: 0.0, a: markerAlpha }
+        })
+        
+        // Z轴：蓝色，沿 frame 的 Z 方向
+        const zAxisDir = vec3.fromValues(0, 0, 1)
+        vec3.transformQuat(zAxisDir, zAxisDir, frameQuat)
+        
+        axes.push({
+          pose: {
+            position: {
+              x: position.x + zAxisDir[0] * axisLength / 2,
+              y: position.y + zAxisDir[1] * axisLength / 2,
+              z: position.z + zAxisDir[2] * axisLength / 2
+            },
+            orientation: {
+              x: frameQuat[0],
+              y: frameQuat[1],
+              z: frameQuat[2],
+              w: frameQuat[3]
+            }
+          },
+          scale: { x: axisRadius, y: axisRadius, z: axisLength },
+          color: { r: 0.0, g: 0.0, b: 1.0, a: markerAlpha }
+        })
+      }
+      
+      if (showArrows && frameInfo.parent) {
+        // 获取父 frame 的位置
+        const parentInfo = tfManager.getFrameInfo(frameInfo.parent, fixedFrame)
+        if (parentInfo.position) {
+          arrows.push({
+            points: [
+              { x: parentInfo.position.x, y: parentInfo.position.y, z: parentInfo.position.z },
+              { x: position.x, y: position.y, z: position.z }
+            ],
+            scale: { x: axisRadius * 2, y: axisRadius * 2, z: axisLength * 0.3 },
+            color: { r: 0.5, g: 0.5, b: 0.5, a: markerAlpha }
+          })
+        }
+      }
+    })
+    
+    this.tfData = {
+      axes,
+      arrows
+    }
   }
 
   /**

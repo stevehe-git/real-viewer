@@ -5,6 +5,7 @@
 import { watch } from 'vue'
 import { useRvizStore } from '@/stores/rviz'
 import { topicSubscriptionManager } from '@/services/topicSubscriptionManager'
+import { tfManager } from '@/services/tfManager'
 
 export interface DisplaySyncContext {
   setGridVisible: (visible: boolean) => void
@@ -48,6 +49,18 @@ export interface DisplaySyncContext {
   clearPointCloud?: () => void
   clearPaths?: () => void
   finalPaint?: () => void
+  setTFVisible?: (visible: boolean) => void
+  setTFOptions?: (options: {
+    showNames?: boolean
+    showAxes?: boolean
+    showArrows?: boolean
+    markerScale?: number
+    markerAlpha?: number
+    frameTimeout?: number
+    filterWhitelist?: string
+    filterBlacklist?: string
+    frames?: Array<{ name: string; enabled: boolean }>
+  }) => void
 }
 
 export interface UseDisplaySyncOptions {
@@ -182,11 +195,58 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
   /**
    * 同步所有显示组件
    */
+  /**
+   * 同步 TF 显示状态
+   */
+  function syncTFDisplay(): void {
+    const tfComponent = rvizStore.displayComponents.find(c => c.type === 'tf')
+    
+    if (!tfComponent) {
+      // TF 组件不存在，隐藏 TF
+      if (context.setTFVisible) {
+        context.setTFVisible(false)
+      }
+      return
+    }
+
+    // TF 组件存在，根据 enabled 状态显示/隐藏
+    if (tfComponent.enabled) {
+      if (context.setTFVisible) {
+        context.setTFVisible(true)
+      }
+      
+      // 更新 TF 配置选项
+      const options = tfComponent.options || {}
+      if (context.setTFOptions) {
+        context.setTFOptions({
+          showNames: options.showNames,
+          showAxes: options.showAxes,
+          showArrows: options.showArrows,
+          markerScale: options.markerScale,
+          markerAlpha: options.markerAlpha,
+          frameTimeout: options.frameTimeout,
+          filterWhitelist: options.filterWhitelist,
+          filterBlacklist: options.filterBlacklist,
+          frames: options.frames
+        })
+      }
+    } else {
+      // TF 组件被禁用，隐藏 TF
+      if (context.setTFVisible) {
+        context.setTFVisible(false)
+      }
+    }
+  }
+
+  /**
+   * 同步所有显示组件
+   */
   function syncAllDisplays(): void {
     syncGridDisplay()
     syncAxesDisplay()
     syncMapDisplay()
     syncLaserScanDisplay()
+    syncTFDisplay()
   }
 
   // 监听 displayComponents 数组的变化（添加、删除）
@@ -427,6 +487,66 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
       }
     },
     { immediate: false }
+  )
+
+  // 监听 TF 数据变化（自动更新渲染）
+  const tfDataUpdateTrigger = tfManager.getDataUpdateTrigger()
+  watch(
+    () => tfDataUpdateTrigger.value,
+    () => {
+      // TF 数据更新时，如果 TF 显示已启用，则更新渲染
+      const tfComponent = rvizStore.displayComponents.find(c => c.type === 'tf')
+      if (tfComponent && tfComponent.enabled && context.setTFOptions) {
+        const options = tfComponent.options || {}
+        context.setTFOptions({
+          showNames: options.showNames,
+          showAxes: options.showAxes,
+          showArrows: options.showArrows,
+          markerScale: options.markerScale,
+          markerAlpha: options.markerAlpha,
+          frameTimeout: options.frameTimeout,
+          filterWhitelist: options.filterWhitelist,
+          filterBlacklist: options.filterBlacklist,
+          frames: options.frames
+        })
+      }
+    }
+  )
+
+  // 监听 TF 组件配置变化
+  watch(
+    () => {
+      const tfComponent = rvizStore.displayComponents.find(c => c.type === 'tf')
+      return tfComponent ? {
+        id: tfComponent.id,
+        enabled: tfComponent.enabled,
+        showNames: tfComponent.options?.showNames,
+        showAxes: tfComponent.options?.showAxes,
+        showArrows: tfComponent.options?.showArrows,
+        markerScale: tfComponent.options?.markerScale,
+        markerAlpha: tfComponent.options?.markerAlpha,
+        frameTimeout: tfComponent.options?.frameTimeout,
+        filterWhitelist: tfComponent.options?.filterWhitelist,
+        filterBlacklist: tfComponent.options?.filterBlacklist,
+        frames: tfComponent.options?.frames
+      } : null
+    },
+    (tfConfig) => {
+      if (tfConfig && tfConfig.enabled && context.setTFOptions) {
+        context.setTFOptions({
+          showNames: tfConfig.showNames,
+          showAxes: tfConfig.showAxes,
+          showArrows: tfConfig.showArrows,
+          markerScale: tfConfig.markerScale,
+          markerAlpha: tfConfig.markerAlpha,
+          frameTimeout: tfConfig.frameTimeout,
+          filterWhitelist: tfConfig.filterWhitelist,
+          filterBlacklist: tfConfig.filterBlacklist,
+          frames: tfConfig.frames
+        })
+      }
+    },
+    { deep: true }
   )
 
   // 初始同步
