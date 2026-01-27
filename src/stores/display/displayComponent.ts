@@ -106,7 +106,7 @@ export function getDefaultOptions(type: string): Record<string, any> {
       showNames: true,
       showAxes: true,
       showArrows: true,
-      markerScale: 1,
+      markerScale: 2,
       markerAlpha: 1,
       updateInterval: 0,
       frameTimeout: 15,

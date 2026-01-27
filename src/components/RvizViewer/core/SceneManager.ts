@@ -1127,7 +1127,7 @@ export class SceneManager {
   private async updateTFData(): Promise<void> {
     const showAxes = this.tfConfig.showAxes !== false // 默认显示
     const showArrows = this.tfConfig.showArrows !== false // 默认显示
-    const markerScale = this.tfConfig.markerScale || 1.0
+    const markerScale = this.tfConfig.markerScale !== undefined ? this.tfConfig.markerScale : 2.0
     const markerAlpha = this.tfConfig.markerAlpha !== undefined ? this.tfConfig.markerAlpha : 1.0
     
     // 获取固定帧
