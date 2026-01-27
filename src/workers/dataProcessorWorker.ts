@@ -12,7 +12,11 @@ import type {
   PathProcessRequest,
   PathProcessResult,
   TFProcessRequest,
-  TFProcessResult
+  TFProcessResult,
+  LaserScanProcessRequest,
+  LaserScanProcessResult,
+  PointCloud2ProcessRequest,
+  PointCloud2ProcessResult
 } from './dataProcessor.worker'
 
 export class DataProcessorWorker {
@@ -58,9 +62,39 @@ export class DataProcessorWorker {
     }
   }
 
-  private handleMessage(data: MapProcessResult | PointCloudProcessResult | ImageProcessResult | PathProcessResult | TFProcessResult): void {
+  private handleMessage(data: MapProcessResult | PointCloudProcessResult | ImageProcessResult | PathProcessResult | TFProcessResult | LaserScanProcessResult | PointCloud2ProcessResult): void {
     if (data.type === 'mapProcessed') {
       const result = data as MapProcessResult
+      const requestId = result.componentId // 使用 componentId 作为请求ID
+      const pending = this.pendingRequests.get(requestId)
+      
+      if (pending) {
+        clearTimeout(pending.timeout)
+        this.pendingRequests.delete(requestId)
+        
+        if (result.error) {
+          pending.reject(new Error(result.error))
+        } else {
+          pending.resolve(result)
+        }
+      }
+    } else if (data.type === 'laserScanProcessed') {
+      const result = data as LaserScanProcessResult
+      const requestId = result.componentId // 使用 componentId 作为请求ID
+      const pending = this.pendingRequests.get(requestId)
+      
+      if (pending) {
+        clearTimeout(pending.timeout)
+        this.pendingRequests.delete(requestId)
+        
+        if (result.error) {
+          pending.reject(new Error(result.error))
+        } else {
+          pending.resolve(result)
+        }
+      }
+    } else if (data.type === 'pointCloud2Processed') {
+      const result = data as PointCloud2ProcessResult
       const requestId = result.componentId // 使用 componentId 作为请求ID
       const pending = this.pendingRequests.get(requestId)
       
@@ -176,6 +210,42 @@ export class DataProcessorWorker {
     // TF 处理使用固定的 requestId，新的请求会取消旧的
     const requestId = 'tf_process'
     return this.sendRequest(requestId, request, 5000)
+  }
+
+  /**
+   * 处理 LaserScan 数据（异步）
+   */
+  async processLaserScan(request: LaserScanProcessRequest): Promise<LaserScanProcessResult> {
+    if (!this.worker) {
+      // 回退到主线程处理（简化实现，直接返回空数据）
+      return {
+        type: 'laserScanProcessed',
+        componentId: request.componentId,
+        data: null,
+        error: 'LaserScan processing requires Worker'
+      }
+    }
+
+    // 使用 componentId 作为 requestId，新的请求会取消旧的
+    return this.sendRequest(request.componentId, request, 10000)
+  }
+
+  /**
+   * 处理 PointCloud2 数据（异步）
+   */
+  async processPointCloud2(request: PointCloud2ProcessRequest): Promise<PointCloud2ProcessResult> {
+    if (!this.worker) {
+      // 回退到主线程处理（简化实现，直接返回空数据）
+      return {
+        type: 'pointCloud2Processed',
+        componentId: request.componentId,
+        data: null,
+        error: 'PointCloud2 processing requires Worker'
+      }
+    }
+
+    // 使用 componentId 作为 requestId，新的请求会取消旧的
+    return this.sendRequest(request.componentId, request, 10000)
   }
 
   /**

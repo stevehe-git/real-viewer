@@ -186,11 +186,6 @@ watch(
                 worldview.markDirty()
                 worldview.paint()
               },
-              clearPointCloud: () => {
-                sceneManager.clearPointCloud()
-                worldview.markDirty()
-                worldview.paint()
-              },
               clearPaths: () => {
                 sceneManager.clearPaths()
                 worldview.markDirty()
@@ -201,8 +196,65 @@ watch(
                 worldview.markDirty()
                 worldview.paint()
               },
-              setLaserScanOptions: (options: LaserScanOptions) => {
-                sceneManager.setLaserScanOptions(options)
+              updateLaserScan: async (message: any, componentId: string) => {
+                await sceneManager.updateLaserScan(message, componentId)
+                worldview.markDirty()
+                worldview.paint()
+              },
+              removeLaserScan: (componentId: string) => {
+                sceneManager.removeLaserScan(componentId)
+                worldview.markDirty()
+                worldview.paint()
+              },
+              clearAllLaserScans: () => {
+                sceneManager.clearAllLaserScans()
+                worldview.markDirty()
+                worldview.paint()
+              },
+              setLaserScanOptions: (options: LaserScanOptions, componentId: string) => {
+                sceneManager.setLaserScanOptions(options, componentId)
+                worldview.markDirty()
+                worldview.paint()
+              },
+              updatePointCloud: async (data: any, componentId: string) => {
+                await sceneManager.updatePointCloud(data, componentId)
+                worldview.markDirty()
+                worldview.paint()
+              },
+              removePointCloud: (componentId: string) => {
+                sceneManager.removePointCloud(componentId)
+                worldview.markDirty()
+                worldview.paint()
+              },
+              clearAllPointClouds: () => {
+                sceneManager.clearAllPointClouds()
+                worldview.markDirty()
+                worldview.paint()
+              },
+              updatePointCloud2: async (message: any, componentId: string) => {
+                await sceneManager.updatePointCloud2(message, componentId)
+                worldview.markDirty()
+                worldview.paint()
+              },
+              removePointCloud2: (componentId: string) => {
+                sceneManager.removePointCloud2(componentId)
+                worldview.markDirty()
+                worldview.paint()
+              },
+              clearAllPointCloud2s: () => {
+                sceneManager.clearAllPointCloud2s()
+                worldview.markDirty()
+                worldview.paint()
+              },
+              setPointCloud2Options: (options: { 
+                size?: number
+                alpha?: number
+                colorTransformer?: string
+                useRainbow?: boolean
+                minColor?: { r: number; g: number; b: number }
+                maxColor?: { r: number; g: number; b: number }
+              }, componentId: string) => {
+                sceneManager.setPointCloud2Options(options, componentId)
                 worldview.markDirty()
                 worldview.paint()
               },

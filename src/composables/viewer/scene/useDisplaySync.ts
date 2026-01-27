@@ -30,6 +30,9 @@ export interface DisplaySyncContext {
     colorScheme?: string
     drawBehind?: boolean
   }, componentId: string) => void
+  updateLaserScan: (message: any, componentId: string) => void | Promise<void>
+  removeLaserScan: (componentId: string) => void
+  clearAllLaserScans?: () => void
   setLaserScanOptions: (options: { 
     style?: string
     size?: number
@@ -41,12 +44,25 @@ export interface DisplaySyncContext {
     autocomputeIntensityBounds?: boolean
     minIntensity?: number
     maxIntensity?: number
-  }) => void
+  }, componentId: string) => void
+  updatePointCloud: (data: any, componentId: string) => void | Promise<void>
+  removePointCloud: (componentId: string) => void
+  clearAllPointClouds?: () => void
+  updatePointCloud2: (message: any, componentId: string) => void | Promise<void>
+  removePointCloud2: (componentId: string) => void
+  clearAllPointCloud2s?: () => void
+  setPointCloud2Options: (options: { 
+    size?: number
+    alpha?: number
+    colorTransformer?: string
+    useRainbow?: boolean
+    minColor?: { r: number; g: number; b: number }
+    maxColor?: { r: number; g: number; b: number }
+  }, componentId: string) => void
   destroyGrid: () => void
   destroyAxes: () => void
   createGrid: () => void
   createAxes: () => void
-  clearPointCloud?: () => void
   clearPaths?: () => void
   finalPaint?: () => void
   setTFVisible?: (visible: boolean) => void
@@ -164,32 +180,96 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
   }
 
   /**
-   * 同步 LaserScan 显示状态
+   * 同步 LaserScan 显示状态（支持多个 LaserScan）
    */
   function syncLaserScanDisplay(): void {
-    const laserScanComponent = rvizStore.displayComponents.find(c => c.type === 'laserscan')
+    const laserScanComponents = rvizStore.displayComponents.filter(c => c.type === 'laserscan')
     
-    if (!laserScanComponent) {
-      // LaserScan 组件不存在，不处理
-      return
-    }
+    // 处理每个 LaserScan 组件
+    laserScanComponents.forEach((laserScanComponent) => {
+      if (laserScanComponent.enabled) {
+        const options = laserScanComponent.options || {}
+        context.setLaserScanOptions({
+          style: options.style,
+          size: options.size,
+          alpha: options.alpha,
+          colorTransformer: options.colorTransformer,
+          useRainbow: options.useRainbow,
+          minColor: options.minColor,
+          maxColor: options.maxColor,
+          autocomputeIntensityBounds: options.autocomputeIntensityBounds,
+          minIntensity: options.minIntensity,
+          maxIntensity: options.maxIntensity
+        }, laserScanComponent.id)
 
-    // LaserScan 组件存在，更新配置选项
-    if (laserScanComponent.enabled) {
-      const options = laserScanComponent.options || {}
-      context.setLaserScanOptions({
-        style: options.style,
-        size: options.size,
-        alpha: options.alpha,
-        colorTransformer: options.colorTransformer,
-        useRainbow: options.useRainbow,
-        minColor: options.minColor,
-        maxColor: options.maxColor,
-        autocomputeIntensityBounds: options.autocomputeIntensityBounds,
-        minIntensity: options.minIntensity,
-        maxIntensity: options.maxIntensity
-      })
-    }
+        // 获取 LaserScan 数据并更新
+        const laserScanMessage = topicSubscriptionManager.getLatestMessage(laserScanComponent.id)
+        if (laserScanMessage) {
+          context.updateLaserScan(laserScanMessage, laserScanComponent.id)
+        }
+      } else {
+        // LaserScan 组件被禁用，移除数据
+        context.removeLaserScan(laserScanComponent.id)
+      }
+    })
+  }
+
+  /**
+   * 同步 PointCloud 显示状态（支持多个 PointCloud）
+   */
+  function syncPointCloudDisplay(): void {
+    const pointCloudComponents = rvizStore.displayComponents.filter(c => c.type === 'pointcloud')
+    
+    // 处理每个 PointCloud 组件
+    pointCloudComponents.forEach((pointCloudComponent) => {
+      if (pointCloudComponent.enabled) {
+        // 获取 PointCloud 数据并更新
+        const pointCloudMessage = topicSubscriptionManager.getLatestMessage(pointCloudComponent.id)
+        if (pointCloudMessage) {
+          // 转换消息格式为 PointCloudData
+          const pointCloudData = {
+            points: pointCloudMessage.points || [],
+            colors: pointCloudMessage.colors,
+            pointSize: pointCloudComponent.options?.pointSize || 3.0
+          }
+          context.updatePointCloud(pointCloudData, pointCloudComponent.id)
+        }
+      } else {
+        // PointCloud 组件被禁用，移除数据
+        context.removePointCloud(pointCloudComponent.id)
+      }
+    })
+  }
+
+  /**
+   * 同步 PointCloud2 显示状态（支持多个 PointCloud2）
+   */
+  function syncPointCloud2Display(): void {
+    const pointCloud2Components = rvizStore.displayComponents.filter(c => c.type === 'pointcloud2')
+    
+    // 处理每个 PointCloud2 组件
+    pointCloud2Components.forEach((pointCloud2Component) => {
+      if (pointCloud2Component.enabled) {
+        const options = pointCloud2Component.options || {}
+        context.setPointCloud2Options({
+          size: options.size,
+          alpha: options.alpha,
+          colorTransformer: options.colorTransformer,
+          useRainbow: options.useRainbow,
+          minColor: options.minColor,
+          maxColor: options.maxColor
+        }, pointCloud2Component.id)
+
+        // 获取 PointCloud2 数据并更新
+        const pointCloud2Message = topicSubscriptionManager.getLatestMessage(pointCloud2Component.id)
+        if (pointCloud2Message) {
+          context.updatePointCloud2(pointCloud2Message, pointCloud2Component.id)
+        }
+      } else {
+        // PointCloud2 组件被禁用，移除数据
+        context.removePointCloud2(pointCloud2Component.id)
+      }
+    })
   }
 
   /**
@@ -246,6 +326,8 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     syncAxesDisplay()
     syncMapDisplay()
     syncLaserScanDisplay()
+    syncPointCloudDisplay()
+    syncPointCloud2Display()
     syncTFDisplay()
   }
 
@@ -413,42 +495,164 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     { immediate: true, deep: false } // 改为 deep: false，因为我们已经在 watch 函数中手动检查变化
   )
 
-  // 监听 LaserScan 组件的配置选项变化（样式、大小、透明度、颜色转换器等）
+  // 监听所有 LaserScan 组件的配置选项变化（样式、大小、透明度、颜色转换器等）
   watch(
     () => {
-      const laserScanComponent = rvizStore.displayComponents.find(c => c.type === 'laserscan')
-      return laserScanComponent ? {
-        id: laserScanComponent.id,
-        enabled: laserScanComponent.enabled,
-        style: laserScanComponent.options?.style,
-        size: laserScanComponent.options?.size,
-        alpha: laserScanComponent.options?.alpha,
-        colorTransformer: laserScanComponent.options?.colorTransformer,
-        useRainbow: laserScanComponent.options?.useRainbow,
-        minColor: laserScanComponent.options?.minColor,
-        maxColor: laserScanComponent.options?.maxColor,
-        autocomputeIntensityBounds: laserScanComponent.options?.autocomputeIntensityBounds,
-        minIntensity: laserScanComponent.options?.minIntensity,
-        maxIntensity: laserScanComponent.options?.maxIntensity
-      } : null
+      return rvizStore.displayComponents
+        .filter(c => c.type === 'laserscan')
+        .map(laserScanComponent => ({
+          id: laserScanComponent.id,
+          enabled: laserScanComponent.enabled,
+          style: laserScanComponent.options?.style,
+          size: laserScanComponent.options?.size,
+          alpha: laserScanComponent.options?.alpha,
+          colorTransformer: laserScanComponent.options?.colorTransformer,
+          useRainbow: laserScanComponent.options?.useRainbow,
+          minColor: laserScanComponent.options?.minColor,
+          maxColor: laserScanComponent.options?.maxColor,
+          autocomputeIntensityBounds: laserScanComponent.options?.autocomputeIntensityBounds,
+          minIntensity: laserScanComponent.options?.minIntensity,
+          maxIntensity: laserScanComponent.options?.maxIntensity
+        }))
     },
-    (laserScanConfig) => {
-      if (laserScanConfig && laserScanConfig.enabled) {
-        context.setLaserScanOptions({
-          style: laserScanConfig.style,
-          size: laserScanConfig.size,
-          alpha: laserScanConfig.alpha,
-          colorTransformer: laserScanConfig.colorTransformer,
-          useRainbow: laserScanConfig.useRainbow,
-          minColor: laserScanConfig.minColor,
-          maxColor: laserScanConfig.maxColor,
-          autocomputeIntensityBounds: laserScanConfig.autocomputeIntensityBounds,
-          minIntensity: laserScanConfig.minIntensity,
-          maxIntensity: laserScanConfig.maxIntensity
-        })
-      }
+    (laserScanConfigs) => {
+      laserScanConfigs.forEach((laserScanConfig) => {
+        if (laserScanConfig && laserScanConfig.enabled) {
+          context.setLaserScanOptions({
+            style: laserScanConfig.style,
+            size: laserScanConfig.size,
+            alpha: laserScanConfig.alpha,
+            colorTransformer: laserScanConfig.colorTransformer,
+            useRainbow: laserScanConfig.useRainbow,
+            minColor: laserScanConfig.minColor,
+            maxColor: laserScanConfig.maxColor,
+            autocomputeIntensityBounds: laserScanConfig.autocomputeIntensityBounds,
+            minIntensity: laserScanConfig.minIntensity,
+            maxIntensity: laserScanConfig.maxIntensity
+          }, laserScanConfig.id)
+        }
+      })
+      // 配置变化后，重新同步 LaserScan 数据以应用新配置
+      syncLaserScanDisplay()
     },
     { deep: true }
+  )
+
+  // 监听所有 LaserScan 组件的数据变化（从 topicSubscriptionManager）
+  watch(
+    () => {
+      const laserScanComponents = rvizStore.displayComponents.filter(c => c.type === 'laserscan')
+      const trigger = topicSubscriptionManager.getStatusUpdateTrigger()
+      trigger.value
+      
+      const messages: Record<string, { message: any; timestamp: number }> = {}
+      laserScanComponents.forEach(laserScanComponent => {
+        if (laserScanComponent.enabled) {
+          const message = topicSubscriptionManager.getLatestMessage(laserScanComponent.id)
+          if (message) {
+            const timestamp = message.header?.stamp?.sec 
+              ? message.header.stamp.sec * 1000 + (message.header.stamp.nsec || 0) / 1000000
+              : Date.now()
+            messages[laserScanComponent.id] = { message, timestamp }
+          }
+        }
+      })
+      return messages
+    },
+    (laserScanMessages) => {
+      Object.entries(laserScanMessages).forEach(([componentId, { message }]) => {
+        if (message) {
+          context.updateLaserScan(message, componentId)
+        }
+      })
+      
+      // 移除已禁用或已删除的 LaserScan
+      const currentLaserScanIds = new Set(Object.keys(laserScanMessages))
+      rvizStore.displayComponents
+        .filter(c => c.type === 'laserscan')
+        .forEach(laserScanComponent => {
+          if (!laserScanComponent.enabled || !currentLaserScanIds.has(laserScanComponent.id)) {
+            context.removeLaserScan(laserScanComponent.id)
+          }
+        })
+    },
+    { immediate: true, deep: false }
+  )
+
+  // 监听所有 PointCloud2 组件的配置选项变化
+  watch(
+    () => {
+      return rvizStore.displayComponents
+        .filter(c => c.type === 'pointcloud2')
+        .map(pointCloud2Component => ({
+          id: pointCloud2Component.id,
+          enabled: pointCloud2Component.enabled,
+          size: pointCloud2Component.options?.size,
+          alpha: pointCloud2Component.options?.alpha,
+          colorTransformer: pointCloud2Component.options?.colorTransformer,
+          useRainbow: pointCloud2Component.options?.useRainbow,
+          minColor: pointCloud2Component.options?.minColor,
+          maxColor: pointCloud2Component.options?.maxColor
+        }))
+    },
+    (pointCloud2Configs) => {
+      pointCloud2Configs.forEach((pointCloud2Config) => {
+        if (pointCloud2Config && pointCloud2Config.enabled) {
+          context.setPointCloud2Options({
+            size: pointCloud2Config.size,
+            alpha: pointCloud2Config.alpha,
+            colorTransformer: pointCloud2Config.colorTransformer,
+            useRainbow: pointCloud2Config.useRainbow,
+            minColor: pointCloud2Config.minColor,
+            maxColor: pointCloud2Config.maxColor
+          }, pointCloud2Config.id)
+        }
+      })
+      // 配置变化后，重新同步 PointCloud2 数据以应用新配置
+      syncPointCloud2Display()
+    },
+    { deep: true }
+  )
+
+  // 监听所有 PointCloud2 组件的数据变化（从 topicSubscriptionManager）
+  watch(
+    () => {
+      const pointCloud2Components = rvizStore.displayComponents.filter(c => c.type === 'pointcloud2')
+      const trigger = topicSubscriptionManager.getStatusUpdateTrigger()
+      trigger.value
+      
+      const messages: Record<string, { message: any; timestamp: number }> = {}
+      pointCloud2Components.forEach(pointCloud2Component => {
+        if (pointCloud2Component.enabled) {
+          const message = topicSubscriptionManager.getLatestMessage(pointCloud2Component.id)
+          if (message) {
+            const timestamp = message.header?.stamp?.sec 
+              ? message.header.stamp.sec * 1000 + (message.header.stamp.nsec || 0) / 1000000
+              : Date.now()
+            messages[pointCloud2Component.id] = { message, timestamp }
+          }
+        }
+      })
+      return messages
+    },
+    (pointCloud2Messages) => {
+      Object.entries(pointCloud2Messages).forEach(([componentId, { message }]) => {
+        if (message) {
+          context.updatePointCloud2(message, componentId)
+        }
+      })
+      
+      // 移除已禁用或已删除的 PointCloud2
+      const currentPointCloud2Ids = new Set(Object.keys(pointCloud2Messages))
+      rvizStore.displayComponents
+        .filter(c => c.type === 'pointcloud2')
+        .forEach(pointCloud2Component => {
+          if (!pointCloud2Component.enabled || !currentPointCloud2Ids.has(pointCloud2Component.id)) {
+            context.removePointCloud2(pointCloud2Component.id)
+          }
+        })
+    },
+    { immediate: true, deep: false }
   )
 
   // 监听连接状态，断开连接时清理所有数据
@@ -470,8 +674,14 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
           }
           
           // 清理点云数据
-          if (context.clearPointCloud) {
-            context.clearPointCloud()
+          if (context.clearAllPointClouds) {
+            context.clearAllPointClouds()
+          }
+          if (context.clearAllPointCloud2s) {
+            context.clearAllPointCloud2s()
+          }
+          if (context.clearAllLaserScans) {
+            context.clearAllLaserScans()
           }
           
           // 清理路径数据
@@ -561,6 +771,8 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     syncAxesDisplay,
     syncMapDisplay,
     syncLaserScanDisplay,
+    syncPointCloudDisplay,
+    syncPointCloud2Display,
     syncAllDisplays
   }
 }

@@ -396,12 +396,13 @@ defineExpose({
   getWorldview: () => worldview.value
 })
 
-// 监听属性变化
+// 监听属性变化（向后兼容，使用默认 componentId）
 watch(
   () => props.pointCloud,
   (newData) => {
     if (newData && sceneManager.value) {
-      sceneManager.value.updatePointCloud(newData)
+      // 使用默认的 componentId 用于向后兼容
+      sceneManager.value.updatePointCloud(newData, 'default-pointcloud')
       worldview.value?.markDirty()
       worldview.value?.paint()
     }

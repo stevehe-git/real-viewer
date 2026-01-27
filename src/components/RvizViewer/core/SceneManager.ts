@@ -21,14 +21,24 @@ export class SceneManager {
 
   private gridData: any = null
   private axesData: any = null
-  private pointCloudData: any = null
+  private pointCloudDataMap = new Map<string, any>() // 支持多个 PointCloud，key 为 componentId
+  private pointCloudConfigMap = new Map<string, { pointSize?: number }>() // 每个 PointCloud 的配置
+  private pointCloud2DataMap = new Map<string, any>() // 支持多个 PointCloud2，key 为 componentId
+  private pointCloud2ConfigMap = new Map<string, { 
+    size?: number
+    alpha?: number
+    colorTransformer?: string
+    useRainbow?: boolean
+    minColor?: { r: number; g: number; b: number }
+    maxColor?: { r: number; g: number; b: number }
+  }>() // 每个 PointCloud2 的配置
   private pathsData: any[] = []
   private mapDataMap = new Map<string, any>() // 支持多个地图，key 为 componentId
   private mapConfigMap = new Map<string, { alpha?: number; colorScheme?: string; drawBehind?: boolean }>() // 每个地图的配置
   private mapRawMessageMap = new Map<string, any>() // 保存每个地图的原始消息
   private mapDataHashMap = new Map<string, string>() // 地图数据哈希，用于检测数据是否变化
-  private laserScanData: any = null
-  private laserScanConfig: { 
+  private laserScanDataMap = new Map<string, any>() // 支持多个 LaserScan，key 为 componentId
+  private laserScanConfigMap = new Map<string, { 
     style?: string
     size?: number
     alpha?: number
@@ -39,7 +49,11 @@ export class SceneManager {
     autocomputeIntensityBounds?: boolean
     minIntensity?: number
     maxIntensity?: number
-  } = {}
+  }>() // 每个 LaserScan 的配置
+  private laserScanRequestIds = new Map<string, number>() // 每个 LaserScan 的当前请求 ID
+  private pointCloud2RequestIds = new Map<string, number>() // 每个 PointCloud2 的当前请求 ID
+  private laserScanRequestIdCounter = 0
+  private pointCloud2RequestIdCounter = 0
 
   private options: Required<Omit<RenderOptions, 'gridColor'>> & { gridColor: [number, number, number, number] }
   private gridVisible = true
@@ -255,6 +269,9 @@ export class SceneManager {
   private pointsInstance: any = { displayName: 'Points' }
   private pathInstances: any[] = []
   private mapInstances = new Map<string, any>() // 每个地图的实例，key 为 componentId
+  private laserScanInstances = new Map<string, any>() // 每个 LaserScan 的实例，key 为 componentId
+  private pointCloudInstances = new Map<string, any>() // 每个 PointCloud 的实例，key 为 componentId
+  private pointCloud2Instances = new Map<string, any>() // 每个 PointCloud2 的实例，key 为 componentId
   private tfAxesInstance: any = { displayName: 'TF-Axes' }
   private tfArrowsInstance: any = { displayName: 'TF-Arrows' }
 
@@ -288,15 +305,52 @@ export class SceneManager {
       })
     }
 
-    // 注册点云
-    if (this.pointsCommand && this.pointCloudData) {
-      this.worldviewContext.onMount(this.pointsInstance, makePointsCommand({}))
-      this.worldviewContext.registerDrawCall({
-        instance: this.pointsInstance,
-        reglCommand: makePointsCommand({}),
-        children: this.pointCloudData,
-        layerIndex: 2
+    // 注册所有 PointCloud（批量渲染）
+    if (this.pointsCommand && this.pointCloudDataMap.size > 0) {
+      const allPointClouds: any[] = []
+      this.pointCloudDataMap.forEach((pointCloudData) => {
+        if (pointCloudData) {
+          allPointClouds.push(pointCloudData)
+        }
       })
+      
+      if (allPointClouds.length > 0) {
+        const batchPointCloudInstance = { 
+          displayName: 'BatchPointClouds',
+          _isBatch: true
+        }
+        this.worldviewContext.onMount(batchPointCloudInstance, makePointsCommand({}))
+        this.worldviewContext.registerDrawCall({
+          instance: batchPointCloudInstance,
+          reglCommand: makePointsCommand({}),
+          children: allPointClouds,
+          layerIndex: 2
+        })
+      }
+    }
+
+    // 注册所有 PointCloud2（批量渲染）
+    if (this.pointsCommand && this.pointCloud2DataMap.size > 0) {
+      const allPointCloud2s: any[] = []
+      this.pointCloud2DataMap.forEach((pointCloud2Data) => {
+        if (pointCloud2Data) {
+          allPointCloud2s.push(pointCloud2Data)
+        }
+      })
+      
+      if (allPointCloud2s.length > 0) {
+        const batchPointCloud2Instance = { 
+          displayName: 'BatchPointCloud2s',
+          _isBatch: true
+        }
+        this.worldviewContext.onMount(batchPointCloud2Instance, makePointsCommand({}))
+        this.worldviewContext.registerDrawCall({
+          instance: batchPointCloud2Instance,
+          reglCommand: makePointsCommand({}),
+          children: allPointCloud2s,
+          layerIndex: 2.5
+        })
+      }
     }
 
     // 注册路径
@@ -356,15 +410,28 @@ export class SceneManager {
       })
     }
 
-    // 注册 LaserScan（使用 Points）
-    if (this.pointsCommand && this.laserScanData) {
-      this.worldviewContext.onMount(this.pointsInstance, makePointsCommand({}))
-      this.worldviewContext.registerDrawCall({
-        instance: this.pointsInstance,
-        reglCommand: makePointsCommand({}),
-        children: this.laserScanData,
-        layerIndex: 5
+    // 注册所有 LaserScan（批量渲染）
+    if (this.pointsCommand && this.laserScanDataMap.size > 0) {
+      const allLaserScans: any[] = []
+      this.laserScanDataMap.forEach((laserScanData) => {
+        if (laserScanData) {
+          allLaserScans.push(laserScanData)
+        }
       })
+      
+      if (allLaserScans.length > 0) {
+        const batchLaserScanInstance = { 
+          displayName: 'BatchLaserScans',
+          _isBatch: true
+        }
+        this.worldviewContext.onMount(batchLaserScanInstance, makePointsCommand({}))
+        this.worldviewContext.registerDrawCall({
+          instance: batchLaserScanInstance,
+          reglCommand: makePointsCommand({}),
+          children: allLaserScans,
+          layerIndex: 5
+        })
+      }
     }
 
     // 注册 TF Axes（使用 Cylinders）
@@ -404,12 +471,27 @@ export class SceneManager {
       this.worldviewContext.onUnmount(instance)
     })
     // 清除批量渲染实例（如果有）
-    // 批量实例的 displayName 以 "BatchMaps-" 开头
+    // 批量实例的 displayName 以 "Batch" 开头
     const allDrawCalls = Array.from(this.worldviewContext._drawCalls?.values() || [])
     allDrawCalls.forEach((drawCall: any) => {
-      if (drawCall?.instance?._isBatch || drawCall?.instance?.displayName?.startsWith('BatchMaps-')) {
+      if (drawCall?.instance?._isBatch || 
+          drawCall?.instance?.displayName?.startsWith('BatchMaps-') ||
+          drawCall?.instance?.displayName?.startsWith('BatchLaserScans') ||
+          drawCall?.instance?.displayName?.startsWith('BatchPointClouds') ||
+          drawCall?.instance?.displayName?.startsWith('BatchPointCloud2s')) {
         this.worldviewContext.onUnmount(drawCall.instance)
       }
+    })
+    
+    // 清除 LaserScan、PointCloud、PointCloud2 实例
+    this.laserScanInstances.forEach((instance) => {
+      this.worldviewContext.onUnmount(instance)
+    })
+    this.pointCloudInstances.forEach((instance) => {
+      this.worldviewContext.onUnmount(instance)
+    })
+    this.pointCloud2Instances.forEach((instance) => {
+      this.worldviewContext.onUnmount(instance)
     })
     
     this.pathInstances.forEach((instance) => {
@@ -426,11 +508,19 @@ export class SceneManager {
    * 更新点云数据
    */
   /**
-   * 更新点云数据（使用 Web Worker 处理）
+   * 更新点云数据（使用 Web Worker 处理，支持多实例）
    */
-  async updatePointCloud(data: PointCloudData): Promise<void> {
+  async updatePointCloud(data: PointCloudData, componentId: string): Promise<void> {
+    if (!componentId) {
+      console.warn('updatePointCloud: componentId is required')
+      return
+    }
+
     if (!data || !data.points || data.points.length === 0) {
-      this.pointCloudData = null
+      this.pointCloudDataMap.delete(componentId)
+      this.pointCloudConfigMap.delete(componentId)
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
       return
     }
 
@@ -466,7 +556,8 @@ export class SceneManager {
       }
 
       // 保存处理后的数据
-      this.pointCloudData = result.data
+      this.pointCloudDataMap.set(componentId, result.data)
+      this.pointCloudConfigMap.set(componentId, { pointSize: data.pointSize || 3.0 })
       
       // 延迟注册绘制调用
       requestAnimationFrame(() => {
@@ -477,6 +568,29 @@ export class SceneManager {
       console.error('Failed to process point cloud in worker:', error)
       // Worker 失败时回退到同步处理（已在 worker 内部处理）
     }
+  }
+
+  /**
+   * 移除 PointCloud 数据
+   */
+  removePointCloud(componentId: string): void {
+    this.pointCloudDataMap.delete(componentId)
+    this.pointCloudConfigMap.delete(componentId)
+    this.pointCloudInstances.delete(componentId)
+    requestAnimationFrame(() => {
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
+    })
+  }
+
+  /**
+   * 清除所有 PointCloud 数据
+   */
+  clearAllPointClouds(): void {
+    this.pointCloudDataMap.clear()
+    this.pointCloudConfigMap.clear()
+    this.pointCloudInstances.clear()
+    this.registerDrawCalls()
   }
 
   /**
@@ -584,13 +698,6 @@ export class SceneManager {
     }
   }
 
-  /**
-   * 清除点云
-   */
-  clearPointCloud(): void {
-    this.pointCloudData = null
-    // 不调用 onDirty，由调用者统一处理最终渲染
-  }
 
   /**
    * 设置网格可见性
@@ -954,6 +1061,109 @@ export class SceneManager {
   }
 
   /**
+   * 更新 LaserScan 数据（使用 Web Worker 处理，支持多实例）
+   */
+  async updateLaserScan(message: any, componentId: string): Promise<void> {
+    if (!componentId) {
+      console.warn('updateLaserScan: componentId is required')
+      return
+    }
+
+    if (!message || !message.ranges || !Array.isArray(message.ranges) || message.ranges.length === 0) {
+      this.laserScanDataMap.delete(componentId)
+      this.laserScanConfigMap.delete(componentId)
+      this.laserScanRequestIds.delete(componentId)
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
+      return
+    }
+
+    // 生成新的请求 ID
+    this.laserScanRequestIdCounter++
+    const requestId = this.laserScanRequestIdCounter
+    this.laserScanRequestIds.set(componentId, requestId)
+
+    // 获取该 LaserScan 的配置
+    const config = this.laserScanConfigMap.get(componentId) || {}
+
+    try {
+      const { getDataProcessorWorker } = await import('@/workers/dataProcessorWorker')
+      const worker = getDataProcessorWorker()
+
+      const result = await worker.processLaserScan({
+        type: 'processLaserScan',
+        componentId,
+        message,
+        config: {
+          style: config.style,
+          size: config.size,
+          alpha: config.alpha,
+          colorTransformer: config.colorTransformer,
+          useRainbow: config.useRainbow,
+          minColor: config.minColor,
+          maxColor: config.maxColor,
+          autocomputeIntensityBounds: config.autocomputeIntensityBounds,
+          minIntensity: config.minIntensity,
+          maxIntensity: config.maxIntensity
+        }
+      })
+
+      // 检查请求是否已被取消
+      const currentRequestId = this.laserScanRequestIds.get(componentId)
+      if (currentRequestId !== requestId) {
+        return
+      }
+
+      if (result.error) {
+        console.error('Failed to process laser scan:', result.error)
+        return
+      }
+
+      // 保存处理后的数据
+      this.laserScanDataMap.set(componentId, result.data)
+
+      // 延迟注册绘制调用
+      requestAnimationFrame(() => {
+        this.registerDrawCalls()
+        this.worldviewContext.onDirty()
+      })
+    } catch (error: any) {
+      const currentRequestId = this.laserScanRequestIds.get(componentId)
+      if (currentRequestId !== requestId) {
+        return
+      }
+      if (error?.message !== 'Request cancelled' && error?.message !== 'Processing timeout') {
+        console.error('Failed to process laser scan in worker:', error)
+      }
+    }
+  }
+
+  /**
+   * 移除 LaserScan 数据
+   */
+  removeLaserScan(componentId: string): void {
+    this.laserScanDataMap.delete(componentId)
+    this.laserScanConfigMap.delete(componentId)
+    this.laserScanInstances.delete(componentId)
+    this.laserScanRequestIds.delete(componentId)
+    requestAnimationFrame(() => {
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
+    })
+  }
+
+  /**
+   * 清除所有 LaserScan 数据
+   */
+  clearAllLaserScans(): void {
+    this.laserScanDataMap.clear()
+    this.laserScanConfigMap.clear()
+    this.laserScanInstances.clear()
+    this.laserScanRequestIds.clear()
+    this.registerDrawCalls()
+  }
+
+  /**
    * 更新 LaserScan 配置选项（样式、大小、透明度、颜色转换器等）
    */
   updateLaserScanOptions(options: { 
@@ -967,16 +1177,22 @@ export class SceneManager {
     autocomputeIntensityBounds?: boolean
     minIntensity?: number
     maxIntensity?: number
-  }): void {
-    // 更新 LaserScan 配置
-    this.laserScanConfig = {
-      ...this.laserScanConfig,
-      ...options
+  }, componentId: string): void {
+    if (!componentId) {
+      console.warn('updateLaserScanOptions: componentId is required')
+      return
     }
-    // 如果 LaserScan 数据存在，应用新配置并重新渲染
-    if (this.laserScanData) {
-      // TODO: 应用配置到 LaserScan 数据（style、size、alpha、colorTransformer等）
-      // 这里需要根据实际的 LaserScan 渲染实现来更新
+
+    // 更新该 LaserScan 的配置
+    const currentConfig = this.laserScanConfigMap.get(componentId) || {}
+    this.laserScanConfigMap.set(componentId, {
+      ...currentConfig,
+      ...options
+    })
+
+    // 如果该 LaserScan 已有数据，需要重新处理以应用新配置
+    // 这里只更新绘制调用，让外部调用者负责重新获取消息
+    if (this.laserScanDataMap.has(componentId)) {
       this.registerDrawCalls()
       this.worldviewContext.onDirty()
     }
@@ -996,8 +1212,151 @@ export class SceneManager {
     autocomputeIntensityBounds?: boolean
     minIntensity?: number
     maxIntensity?: number
-  }): void {
-    this.updateLaserScanOptions(options)
+  }, componentId: string): void {
+    this.updateLaserScanOptions(options, componentId)
+  }
+
+  /**
+   * 更新 PointCloud2 数据（使用 Web Worker 处理，支持多实例）
+   */
+  async updatePointCloud2(message: any, componentId: string): Promise<void> {
+    if (!componentId) {
+      console.warn('updatePointCloud2: componentId is required')
+      return
+    }
+
+    if (!message || !message.data || !Array.isArray(message.data) || message.data.length === 0) {
+      this.pointCloud2DataMap.delete(componentId)
+      this.pointCloud2ConfigMap.delete(componentId)
+      this.pointCloud2RequestIds.delete(componentId)
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
+      return
+    }
+
+    // 生成新的请求 ID
+    this.pointCloud2RequestIdCounter++
+    const requestId = this.pointCloud2RequestIdCounter
+    this.pointCloud2RequestIds.set(componentId, requestId)
+
+    // 获取该 PointCloud2 的配置
+    const config = this.pointCloud2ConfigMap.get(componentId) || {}
+
+    try {
+      const { getDataProcessorWorker } = await import('@/workers/dataProcessorWorker')
+      const worker = getDataProcessorWorker()
+
+      const result = await worker.processPointCloud2({
+        type: 'processPointCloud2',
+        componentId,
+        message,
+        config: {
+          size: config.size,
+          alpha: config.alpha,
+          colorTransformer: config.colorTransformer,
+          useRainbow: config.useRainbow,
+          minColor: config.minColor,
+          maxColor: config.maxColor
+        }
+      })
+
+      // 检查请求是否已被取消
+      const currentRequestId = this.pointCloud2RequestIds.get(componentId)
+      if (currentRequestId !== requestId) {
+        return
+      }
+
+      if (result.error) {
+        console.error('Failed to process point cloud2:', result.error)
+        return
+      }
+
+      // 保存处理后的数据
+      this.pointCloud2DataMap.set(componentId, result.data)
+
+      // 延迟注册绘制调用
+      requestAnimationFrame(() => {
+        this.registerDrawCalls()
+        this.worldviewContext.onDirty()
+      })
+    } catch (error: any) {
+      const currentRequestId = this.pointCloud2RequestIds.get(componentId)
+      if (currentRequestId !== requestId) {
+        return
+      }
+      if (error?.message !== 'Request cancelled' && error?.message !== 'Processing timeout') {
+        console.error('Failed to process point cloud2 in worker:', error)
+      }
+    }
+  }
+
+  /**
+   * 移除 PointCloud2 数据
+   */
+  removePointCloud2(componentId: string): void {
+    this.pointCloud2DataMap.delete(componentId)
+    this.pointCloud2ConfigMap.delete(componentId)
+    this.pointCloud2Instances.delete(componentId)
+    this.pointCloud2RequestIds.delete(componentId)
+    requestAnimationFrame(() => {
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
+    })
+  }
+
+  /**
+   * 清除所有 PointCloud2 数据
+   */
+  clearAllPointCloud2s(): void {
+    this.pointCloud2DataMap.clear()
+    this.pointCloud2ConfigMap.clear()
+    this.pointCloud2Instances.clear()
+    this.pointCloud2RequestIds.clear()
+    this.registerDrawCalls()
+  }
+
+  /**
+   * 更新 PointCloud2 配置选项
+   */
+  updatePointCloud2Options(options: { 
+    size?: number
+    alpha?: number
+    colorTransformer?: string
+    useRainbow?: boolean
+    minColor?: { r: number; g: number; b: number }
+    maxColor?: { r: number; g: number; b: number }
+  }, componentId: string): void {
+    if (!componentId) {
+      console.warn('updatePointCloud2Options: componentId is required')
+      return
+    }
+
+    // 更新该 PointCloud2 的配置
+    const currentConfig = this.pointCloud2ConfigMap.get(componentId) || {}
+    this.pointCloud2ConfigMap.set(componentId, {
+      ...currentConfig,
+      ...options
+    })
+
+    // 如果该 PointCloud2 已有数据，需要重新处理以应用新配置
+    if (this.pointCloud2DataMap.has(componentId)) {
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
+    }
+  }
+
+  /**
+   * 设置 PointCloud2 配置选项（别名方法）
+   */
+  setPointCloud2Options(options: { 
+    size?: number
+    alpha?: number
+    colorTransformer?: string
+    useRainbow?: boolean
+    minColor?: { r: number; g: number; b: number }
+    maxColor?: { r: number; g: number; b: number }
+  }, componentId: string): void {
+    this.updatePointCloud2Options(options, componentId)
   }
 
   /**
@@ -1241,7 +1600,14 @@ export class SceneManager {
     this.unregisterAllDrawCalls()
     // 清除数据，但不触发渲染
     this.pathsData = []
-    this.pointCloudData = null
+    this.pointCloudDataMap.clear()
+    this.pointCloudConfigMap.clear()
+    this.pointCloud2DataMap.clear()
+    this.pointCloud2ConfigMap.clear()
+    this.laserScanDataMap.clear()
+    this.laserScanConfigMap.clear()
+    this.laserScanRequestIds.clear()
+    this.pointCloud2RequestIds.clear()
     this.gridCommand = null
     this.pointsCommand = null
     this.linesCommand = null

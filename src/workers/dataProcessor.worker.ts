@@ -81,8 +81,54 @@ export interface TFProcessResult {
   error?: string
 }
 
-type WorkerRequest = MapProcessRequest | PointCloudProcessRequest | ImageProcessRequest | PathProcessRequest | TFProcessRequest
-type WorkerResponse = MapProcessResult | PointCloudProcessResult | ImageProcessResult | PathProcessResult | TFProcessResult
+export interface LaserScanProcessRequest {
+  type: 'processLaserScan'
+  componentId: string
+  message: any
+  config: {
+    style?: string
+    size?: number
+    alpha?: number
+    colorTransformer?: string
+    useRainbow?: boolean
+    minColor?: { r: number; g: number; b: number }
+    maxColor?: { r: number; g: number; b: number }
+    autocomputeIntensityBounds?: boolean
+    minIntensity?: number
+    maxIntensity?: number
+  }
+}
+
+export interface LaserScanProcessResult {
+  type: 'laserScanProcessed'
+  componentId: string
+  data: any
+  error?: string
+}
+
+export interface PointCloud2ProcessRequest {
+  type: 'processPointCloud2'
+  componentId: string
+  message: any
+  config: {
+    size?: number
+    alpha?: number
+    colorTransformer?: string
+    useRainbow?: boolean
+    minColor?: { r: number; g: number; b: number }
+    maxColor?: { r: number; g: number; b: number }
+  }
+}
+
+export interface PointCloud2ProcessResult {
+  type: 'pointCloud2Processed'
+  componentId: string
+  data: any
+  error?: string
+}
+
+type WorkerRequest = MapProcessRequest | PointCloudProcessRequest | ImageProcessRequest | PathProcessRequest | TFProcessRequest | LaserScanProcessRequest | PointCloud2ProcessRequest
+type WorkerResponse = MapProcessResult | PointCloudProcessResult | ImageProcessResult | PathProcessResult | TFProcessResult | LaserScanProcessResult | PointCloud2ProcessResult
 
 /**
  * 处理地图数据（OccupancyGrid 转三角形）
@@ -623,6 +669,361 @@ function processPath(request: PathProcessRequest): PathProcessResult {
   }
 }
 
+/**
+ * 处理 LaserScan 数据（2D点云，基于frameid）
+ * 将 ROS LaserScan 消息转换为点云数据
+ */
+function processLaserScan(request: LaserScanProcessRequest): LaserScanProcessResult {
+  const { componentId } = request
+  try {
+    const { message, config } = request
+    const {
+      style = 'Flat Squares',
+      size = 0.01,
+      alpha = 1.0,
+      colorTransformer = 'Intensity',
+      useRainbow = true,
+      minColor = { r: 0, g: 0, b: 0 },
+      maxColor = { r: 255, g: 255, b: 255 },
+      autocomputeIntensityBounds = true,
+      minIntensity = 0,
+      maxIntensity = 0
+    } = config
+
+    if (!message || !message.ranges || !Array.isArray(message.ranges) || message.ranges.length === 0) {
+      return {
+        type: 'laserScanProcessed',
+        componentId,
+        data: null
+      }
+    }
+
+    const ranges = message.ranges
+    const intensities = message.intensities || []
+    const angleMin = message.angle_min || 0
+    const angleMax = message.angle_max || 0
+    const angleIncrement = message.angle_increment || 0
+    const rangeMin = message.range_min || 0
+    const rangeMax = message.range_max || Infinity
+
+    // 计算强度范围（如果需要自动计算）
+    let intensityMin = minIntensity
+    let intensityMax = maxIntensity
+    if (autocomputeIntensityBounds && intensities.length > 0) {
+      intensityMin = Infinity
+      intensityMax = -Infinity
+      for (let i = 0; i < intensities.length; i++) {
+        const intensity = intensities[i]
+        if (intensity !== undefined && intensity !== null) {
+          intensityMin = Math.min(intensityMin, intensity)
+          intensityMax = Math.max(intensityMax, intensity)
+        }
+      }
+      if (intensityMin === Infinity) {
+        intensityMin = 0
+        intensityMax = 1
+      }
+    }
+
+    const points: any[] = []
+    const colors: any[] = []
+    const defaultColor = { r: 1, g: 1, b: 1, a: alpha }
+
+    // 转换 ranges 为 3D 点（2D 点云，z=0）
+    for (let i = 0; i < ranges.length; i++) {
+      const range = ranges[i]
+      
+      // 跳过无效范围
+      if (range === undefined || range === null || range < rangeMin || range > rangeMax || !isFinite(range)) {
+        continue
+      }
+
+      // 计算角度
+      const angle = angleMin + i * angleIncrement
+      
+      // 计算 2D 点位置（在激光扫描平面内）
+      const x = range * Math.cos(angle)
+      const y = range * Math.sin(angle)
+      const z = 0 // LaserScan 是 2D 的，z=0
+
+      points.push({ x, y, z })
+
+      // 计算颜色
+      let color = defaultColor
+      if (colorTransformer === 'Intensity' && intensities.length > i) {
+        const intensity = intensities[i]
+        if (intensity !== undefined && intensity !== null) {
+          // 归一化强度值
+          const normalizedIntensity = intensityMax > intensityMin
+            ? (intensity - intensityMin) / (intensityMax - intensityMin)
+            : 0
+
+          if (useRainbow) {
+            // 彩虹色映射
+            const hue = normalizedIntensity * 240 // 0-240 (blue to red)
+            const rgb = hslToRgb(hue / 360, 1.0, 0.5)
+            color = { ...rgb, a: alpha }
+          } else {
+            // 线性插值颜色
+            color = {
+              r: (minColor.r + (maxColor.r - minColor.r) * normalizedIntensity) / 255,
+              g: (minColor.g + (maxColor.g - minColor.g) * normalizedIntensity) / 255,
+              b: (minColor.b + (maxColor.b - minColor.b) * normalizedIntensity) / 255,
+              a: alpha
+            }
+          }
+        }
+      } else {
+        // Flat 颜色
+        color = { r: 1, g: 0, b: 0, a: alpha } // 默认红色
+      }
+      
+      // 确保 color 有 alpha 属性
+      if (!color.a) {
+        color.a = alpha
+      }
+
+      colors.push(color)
+    }
+
+    if (points.length === 0) {
+      return {
+        type: 'laserScanProcessed',
+        componentId,
+        data: null
+      }
+    }
+
+    return {
+      type: 'laserScanProcessed',
+      componentId,
+      data: {
+        pose: {
+          position: { x: 0, y: 0, z: 0 },
+          orientation: { x: 0, y: 0, z: 0, w: 1 }
+        },
+        points,
+        colors: colors.length > 0 ? colors : undefined,
+        color: colors.length === 0 ? defaultColor : undefined,
+        scale: { x: size, y: size, z: size }
+      }
+    }
+  } catch (error: any) {
+    return {
+      type: 'laserScanProcessed',
+      componentId,
+      data: null,
+      error: error?.message || 'Unknown error'
+    }
+  }
+}
+
+/**
+ * 处理 PointCloud2 数据（3D点云）
+ * 将 ROS PointCloud2 消息转换为点云数据
+ */
+function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2ProcessResult {
+  const { componentId } = request
+  try {
+    const { message, config } = request
+    const {
+      size = 0.01,
+      alpha = 1.0,
+      colorTransformer = 'RGB',
+      useRainbow = false,
+      minColor = { r: 0, g: 0, b: 0 },
+      maxColor = { r: 255, g: 255, b: 255 }
+    } = config
+
+    if (!message || !message.data || !Array.isArray(message.data) || message.data.length === 0) {
+      return {
+        type: 'pointCloud2Processed',
+        componentId,
+        data: null
+      }
+    }
+
+    const data = message.data
+    const width = message.width || 0
+    const height = message.height || 0
+    const pointStep = message.point_step || 0
+    const rowStep = message.row_step || 0
+    const fields = message.fields || []
+
+    if (pointStep === 0 || fields.length === 0) {
+      return {
+        type: 'pointCloud2Processed',
+        componentId,
+        data: null
+      }
+    }
+
+    // 查找字段偏移量
+    const findFieldOffset = (fieldName: string): number => {
+      const field = fields.find((f: any) => f.name === fieldName)
+      return field ? (field.offset || 0) : -1
+    }
+
+    const xOffset = findFieldOffset('x')
+    const yOffset = findFieldOffset('y')
+    const zOffset = findFieldOffset('z')
+    const rgbOffset = findFieldOffset('rgb')
+    const intensityOffset = findFieldOffset('intensity')
+
+    if (xOffset < 0 || yOffset < 0 || zOffset < 0) {
+      return {
+        type: 'pointCloud2Processed',
+        componentId,
+        data: null,
+        error: 'Missing required fields (x, y, z)'
+      }
+    }
+
+    // 读取浮点数（little-endian）
+    const readFloat32 = (buffer: Uint8Array, offset: number): number => {
+      const view = new DataView(buffer.buffer, buffer.byteOffset + offset, 4)
+      return view.getFloat32(0, true) // little-endian
+    }
+
+    // 读取 Uint32（用于 RGB）
+    const readUint32 = (buffer: Uint8Array, offset: number): number => {
+      const view = new DataView(buffer.buffer, buffer.byteOffset + offset, 4)
+      return view.getUint32(0, true) // little-endian
+    }
+
+    const points: any[] = []
+    const colors: any[] = []
+    const defaultColor = { r: 1, g: 1, b: 1, a: alpha }
+
+    // 转换数据数组为 Uint8Array（如果需要）
+    let dataArray: Uint8Array
+    if (data instanceof Uint8Array) {
+      dataArray = data
+    } else if (Array.isArray(data)) {
+      dataArray = new Uint8Array(data)
+    } else {
+      return {
+        type: 'pointCloud2Processed',
+        componentId,
+        data: null,
+        error: 'Invalid data format'
+      }
+    }
+
+    const pointCount = width * height || Math.floor(dataArray.length / pointStep)
+
+    for (let i = 0; i < pointCount; i++) {
+      const pointOffset = i * pointStep
+      
+      if (pointOffset + pointStep > dataArray.length) {
+        break
+      }
+
+      // 读取点坐标
+      const x = readFloat32(dataArray, pointOffset + xOffset)
+      const y = readFloat32(dataArray, pointOffset + yOffset)
+      const z = readFloat32(dataArray, pointOffset + zOffset)
+
+      // 跳过无效点（NaN 或 Infinity）
+      if (!isFinite(x) || !isFinite(y) || !isFinite(z)) {
+        continue
+      }
+
+      points.push({ x, y, z })
+
+      // 计算颜色
+      let color = defaultColor
+      if (colorTransformer === 'RGB' && rgbOffset >= 0) {
+        // 从 RGB 字段读取颜色
+        const rgb = readUint32(dataArray, pointOffset + rgbOffset)
+        color = {
+          r: ((rgb >> 16) & 0xFF) / 255,
+          g: ((rgb >> 8) & 0xFF) / 255,
+          b: (rgb & 0xFF) / 255,
+          a: alpha
+        }
+      } else if (colorTransformer === 'Intensity' && intensityOffset >= 0) {
+        // 从强度字段计算颜色
+        const intensity = readFloat32(dataArray, pointOffset + intensityOffset)
+        const normalizedIntensity = Math.max(0, Math.min(1, intensity))
+        
+        if (useRainbow) {
+            const hue = normalizedIntensity * 240
+            const rgb = hslToRgb(hue / 360, 1.0, 0.5)
+            color = { ...rgb, a: alpha }
+        } else {
+          color = {
+            r: (minColor.r + (maxColor.r - minColor.r) * normalizedIntensity) / 255,
+            g: (minColor.g + (maxColor.g - minColor.g) * normalizedIntensity) / 255,
+            b: (minColor.b + (maxColor.b - minColor.b) * normalizedIntensity) / 255,
+            a: alpha
+          }
+        }
+      }
+
+      colors.push(color)
+    }
+
+    if (points.length === 0) {
+      return {
+        type: 'pointCloud2Processed',
+        componentId,
+        data: null
+      }
+    }
+
+    return {
+      type: 'pointCloud2Processed',
+      componentId,
+      data: {
+        pose: {
+          position: { x: 0, y: 0, z: 0 },
+          orientation: { x: 0, y: 0, z: 0, w: 1 }
+        },
+        points,
+        colors: colors.length > 0 ? colors : undefined,
+        color: colors.length === 0 ? defaultColor : undefined,
+        scale: { x: size, y: size, z: size }
+      }
+    }
+  } catch (error: any) {
+    return {
+      type: 'pointCloud2Processed',
+      componentId,
+      data: null,
+      error: error?.message || 'Unknown error'
+    }
+  }
+}
+
+/**
+ * HSL 转 RGB（用于彩虹色映射）
+ */
+function hslToRgb(h: number, s: number, l: number): { r: number; g: number; b: number } {
+  let r: number, g: number, b: number
+
+  if (s === 0) {
+    r = g = b = l
+  } else {
+    const hue2rgb = (p: number, q: number, t: number) => {
+      if (t < 0) t += 1
+      if (t > 1) t -= 1
+      if (t < 1/6) return p + (q - p) * 6 * t
+      if (t < 1/2) return q
+      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6
+      return p
+    }
+
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s
+    const p = 2 * l - q
+    r = hue2rgb(p, q, h + 1/3)
+    g = hue2rgb(p, q, h)
+    b = hue2rgb(p, q, h - 1/3)
+  }
+
+  return { r, g, b }
+}
+
 // Worker 消息处理
 self.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
   const request = event.data
@@ -644,6 +1045,12 @@ self.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
         break
       case 'processTF':
         response = processTF(request)
+        break
+      case 'processLaserScan':
+        response = processLaserScan(request)
+        break
+      case 'processPointCloud2':
+        response = processPointCloud2(request)
         break
       default:
         throw new Error(`Unknown request type: ${(request as any).type}`)
@@ -688,6 +1095,14 @@ self.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
       errorResponse.type = 'tfProcessed'
       errorResponse.axes = []
       errorResponse.arrows = []
+    } else if (request.type === 'processLaserScan') {
+      errorResponse.type = 'laserScanProcessed'
+      errorResponse.componentId = (request as LaserScanProcessRequest).componentId
+      errorResponse.data = null
+    } else if (request.type === 'processPointCloud2') {
+      errorResponse.type = 'pointCloud2Processed'
+      errorResponse.componentId = (request as PointCloud2ProcessRequest).componentId
+      errorResponse.data = null
     }
     
     self.postMessage(errorResponse)
