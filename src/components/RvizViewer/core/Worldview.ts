@@ -126,6 +126,34 @@ export class Worldview {
   }
 
   /**
+   * 标记开始交互（旋转/平移）
+   */
+  markInteractionStart(): void {
+    this.context.markInteractionStart()
+  }
+  
+  /**
+   * 标记交互结束
+   */
+  markInteractionEnd(): void {
+    this.context.markInteractionEnd()
+  }
+  
+  /**
+   * 检查是否正在交互
+   */
+  isInteracting(): boolean {
+    return this.context.isInteracting()
+  }
+  
+  /**
+   * 设置目标帧率（用于性能调优）
+   */
+  setTargetFPS(fps: number): void {
+    this.context.setTargetFPS(fps)
+  }
+
+  /**
    * 销毁
    */
   destroy(): void {

@@ -71,6 +71,14 @@ export class WorldviewContext {
   // group all initialized data together so it can be checked for existence to verify initialization is complete
   initializedData: InitializedData | null = null
   contextAttributes?: { [key: string]: any }
+  
+  // 性能优化：帧率限制和交互模式检测
+  private _lastPaintTime = 0
+  private _targetFPS = 30 // 目标帧率
+  private _minFrameInterval = 1000 / this._targetFPS // 最小帧间隔（ms）
+  private _isInteracting = false // 是否正在交互（旋转/平移）
+  private _interactionTimeout: number | null = null // 交互超时定时器
+  private _interactionTimeoutMs = 150 // 交互结束后多久恢复正常渲染质量
 
   constructor({
     dimension,
@@ -244,6 +252,7 @@ export class WorldviewContext {
 
   _paint(): void {
     this._needsPaint = false
+    this._lastPaintTime = performance.now()
     
     if (!this.initializedData) {
       return
@@ -271,19 +280,102 @@ export class WorldviewContext {
     
     // More React state updates may have happened while we were painting, since paint happens
     // outside the normal React render flow. If this is the case, we need to paint again.
+    // 但在交互模式下，限制连续渲染以避免CPU飙升
     if (this._needsPaint) {
-      this._frame = requestAnimationFrame(() => this.paint())
+      if (this._isInteracting) {
+        // 交互模式下，检查帧率限制
+        const now = performance.now()
+        const timeSinceLastPaint = now - this._lastPaintTime
+        if (timeSinceLastPaint >= this._minFrameInterval) {
+          // 已达到最小帧间隔，可以渲染
+          this._frame = requestAnimationFrame(() => this.paint())
+        } else {
+          // 未达到最小帧间隔，延迟渲染
+          this._frame = null
+          // 延迟到达到最小帧间隔后再渲染
+          setTimeout(() => {
+            if (this._needsPaint) {
+              this._frame = requestAnimationFrame(() => this.paint())
+            }
+          }, this._minFrameInterval - timeSinceLastPaint)
+        }
+      } else {
+        // 非交互模式，正常渲染
+        this._frame = requestAnimationFrame(() => this.paint())
+      }
     } else {
       this._frame = null
     }
   }
 
+  /**
+   * 标记需要重新渲染（优化版本：带帧率限制和交互检测）
+   */
   onDirty(): void {
+    // 交互模式下，使用帧率限制
+    if (this._isInteracting) {
+      const now = performance.now()
+      const timeSinceLastPaint = now - this._lastPaintTime
+      
+      // 如果距离上次渲染时间不够，跳过此次渲染请求
+      if (timeSinceLastPaint < this._minFrameInterval && this._frame !== null) {
+        this._needsPaint = true
+        return
+      }
+    }
+    
+    // 正常模式或已达到帧率限制，安排渲染
     if (this._frame === null) {
       this._frame = requestAnimationFrame(() => this.paint())
     } else {
+      // 已有待处理的渲染请求，标记需要重新渲染
       this._needsPaint = true
     }
+  }
+  
+  /**
+   * 标记开始交互（旋转/平移）
+   */
+  markInteractionStart(): void {
+    this._isInteracting = true
+    
+    // 清除之前的超时定时器
+    if (this._interactionTimeout !== null) {
+      clearTimeout(this._interactionTimeout)
+      this._interactionTimeout = null
+    }
+  }
+  
+  /**
+   * 标记交互结束
+   */
+  markInteractionEnd(): void {
+    // 延迟标记交互结束，避免在快速连续操作时频繁切换
+    if (this._interactionTimeout !== null) {
+      clearTimeout(this._interactionTimeout)
+    }
+    
+    this._interactionTimeout = window.setTimeout(() => {
+      this._isInteracting = false
+      this._interactionTimeout = null
+      // 交互结束后触发一次完整渲染
+      this.onDirty()
+    }, this._interactionTimeoutMs)
+  }
+  
+  /**
+   * 检查是否正在交互
+   */
+  isInteracting(): boolean {
+    return this._isInteracting
+  }
+  
+  /**
+   * 设置目标帧率（用于性能调优）
+   */
+  setTargetFPS(fps: number): void {
+    this._targetFPS = Math.max(1, Math.min(120, fps)) // 限制在1-120fps之间
+    this._minFrameInterval = 1000 / this._targetFPS
   }
 
   readHitmap = queuePromise(

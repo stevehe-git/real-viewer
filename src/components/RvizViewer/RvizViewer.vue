@@ -159,6 +159,11 @@ function setupEventListeners(): void {
   // 优化：使用 requestAnimationFrame 节流，避免频繁处理鼠标移动事件
   const handleMouseMove = (e: MouseEvent) => {
     if (cameraController.value?.isDragging()) {
+      // 标记开始交互（用于性能优化）
+      if (worldview.value && !worldview.value.isInteracting()) {
+        worldview.value.markInteractionStart()
+      }
+      
       // 取消之前的帧请求，只处理最新的鼠标位置
       if (mouseMoveFrame !== null) {
         cancelAnimationFrame(mouseMoveFrame)
@@ -180,6 +185,12 @@ function setupEventListeners(): void {
     if (cameraController.value) {
       cameraController.value.onMouseUp(e)
       canvas.style.cursor = 'default'
+      
+      // 标记交互结束（用于性能优化）
+      if (worldview.value && worldview.value.isInteracting()) {
+        worldview.value.markInteractionEnd()
+      }
+      
       // 相机状态变化会通过 WorldviewContext 的回调自动触发渲染
     }
   }
@@ -188,6 +199,11 @@ function setupEventListeners(): void {
     if (cameraController.value) {
       cameraController.value.clearButtons()
       canvas.style.cursor = 'default'
+      
+      // 标记交互结束（鼠标离开画布）
+      if (worldview.value && worldview.value.isInteracting()) {
+        worldview.value.markInteractionEnd()
+      }
     }
   })
 
@@ -205,11 +221,23 @@ function setupEventListeners(): void {
           cancelAnimationFrame(wheelFrame)
         }
         
-        // 使用 requestAnimationFrame 节流
+        // 标记开始交互（滚轮缩放）
+      if (worldview.value && !worldview.value.isInteracting()) {
+        worldview.value.markInteractionStart()
+      }
+      
+      // 使用 requestAnimationFrame 节流
         wheelFrame = requestAnimationFrame(() => {
           cameraController.value?.onWheel(e)
           // 相机状态变化会通过 WorldviewContext 的回调自动触发渲染（已优化为使用 onDirty）
           wheelFrame = null
+          
+          // 延迟标记交互结束（滚轮操作后）
+          setTimeout(() => {
+            if (worldview.value && worldview.value.isInteracting()) {
+              worldview.value.markInteractionEnd()
+            }
+          }, 200)
         })
       }
     },
