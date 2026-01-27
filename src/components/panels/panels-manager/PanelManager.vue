@@ -657,7 +657,7 @@ const emit = defineEmits<{
 .panel-manager {
   min-width: 200px;
   max-width: 800px;
-  padding: 16px;
+  padding: 4px;
   background: #f5f7fa;
   overflow-y: auto;
   height: 100%;

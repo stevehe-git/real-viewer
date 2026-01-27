@@ -2,22 +2,6 @@
   <div class="rviz-viewer">
     <div ref="containerRef" class="viewer-container">
       <canvas ref="canvasRef" class="viewer-canvas"></canvas>
-      <div class="viewer-controls">
-        <el-button-group>
-          <el-button size="small" @click="resetCamera">
-            <el-icon><Refresh /></el-icon>
-            重置视角
-          </el-button>
-          <el-button size="small" @click="toggleGrid">
-            <el-icon><Grid /></el-icon>
-            {{ gridVisible ? '隐藏' : '显示' }}网格
-          </el-button>
-          <el-button size="small" @click="toggleAxes">
-            <el-icon><Location /></el-icon>
-            {{ axesVisible ? '隐藏' : '显示' }}坐标轴
-          </el-button>
-        </el-button-group>
-      </div>
       <div class="viewer-info">
         <div class="info-item">
           <span>鼠标左键拖拽：旋转</span>
@@ -35,7 +19,6 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { Refresh, Grid, Location } from '@element-plus/icons-vue'
 import { Worldview } from './core/Worldview'
 import { SceneManager } from './core/SceneManager'
 import { WorldviewCameraController } from './camera/WorldviewCameraController'
@@ -117,7 +100,7 @@ onMounted(async () => {
 
   // 设置初始数据
   if (props.pointCloud && sceneManager.value) {
-    sceneManager.value.updatePointCloud(props.pointCloud)
+    sceneManager.value.updatePointCloud(props.pointCloud, 'default-pointcloud')
   }
 
   props.paths.forEach((path) => {
@@ -512,16 +495,6 @@ onUnmounted(() => {
 
 .viewer-canvas:active {
   cursor: grabbing;
-}
-
-.viewer-controls {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  z-index: 10;
-  background: rgba(0, 0, 0, 0.6);
-  padding: 8px;
-  border-radius: 4px;
 }
 
 .viewer-info {

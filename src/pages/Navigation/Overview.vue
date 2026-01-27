@@ -1,10 +1,7 @@
 <template>
-  <div class="navigation-preview">
+  <div class="navigation-preview" :style="{ left: sidebarLeft }">
     <!-- 顶部标题栏 -->
     <div class="top-bar">
-      <el-icon class="menu-icon" @click="toggleMenu">
-        <Menu />
-      </el-icon>
       <h1 class="page-title">导航预览</h1>
       <div class="top-bar-right">
         <el-button class="panel-settings-btn" @click="panelSettingsVisible = true">
@@ -73,7 +70,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { Menu, Setting } from '@element-plus/icons-vue'
+import { Setting } from '@element-plus/icons-vue'
 import RvizViewer from '../../components/RvizViewer/RvizViewer.vue'
 import PanelManager from '../../components/panels/panels-manager/PanelManager.vue'
 import PanelSettingsDrawer from '../../components/panels/panel-setting/PanelSettingsDrawer.vue'
@@ -326,6 +323,24 @@ const isFullscreen = fullscreen.isFullscreen
 const viewerWidth = ref(1200)
 const viewerHeight = ref(800)
 
+// 侧边栏宽度（动态计算）
+const sidebarLeft = ref('240px')
+const sidebarWidth = ref(240) // 默认宽度
+
+// 更新侧边栏宽度
+function updateSidebarWidth() {
+  const sidebar = document.querySelector('.sidebar') as HTMLElement
+  if (sidebar) {
+    const width = sidebar.offsetWidth
+    sidebarWidth.value = width
+    sidebarLeft.value = `${width}px`
+    updateViewportSize()
+  }
+}
+
+// MutationObserver 用于监听侧边栏宽度变化
+let sidebarObserver: MutationObserver | null = null
+
 // 点云数据
 const pointCloudData = ref<PointCloudData | undefined>(undefined)
 
@@ -358,10 +373,6 @@ const viewerOptions = computed(() => {
   }
 })
 
-// 切换菜单
-function toggleMenu() {
-  console.log('Toggle menu')
-}
 
 // 事件处理函数（使用viewControl composable）
 function handleResetCamera() {
@@ -435,7 +446,7 @@ function updateViewportSize(): void {
       viewerHeight.value = container.clientHeight
     } else {
       const panelWidth = hasPanels.value ? rvizStore.panelConfig.panelWidth : 0
-      viewerWidth.value = window.innerWidth - 240 - panelWidth
+      viewerWidth.value = window.innerWidth - sidebarWidth.value - panelWidth
       viewerHeight.value = window.innerHeight - 60 - 60
     }
   })
@@ -463,11 +474,42 @@ watch(
 panelWidth.value = rvizStore.panelConfig.panelWidth
 
 onMounted(() => {
+  // 监听侧边栏宽度变化
+  const sidebar = document.querySelector('.sidebar') as HTMLElement
+  if (sidebar) {
+    // 初始设置
+    updateSidebarWidth()
+    
+    // 监听侧边栏类名变化（折叠/展开）
+    sidebarObserver = new MutationObserver(() => {
+      updateSidebarWidth()
+    })
+    sidebarObserver.observe(sidebar, {
+      attributes: true,
+      attributeFilter: ['class']
+    })
+    
+    // 监听侧边栏宽度变化（CSS transition）
+    const resizeObserver = new ResizeObserver(() => {
+      updateSidebarWidth()
+    })
+    resizeObserver.observe(sidebar)
+    
+    // 清理函数
+    onUnmounted(() => {
+      resizeObserver.disconnect()
+    })
+  }
+  
   updateViewportSize()
   window.addEventListener('resize', updateViewportSize)
 })
 
 onUnmounted(() => {
+  if (sidebarObserver) {
+    sidebarObserver.disconnect()
+    sidebarObserver = null
+  }
   window.removeEventListener('resize', updateViewportSize)
   cleanup()
 })
@@ -477,7 +519,7 @@ onUnmounted(() => {
 .navigation-preview {
   position: fixed;
   top: 60px; /* Header高度 */
-  left: 240px; /* 侧边栏宽度 */
+  /* left 值通过 :style 动态设置 */
   right: 0;
   bottom: 0;
   display: flex;
@@ -496,6 +538,14 @@ onUnmounted(() => {
   background: white;
   border-bottom: 1px solid #e0e0e0;
   z-index: 10;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #333;
+  text-align: left;
 }
 
 .top-bar-right {
@@ -526,23 +576,6 @@ onUnmounted(() => {
   font-size: 16px;
 }
 
-.menu-icon {
-  font-size: 20px;
-  cursor: pointer;
-  color: #666;
-  transition: color 0.2s;
-}
-
-.menu-icon:hover {
-  color: #333;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: #333;
-}
 
 .main-content {
   flex: 1;

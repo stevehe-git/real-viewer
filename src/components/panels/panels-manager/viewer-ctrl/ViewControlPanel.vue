@@ -72,7 +72,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import BasePanel from '../../BasePanel.vue'
-import { Setting, Refresh, Grid, Position, FullScreen } from '@element-plus/icons-vue'
+import { Setting, FullScreen, Refresh, Grid, Position } from '@element-plus/icons-vue'
 
 interface Props {
   cameraMode: string
