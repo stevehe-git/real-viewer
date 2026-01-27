@@ -158,8 +158,8 @@
 import { ref, computed, watch, reactive, onMounted, onUnmounted } from 'vue'
 import { useRvizStore } from '@/stores/rviz'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useTopicSubscription, type SubscriptionStatus } from '@/composables/communication/useTopicSubscription'
 import { topicSubscriptionManager } from '@/services/topicSubscriptionManager'
-import { useDisplayTopicSubscription } from '@/composables/communication/useDisplayTopicSubscription'
 import BasePanel from '../../BasePanel.vue'
 import DisplayTypeSelector from './DisplayTypeSelector.vue'
 import {
@@ -199,11 +199,178 @@ import { tfManager } from '@/services/tfManager'
 
 const rvizStore = useRvizStore()
 
-// 使用全局话题订阅管理器（自动订阅所有显示配置中的 topic）
-useDisplayTopicSubscription()
-
 // 显示组件列表
 const displayComponents = computed(() => rvizStore.displayComponents)
+
+// 需要订阅话题的组件类型
+const TOPIC_COMPONENT_TYPES = ['map', 'path', 'laserscan', 'pointcloud2', 'marker', 'image', 'camera']
+
+// 为每个组件维护 useTopicSubscription 实例
+const subscriptionInstances = reactive<Map<string, ReturnType<typeof useTopicSubscription>>>(new Map())
+
+// 初始化或更新组件的订阅实例
+function setupComponentSubscription(component: any) {
+  const needsTopic = TOPIC_COMPONENT_TYPES.includes(component.type)
+  if (!needsTopic) {
+    return
+  }
+
+  // 如果已存在实例，先清理
+  if (subscriptionInstances.has(component.id)) {
+    const instance = subscriptionInstances.get(component.id)
+    instance?.cleanup()
+    subscriptionInstances.delete(component.id)
+  }
+
+  // 创建新的订阅实例（新实现会自动监听话题和连接状态）
+  const instance = useTopicSubscription(
+    component.id,
+    component.type,
+    component.options?.topic,
+    component.options?.queueSize || 10
+  )
+
+  subscriptionInstances.set(component.id, instance)
+
+  // 如果组件已启用且有话题，自动订阅
+  if (component.enabled && component.options?.topic && rvizStore.communicationState.isConnected) {
+    instance.subscribe()
+  }
+}
+
+// 监听组件列表变化，为每个需要订阅的组件创建订阅实例
+watch(
+  () => displayComponents.value.map(c => ({
+    id: c.id,
+    type: c.type,
+    enabled: c.enabled,
+    topic: c.options?.topic,
+    queueSize: c.options?.queueSize
+  })),
+  (newComponents, oldComponents) => {
+    // 处理新增的组件
+    newComponents.forEach(component => {
+      if (TOPIC_COMPONENT_TYPES.includes(component.type)) {
+        const fullComponent = displayComponents.value.find(c => c.id === component.id)
+        if (fullComponent) {
+          setupComponentSubscription(fullComponent)
+        }
+      }
+    })
+
+    // 处理删除的组件
+    if (oldComponents) {
+      const newIds = new Set(newComponents.map(c => c.id))
+      oldComponents.forEach(oldComponent => {
+        if (!newIds.has(oldComponent.id) && subscriptionInstances.has(oldComponent.id)) {
+          const instance = subscriptionInstances.get(oldComponent.id)
+          instance?.cleanup()
+          subscriptionInstances.delete(oldComponent.id)
+        }
+      })
+    }
+  },
+  { immediate: true, deep: true }
+)
+
+// 监听每个组件的话题和启用状态变化
+watch(
+  () => displayComponents.value.map(c => ({
+    id: c.id,
+    type: c.type,
+    enabled: c.enabled,
+    topic: c.options?.topic,
+    queueSize: c.options?.queueSize || 10
+  })),
+  (newComponents, oldComponents) => {
+    if (!oldComponents) return
+
+    const oldMap = new Map(oldComponents.map(c => [c.id, c]))
+
+    newComponents.forEach(newComponent => {
+      if (!TOPIC_COMPONENT_TYPES.includes(newComponent.type)) {
+        return
+      }
+
+      const oldComponent = oldMap.get(newComponent.id)
+      if (!oldComponent) {
+        return
+      }
+
+      const instance = subscriptionInstances.get(newComponent.id)
+      if (!instance) {
+        return
+      }
+
+      // 检查话题或队列大小是否变化
+      const topicChanged = oldComponent.topic !== newComponent.topic
+      const queueSizeChanged = oldComponent.queueSize !== newComponent.queueSize
+      const enabledChanged = oldComponent.enabled !== newComponent.enabled
+
+      // 如果话题或队列大小变化，重新创建订阅实例
+      if (topicChanged || queueSizeChanged) {
+        const fullComponent = displayComponents.value.find(c => c.id === newComponent.id)
+        if (fullComponent) {
+          setupComponentSubscription(fullComponent)
+        }
+      } else if (enabledChanged) {
+        // 只有启用状态变化
+        if (newComponent.enabled && newComponent.topic && rvizStore.communicationState.isConnected) {
+          instance.subscribe()
+        } else {
+          instance.unsubscribe()
+        }
+      }
+    })
+  },
+  { deep: true }
+)
+
+// 监听连接状态
+watch(
+  () => rvizStore.communicationState.isConnected,
+  (isConnected) => {
+    if (isConnected) {
+      // 连接后延迟一小段时间再订阅，确保 ROS 连接完全建立
+      setTimeout(() => {
+        displayComponents.value.forEach(component => {
+          if (TOPIC_COMPONENT_TYPES.includes(component.type) && component.enabled && component.options?.topic) {
+            const instance = subscriptionInstances.get(component.id)
+            if (instance) {
+              instance.subscribe()
+            } else {
+              setupComponentSubscription(component)
+            }
+          }
+        })
+      }, 200)
+    } else {
+      // 断开连接时取消所有订阅
+      subscriptionInstances.forEach(instance => {
+        instance.unsubscribe()
+      })
+    }
+  }
+)
+
+// 组件挂载时，如果已连接，立即订阅所有组件
+onMounted(() => {
+  if (rvizStore.communicationState.isConnected) {
+    displayComponents.value.forEach(component => {
+      if (TOPIC_COMPONENT_TYPES.includes(component.type)) {
+        setupComponentSubscription(component)
+      }
+    })
+  }
+})
+
+// 组件卸载时，取消所有订阅
+onUnmounted(() => {
+  subscriptionInstances.forEach(instance => {
+    instance.cleanup()
+  })
+  subscriptionInstances.clear()
+})
 
 // 选中的组件ID
 const selectedComponentId = ref<string | null>(null)
@@ -303,25 +470,38 @@ function getConfigComponent(type: string) {
   return components[type] || 'div'
 }
 
-// 获取订阅状态（从 topicSubscriptionManager 获取）
-function getSubscriptionStatus(componentId: string) {
-  const component = displayComponents.value.find(c => c.id === componentId)
-  if (!component) return null
+// 获取订阅状态（直接从 topicSubscriptionManager 获取，确保响应式更新）
+const statusUpdateTrigger = topicSubscriptionManager.getStatusUpdateTrigger()
+
+// 使用 computed 确保响应式更新
+// 直接从 topicSubscriptionManager 获取状态，而不是通过实例
+const subscriptionStatuses = computed(() => {
+  // 访问触发器以确保响应式追踪
+  statusUpdateTrigger.value
   
-  const needsTopic = ['map', 'path', 'laserscan', 'pointcloud2', 'marker', 'image', 'camera'].includes(component.type)
-  if (!needsTopic) return null
-  
-  // 检查是否有订阅
-  const hasSubscription = topicSubscriptionManager.getLatestMessage(componentId) !== null
-  const lastMessage = topicSubscriptionManager.getLatestMessage(componentId)
-  
-  return {
-    subscribed: hasSubscription && !!component.options?.topic,
-    hasData: !!lastMessage,
-    messageCount: 0, // topicSubscriptionManager 不提供消息计数
-    lastMessageTime: lastMessage ? Date.now() : null,
-    error: null
+  const statuses: Record<string, SubscriptionStatus | null> = {}
+  // 遍历所有需要订阅的组件
+  displayComponents.value.forEach(component => {
+    if (TOPIC_COMPONENT_TYPES.includes(component.type)) {
+      // 直接从 topicSubscriptionManager 获取最新状态
+      const managerStatus = topicSubscriptionManager.getStatus(component.id)
+      statuses[component.id] = managerStatus
+    }
+  })
+  return statuses
+})
+
+function getSubscriptionStatus(componentId: string): SubscriptionStatus | null {
+  // 访问 computed 以确保响应式追踪
+  const status = subscriptionStatuses.value[componentId]
+  if (status) {
+    return status
   }
+  
+  // 如果 computed 中没有，直接从 manager 获取（用于新创建的组件）
+  // 访问触发器以确保响应式追踪
+  statusUpdateTrigger.value
+  return topicSubscriptionManager.getStatus(componentId)
 }
 
 // 获取 TF 订阅状态

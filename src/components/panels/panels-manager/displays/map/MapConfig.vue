@@ -130,9 +130,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRvizStore } from '@/stores/rviz'
-import { useTopicSubscription } from '@/composables/communication/useTopicSubscription'
+import { topicSubscriptionManager } from '@/services/topicSubscriptionManager'
 import { ArrowRight } from '@element-plus/icons-vue'
 
 interface Props {
@@ -143,18 +143,19 @@ interface Props {
 const props = defineProps<Props>()
 const rvizStore = useRvizStore()
 
-// 获取最新消息以显示只读参数
-const topicSubscription = useTopicSubscription(
-  props.componentId,
-  'map',
-  props.options?.topic,
-  props.options?.queueSize || 10
-)
-
-// 从消息中提取只读参数
+// 使用 computed 来响应式地获取消息
+// 优先从 store 获取，如果没有则从 topicSubscriptionManager 获取
 const mapMessage = computed(() => {
-  const message = topicSubscription.getLatestMessage()
+  // 先从 store 获取
+  let message = rvizStore.getComponentData(props.componentId)
+  
+  // 如果 store 中没有，从 topicSubscriptionManager 获取
+  if (!message) {
+    message = topicSubscriptionManager.getLatestMessage(props.componentId)
+  }
+  
   if (!message || !message.info) return null
+  
   return {
     resolution: message.info.resolution ?? 0,
     width: message.info.width ?? 0,
@@ -162,6 +163,16 @@ const mapMessage = computed(() => {
     origin: message.info.origin || {}
   }
 })
+
+// 监听 store 中的组件数据变化
+// 使用 watch 监听特定组件的数据，确保响应式更新
+watch(
+  () => rvizStore.getComponentData(props.componentId),
+  () => {
+    // 当组件数据更新时，computed 会自动重新计算
+  },
+  { immediate: true, deep: true }
+)
 
 // 计算显示的只读值
 // Resolution, Width, Height: 从 message.info 中读取

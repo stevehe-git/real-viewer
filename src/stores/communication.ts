@@ -4,8 +4,9 @@
  */
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { PluginRegistry } from '../../plugins/communication'
-import type { CommunicationPlugin, ConnectionParams } from '../types'
+import { PluginRegistry } from '@/plugins/communication'
+import type { CommunicationPlugin, ConnectionParams, RobotConnection } from './types'
+import { topicSubscriptionManager } from '@/services/topicSubscriptionManager'
 
 export interface CommunicationState {
   currentPlugin: CommunicationPlugin | null
@@ -13,14 +14,6 @@ export interface CommunicationState {
   host: string
   port: number
   topics: string[]
-}
-
-// 机器人连接状态（兼容旧代码）
-export interface RobotConnection {
-  connected: boolean
-  availablePlugins: CommunicationPlugin[]
-  currentPlugin: CommunicationPlugin | null
-  connectionParams: ConnectionParams | null
 }
 
 export const useCommunicationStore = defineStore('communication', () => {
@@ -43,12 +36,14 @@ export const useCommunicationStore = defineStore('communication', () => {
 
   // 机器人连接状态（兼容旧代码）
   const robotConnection = computed<RobotConnection>(() => ({
+    protocol: communicationState.value.currentPlugin?.id || 'ros',
+    params: {
+      host: communicationState.value.host,
+      port: communicationState.value.port
+    },
     connected: communicationState.value.isConnected,
     availablePlugins: availablePlugins.value,
-    currentPlugin: communicationState.value.currentPlugin,
-    connectionParams: communicationState.value.currentPlugin
-      ? communicationState.value.currentPlugin.getConnectionInfo()
-      : null
+    currentPlugin: communicationState.value.currentPlugin
   }))
 
   // 注册插件
@@ -72,7 +67,17 @@ export const useCommunicationStore = defineStore('communication', () => {
         communicationState.value.host = params.host
         communicationState.value.port = params.port
         // 获取话题列表
-        communicationState.value.topics = await plugin.getTopics()
+        try {
+          communicationState.value.topics = await plugin.getTopics()
+        } catch (error) {
+          console.warn('Failed to get topics:', error)
+          communicationState.value.topics = []
+        }
+        
+        // 如果是 ROS 插件，设置到 TopicSubscriptionManager
+        if (pluginId === 'ros') {
+          topicSubscriptionManager.setROSPlugin(plugin)
+        }
       }
       return success
     } catch (error) {
@@ -85,9 +90,15 @@ export const useCommunicationStore = defineStore('communication', () => {
   function disconnectRobot() {
     if (communicationState.value.currentPlugin) {
       communicationState.value.currentPlugin.disconnect()
+      const pluginId = communicationState.value.currentPlugin.id
       communicationState.value.currentPlugin = null
       communicationState.value.isConnected = false
       communicationState.value.topics = []
+      
+      // 如果是 ROS 插件，清除 TopicSubscriptionManager 的插件引用
+      if (pluginId === 'ros') {
+        topicSubscriptionManager.setROSPlugin(null)
+      }
     }
   }
 
@@ -113,9 +124,8 @@ export const useCommunicationStore = defineStore('communication', () => {
 
   return {
     communicationState,
-    registeredPlugins,
-    availablePlugins,
     robotConnection,
+    availablePlugins,
     registerPlugin,
     connectRobot,
     disconnectRobot,
@@ -123,3 +133,6 @@ export const useCommunicationStore = defineStore('communication', () => {
     initialize
   }
 })
+
+// 导出类型（保持向后兼容）
+export type { RobotConnection } from './types'

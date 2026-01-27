@@ -179,6 +179,8 @@ function setupEventListeners(): void {
   })
 
   // 滚轮缩放
+  // 注意：必须使用 { passive: false } 以便调用 preventDefault() 阻止默认滚动行为
+  // 浏览器可能会显示警告，但这是必要的，因为我们需要阻止页面滚动来实现相机缩放
   canvas.addEventListener(
     'wheel',
     (e) => {
@@ -188,7 +190,7 @@ function setupEventListeners(): void {
         // 相机状态变化会通过 WorldviewContext 的回调自动触发渲染
       }
     },
-    { passive: false }
+    { passive: false } as AddEventListenerOptions
   )
 
   // 防止右键菜单

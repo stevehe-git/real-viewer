@@ -4,10 +4,12 @@
  */
 import { defineStore } from 'pinia'
 import { computed, toRef } from 'vue'
-import { useSceneStore } from './scene'
-import { usePanelStore } from './panel'
+import { useSceneStore } from './scene/sceneState'
+import { usePanelStore } from './panel/panelConfig'
 import { useCommunicationStore } from './communication'
 import { useDisplayStore } from './display'
+import { topicSubscriptionManager } from '@/services/topicSubscriptionManager'
+import { tfManager } from '@/services/tfManager'
 
 export const useRvizStore = defineStore('rviz', () => {
   // 获取各个功能模块的 store
@@ -130,6 +132,12 @@ export const useRvizStore = defineStore('rviz', () => {
     updateComponentData: displayStore.updateComponentData,
     clearComponentData: displayStore.clearComponentData,
     getComponentData: displayStore.getComponentData,
+    subscribeComponentTopic: (componentId: string, componentType: string, topic: string, queueSize: number) => {
+      return topicSubscriptionManager.subscribe(componentId, componentType, topic, queueSize)
+    },
+    unsubscribeComponentTopic: (componentId: string) => {
+      topicSubscriptionManager.unsubscribe(componentId)
+    },
     
     // Config methods
     saveCurrentConfig,
@@ -137,12 +145,16 @@ export const useRvizStore = defineStore('rviz', () => {
     importConfig,
     
     // Initialize
-    initialize
+    initialize,
+
+    // TF 管理器相关
+    getTFFrames: () => tfManager.getFrames(),
+    getTFFramesRef: () => tfManager.getFramesRef()
   }
 })
 
 // 导出类型（保持向后兼容）
-export type { SceneState } from './scene'
-export type { PanelConfig, FloatingPanel } from './panel'
+export type { SceneState } from './scene/sceneState'
+export type { PanelConfig, FloatingPanel } from './panel/panelConfig'
 export type { CommunicationState, RobotConnection } from './communication'
 export type { DisplayComponent } from './display'

@@ -1,19 +1,13 @@
-/**
- * 话题订阅 Composable
- * 提供统一的话题订阅管理功能
- */
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { watch, computed, type WatchStopHandle } from 'vue'
 import { useRvizStore } from '@/stores/rviz'
-import { topicSubscriptionManager } from '@/services/topicSubscriptionManager'
+import { topicSubscriptionManager, type SubscriptionStatus, type CachedMessage } from '@/services/topicSubscriptionManager'
 
-export interface SubscriptionStatus {
-  subscribed: boolean
-  hasData: boolean
-  messageCount: number
-  lastMessageTime: number | null
-  error: string | null
-}
-
+/**
+ * 话题订阅和数据缓存 composable
+ * 使用统一的话题订阅管理器，避免重复订阅
+ * 注意：此 composable 可能在 watch 回调中被调用，因此不自动注册 onUnmounted
+ * 调用者需要手动管理清理（通过返回的 cleanup 函数）
+ */
 export function useTopicSubscription(
   componentId: string,
   componentType: string,
@@ -22,107 +16,133 @@ export function useTopicSubscription(
 ) {
   const rvizStore = useRvizStore()
   
-  // 订阅状态
-  const status = ref<SubscriptionStatus>({
-    subscribed: false,
-    hasData: false,
-    messageCount: 0,
-    lastMessageTime: null,
-    error: null
+  // 获取状态更新触发器（用于响应式追踪）
+  const statusUpdateTrigger = topicSubscriptionManager.getStatusUpdateTrigger()
+  
+  // 存储 watch 停止句柄
+  const watchStopHandles: WatchStopHandle[] = []
+  
+  // 订阅状态（从统一管理器获取，通过触发器实现响应式）
+  const status = computed<SubscriptionStatus>(() => {
+    // 访问触发器以确保响应式追踪
+    statusUpdateTrigger.value
+    return topicSubscriptionManager.getStatus(componentId) || {
+      subscribed: false,
+      hasData: false,
+      messageCount: 0,
+      lastMessageTime: null,
+      error: null
+    }
   })
-
-  // 获取最新消息
-  const getLatestMessage = () => {
-    return topicSubscriptionManager.getLatestMessage(componentId)
-  }
-
-  // 订阅话题
+  
+  // 数据缓存队列（从统一管理器获取）
+  const messageQueue = computed<CachedMessage[]>(() => {
+    return topicSubscriptionManager.getAllMessages(componentId)
+  })
+  
+  // 订阅话题（使用统一管理器，只在已连接时订阅）
   const subscribe = () => {
-    if (!topic) {
-      status.value.error = 'No topic specified'
+    if (!topic || topic.trim() === '') {
       return
     }
-
-    try {
-      // 检查是否已连接
-      if (!rvizStore.communicationState.isConnected) {
-        status.value.error = 'Not connected to robot'
-        return
-      }
-
-      // 检查是否已经订阅（避免重复订阅）
-      if (topicSubscriptionManager.isSubscribed(componentId)) {
-        status.value.subscribed = true
-        status.value.error = null
-        return
-      }
-
-      // 通过topicSubscriptionManager订阅
-      topicSubscriptionManager.subscribe(
-        componentId,
-        componentType,
-        topic,
-        queueSize,
-        (message: any) => {
-          // 更新状态
-          status.value.hasData = true
-          status.value.messageCount++
-          status.value.lastMessageTime = Date.now()
-          status.value.error = null
+    // 检查连接状态，只有在已连接时才订阅
+    if (!rvizStore.communicationState.isConnected) {
+      return
+    }
+    rvizStore.subscribeComponentTopic(componentId, componentType, topic, queueSize)
+  }
+  
+  // 取消订阅（使用统一管理器）
+  const unsubscribe = () => {
+    rvizStore.unsubscribeComponentTopic(componentId)
+  }
+  
+  // 获取最新消息（从统一管理器获取，使用响应式追踪）
+  const getLatestMessage = computed(() => {
+    // 访问触发器以确保响应式追踪
+    statusUpdateTrigger.value
+    return topicSubscriptionManager.getLatestMessage(componentId)
+  })
+  
+  // 获取所有缓存的消息（从统一管理器获取）
+  const getAllMessages = (): CachedMessage[] => {
+    return topicSubscriptionManager.getAllMessages(componentId)
+  }
+  
+  // 清空缓存（使用统一管理器）
+  const clearCache = () => {
+    topicSubscriptionManager.clearCache(componentId)
+  }
+  
+  // 清理所有 watch 和订阅
+  const cleanup = () => {
+    watchStopHandles.forEach(stop => stop())
+    watchStopHandles.length = 0
+    unsubscribe()
+    clearCache()
+  }
+  
+  // 监听消息变化，更新 store
+  const stopWatchMessage = watch(
+    () => [status.value.hasData, status.value.lastMessageTime],
+    () => {
+      if (status.value.hasData) {
+        const message = getLatestMessage.value
+        if (message) {
           // 更新组件数据到 store
           rvizStore.updateComponentData(componentId, message)
-        },
-        (error: string) => {
-          status.value.error = error
         }
-      )
-
-      status.value.subscribed = true
-      status.value.error = null
-    } catch (error: any) {
-      status.value.error = error.message || 'Subscription failed'
-      status.value.subscribed = false
-    }
-  }
-
-  // 取消订阅
-  const unsubscribe = () => {
-    topicSubscriptionManager.unsubscribe(componentId)
-    status.value.subscribed = false
-    status.value.hasData = false
-    status.value.messageCount = 0
-    status.value.lastMessageTime = null
-    status.value.error = null
-  }
-
-  // 监听话题变化，自动重新订阅
-  watch(() => topic, (newTopic, oldTopic) => {
-    if (oldTopic && status.value.subscribed) {
+      }
+    },
+    { immediate: true }
+  )
+  watchStopHandles.push(stopWatchMessage)
+  
+  // 监听话题变化
+  const stopWatchTopic = watch(() => topic, (newTopic: string | undefined) => {
+    if (newTopic && newTopic.trim() !== '') {
+      // 只有在已连接时才订阅
+      if (rvizStore.communicationState.isConnected) {
+        subscribe()
+      }
+    } else {
       unsubscribe()
+      clearCache()
     }
-    if (newTopic && rvizStore.communicationState.isConnected) {
+  }, { immediate: true })
+  watchStopHandles.push(stopWatchTopic)
+  
+  // 监听队列大小变化
+  const stopWatchQueueSize = watch(() => queueSize, () => {
+    // 重新订阅以应用新的队列大小（只有在已连接时）
+    if (topic && topic.trim() !== '' && rvizStore.communicationState.isConnected) {
       subscribe()
     }
   })
-
-  // 监听连接状态
-  watch(() => rvizStore.communicationState.isConnected, (isConnected) => {
-    if (!isConnected && status.value.subscribed) {
+  watchStopHandles.push(stopWatchQueueSize)
+  
+  // 监听 ROS 连接状态
+  const stopWatchConnection = watch(() => rvizStore.communicationState.isConnected, (connected) => {
+    if (connected && topic && topic.trim() !== '') {
+      // 连接后延迟一小段时间再订阅，确保 ROS 连接完全建立
+      setTimeout(() => {
+        subscribe()
+      }, 200)
+    } else {
       unsubscribe()
-    } else if (isConnected && topic && !status.value.subscribed) {
-      subscribe()
+      clearCache()
     }
   })
-
-  // 组件卸载时取消订阅
-  onUnmounted(() => {
-    unsubscribe()
-  })
-
+  watchStopHandles.push(stopWatchConnection)
+  
   return {
     status,
-    getLatestMessage,
+    messageQueue,
     subscribe,
-    unsubscribe
+    unsubscribe,
+    getLatestMessage: () => getLatestMessage.value, // 返回函数以保持API兼容
+    getAllMessages,
+    clearCache,
+    cleanup // 返回清理函数，供调用者手动管理
   }
 }

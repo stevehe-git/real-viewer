@@ -39,6 +39,15 @@ class TFManager {
   }
 
   /**
+   * 获取帧的响应式引用（用于响应式追踪）
+   */
+  getFramesRef() {
+    // 访问触发器以确保响应式追踪
+    this.dataUpdateTrigger.value
+    return this.frames
+  }
+
+  /**
    * 获取帧信息
    */
   getFrameInfo(frameName: string, fixedFrameName: string = this.fixedFrame.value): {
