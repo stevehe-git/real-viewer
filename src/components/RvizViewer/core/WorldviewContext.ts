@@ -83,12 +83,16 @@ export class WorldviewContext {
     this.dimension = dimension
     this.canvasBackgroundColor = canvasBackgroundColor
     this.contextAttributes = contextAttributes
+    
+    // 优化：使用节流机制，避免频繁触发渲染
+    // 相机状态变化时，使用 onDirty 而不是直接 paint，这样可以合并多次更新
     this.cameraStore = new CameraStore((cameraState: CameraState) => {
       if (onCameraStateChange) {
         onCameraStateChange(cameraState)
       } else {
-        // this must be called for Worldview with defaultCameraState prop
-        this.paint()
+        // 使用 onDirty 而不是直接 paint，这样可以节流渲染
+        // onDirty 会使用 requestAnimationFrame 来优化渲染频率
+        this.onDirty()
       }
     }, cameraState)
   }
@@ -148,6 +152,10 @@ export class WorldviewContext {
     this._compiled.clear()
     this._commands.clear()
     this._paintCalls.clear()
+    // 清理缓存
+    this._cachedSortedDrawCalls = null
+    this._drawCallsVersion = 0
+    this._lastDrawCallsVersion = -1
     // 销毁 regl 上下文
     if (this.initializedData) {
       try {
@@ -179,6 +187,9 @@ export class WorldviewContext {
   // unregister children hitmap and draw calls
   onUnmount(instance: any): void {
     this._drawCalls.delete(instance)
+    // 标记绘制调用已更新，需要重新排序
+    this._drawCallsVersion++
+    this._cachedSortedDrawCalls = null
   }
 
   unregisterPaintCallback(paintFn: PaintFn): void {
@@ -187,6 +198,9 @@ export class WorldviewContext {
 
   registerDrawCall(drawInput: DrawInput): void {
     this._drawCalls.set(drawInput.instance, drawInput)
+    // 标记绘制调用已更新，需要重新排序
+    this._drawCallsVersion++
+    this._cachedSortedDrawCalls = null
   }
 
   registerPaintCallback(paintFn: PaintFn): void {
@@ -231,7 +245,12 @@ export class WorldviewContext {
   _paint(): void {
     this._needsPaint = false
     const start = Date.now()
-    this.reglCommandObjects.forEach((cmd) => (cmd.stats.count = 0))
+    
+    // 优化：只在有统计对象时才重置
+    if (this.reglCommandObjects.length > 0) {
+      this.reglCommandObjects.forEach((cmd) => (cmd.stats.count = 0))
+    }
+    
     if (!this.initializedData) {
       return
     }
@@ -239,14 +258,16 @@ export class WorldviewContext {
     const { regl, camera } = this.initializedData
     this._clearCanvas(regl)
     camera.draw(this.cameraStore.state, () => {
-      const x = Date.now()
       this._drawInput()
-      this.counters.paint = Date.now() - x
     })
 
-    this._paintCalls.forEach((paintCall) => {
-      paintCall()
-    })
+    // 优化：只在有回调时才遍历
+    if (this._paintCalls.size > 0) {
+      this._paintCalls.forEach((paintCall) => {
+        paintCall()
+      })
+    }
+    
     this.counters.render = Date.now() - start
     // More React state updates may have happened while we were painting, since paint happens
     // outside the normal React render flow. If this is the case, we need to paint again.
@@ -394,6 +415,11 @@ export class WorldviewContext {
     }
   )
 
+  // 缓存排序后的绘制调用，避免每帧都排序
+  _cachedSortedDrawCalls: DrawInput[] | null = null
+  _drawCallsVersion = 0
+  _lastDrawCallsVersion = -1
+
   _drawInput = (isHitmap?: boolean, excludedObjects?: MouseEventObject[]): void => {
     // 如果 regl 上下文已被销毁，直接返回
     if (!this.initializedData || !this.initializedData.regl) {
@@ -404,17 +430,28 @@ export class WorldviewContext {
       this._hitmapObjectIdManager = new HitmapObjectIdManager()
     }
 
-    const drawCalls = Array.from(this._drawCalls.values()).sort(
-      (a, b) => (a.layerIndex || 0) - (b.layerIndex || 0)
-    )
-    drawCalls.forEach((drawInput: DrawInput) => {
+    // 优化：缓存排序结果，只在绘制调用变化时重新排序
+    if (this._cachedSortedDrawCalls === null || this._drawCallsVersion !== this._lastDrawCallsVersion) {
+      this._cachedSortedDrawCalls = Array.from(this._drawCalls.values()).sort(
+        (a, b) => (a.layerIndex || 0) - (b.layerIndex || 0)
+      )
+      this._lastDrawCallsVersion = this._drawCallsVersion
+    }
+    
+    const drawCalls = this._cachedSortedDrawCalls
+    
+    // 优化：使用 for 循环而不是 forEach，性能更好
+    for (let i = 0; i < drawCalls.length; i++) {
+      const drawInput = drawCalls[i]
+      if (!drawInput) continue
+      
       const { reglCommand, children, instance, getChildrenForHitmap } = drawInput
       if (!children) {
-        return console.debug(`${isHitmap ? 'hitmap' : ''} draw skipped, props was falsy`, drawInput)
+        continue
       }
       const cmd = this._compiled.get(reglCommand)
       if (!cmd) {
-        return console.warn('could not find draw command for', instance ? instance.constructor?.displayName : 'Unknown')
+        continue
       }
       // draw hitmap
       if (isHitmap && getChildrenForHitmap) {
@@ -428,7 +465,7 @@ export class WorldviewContext {
       } else if (!isHitmap) {
         cmd(children, false)
       }
-    })
+    }
   }
 
   _clearCanvas = (regl: any): void => {

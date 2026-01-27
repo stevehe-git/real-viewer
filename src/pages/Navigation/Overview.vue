@@ -130,8 +130,9 @@ watch(
               worldview.markDirty()
               worldview.paint()
             },
-            updateMap: (message: any, componentId: string) => {
-              sceneManager.updateMap(message, componentId)
+            updateMap: async (message: any, componentId: string) => {
+              // 异步处理地图数据（在 Web Worker 中），不阻塞主线程
+              await sceneManager.updateMap(message, componentId)
               worldview.markDirty()
               worldview.paint()
             },

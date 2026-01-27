@@ -66,6 +66,9 @@ const cameraController = ref<WorldviewCameraController | null>(null)
 const gridVisible = ref(props.options?.enableGrid ?? true)
 const axesVisible = ref(props.options?.enableAxes ?? true)
 let resizeObserver: ResizeObserver | null = null
+// 用于节流鼠标和滚轮事件的动画帧请求
+let mouseMoveFrame: number | null = null
+let wheelFrame: number | null = null
 
 // 初始化
 onMounted(async () => {
@@ -153,11 +156,21 @@ function setupEventListeners(): void {
   })
 
   // 鼠标移动（使用 window 监听，确保在画布外也能响应）
+  // 优化：使用 requestAnimationFrame 节流，避免频繁处理鼠标移动事件
   const handleMouseMove = (e: MouseEvent) => {
     if (cameraController.value?.isDragging()) {
-      cameraController.value.onMouseMove(e)
-      // 相机状态已通过共享的 CameraStore 自动更新
-      // WorldviewContext 的回调会自动触发渲染
+      // 取消之前的帧请求，只处理最新的鼠标位置
+      if (mouseMoveFrame !== null) {
+        cancelAnimationFrame(mouseMoveFrame)
+      }
+      
+      // 使用 requestAnimationFrame 节流，确保在下一帧才处理
+      mouseMoveFrame = requestAnimationFrame(() => {
+        cameraController.value?.onMouseMove(e)
+        // 相机状态已通过共享的 CameraStore 自动更新
+        // WorldviewContext 的回调会自动触发渲染（已优化为使用 onDirty）
+        mouseMoveFrame = null
+      })
     }
   }
   window.addEventListener('mousemove', handleMouseMove)
@@ -181,13 +194,23 @@ function setupEventListeners(): void {
   // 滚轮缩放
   // 注意：必须使用 { passive: false } 以便调用 preventDefault() 阻止默认滚动行为
   // 浏览器可能会显示警告，但这是必要的，因为我们需要阻止页面滚动来实现相机缩放
+  // 优化：使用 requestAnimationFrame 节流滚轮事件
   canvas.addEventListener(
     'wheel',
     (e) => {
       e.preventDefault()
       if (cameraController.value) {
-        cameraController.value.onWheel(e)
-        // 相机状态变化会通过 WorldviewContext 的回调自动触发渲染
+        // 取消之前的帧请求，只处理最新的滚轮事件
+        if (wheelFrame !== null) {
+          cancelAnimationFrame(wheelFrame)
+        }
+        
+        // 使用 requestAnimationFrame 节流
+        wheelFrame = requestAnimationFrame(() => {
+          cameraController.value?.onWheel(e)
+          // 相机状态变化会通过 WorldviewContext 的回调自动触发渲染（已优化为使用 onDirty）
+          wheelFrame = null
+        })
       }
     },
     { passive: false } as AddEventListenerOptions
@@ -406,6 +429,20 @@ watch(
 
 // 清理
 onUnmounted(() => {
+  // 清理待处理的动画帧请求
+  if (mouseMoveFrame !== null) {
+    cancelAnimationFrame(mouseMoveFrame)
+    mouseMoveFrame = null
+  }
+  if (wheelFrame !== null) {
+    cancelAnimationFrame(wheelFrame)
+    wheelFrame = null
+  }
+  if (resizeTimeout !== null) {
+    cancelAnimationFrame(resizeTimeout)
+    resizeTimeout = null
+  }
+  
   // 清理 ResizeObserver
   if (resizeObserver && containerRef.value) {
     resizeObserver.unobserve(containerRef.value)

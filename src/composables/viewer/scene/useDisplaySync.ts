@@ -21,7 +21,7 @@ export interface DisplaySyncContext {
     offsetZ?: number
   }) => void
   setAxesOptions: (options: { length?: number; radius?: number; alpha?: number }) => void
-  updateMap: (message: any, componentId: string) => void
+  updateMap: (message: any, componentId: string) => void | Promise<void>
   removeMap: (componentId: string) => void
   clearAllMaps?: () => void
   setMapOptions: (options: { 
