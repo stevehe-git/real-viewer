@@ -130,6 +130,11 @@ watch(
               worldview.markDirty()
               worldview.paint()
             },
+            updateMap: (message: any) => {
+              sceneManager.updateMap(message)
+              worldview.markDirty()
+              worldview.paint()
+            },
             setMapOptions: (options: { 
               alpha?: number
               colorScheme?: string

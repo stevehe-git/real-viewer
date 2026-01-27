@@ -3,7 +3,7 @@
  * 基于 regl-worldview 的架构，使用命令系统管理场景对象
  */
 import type { Regl, PointCloudData, PathData, RenderOptions } from '../types'
-import { grid, lines, makePointsCommand, cylinders } from '../commands'
+import { grid, lines, makePointsCommand, cylinders, triangles } from '../commands'
 import { quat } from 'gl-matrix'
 
 export class SceneManager {
@@ -13,6 +13,7 @@ export class SceneManager {
   private pointsCommand: any = null
   private linesCommand: any = null
   private cylindersCommand: any = null
+  private trianglesCommand: any = null
 
   private gridData: any = null
   private axesData: any = null
@@ -20,6 +21,7 @@ export class SceneManager {
   private pathsData: any[] = []
   private mapData: any = null
   private mapConfig: { alpha?: number; colorScheme?: string; drawBehind?: boolean } = {}
+  private mapRawMessage: any = null // 保存原始地图消息，用于配置变化时重新处理
   private laserScanData: any = null
   private laserScanConfig: { 
     style?: string
@@ -75,6 +77,9 @@ export class SceneManager {
 
     // 初始化 Lines 命令（用于路径）
     this.linesCommand = lines(this.reglContext)
+
+    // 初始化 Triangles 命令（用于地图）
+    this.trianglesCommand = triangles(this.reglContext)
   }
 
   private updateGridData(options?: { 
@@ -221,6 +226,7 @@ export class SceneManager {
   private axesInstance: any = { displayName: 'Axes' }
   private pointsInstance: any = { displayName: 'Points' }
   private pathInstances: any[] = []
+  private mapInstance: any = { displayName: 'Map' }
 
   /**
    * 注册所有绘制调用到 WorldviewContext
@@ -278,6 +284,17 @@ export class SceneManager {
         })
       }
     })
+
+    // 注册地图（使用 Triangles）
+    if (this.trianglesCommand && this.mapData) {
+      this.worldviewContext.onMount(this.mapInstance, triangles)
+      this.worldviewContext.registerDrawCall({
+        instance: this.mapInstance,
+        reglCommand: triangles,
+        children: this.mapData,
+        layerIndex: this.mapConfig.drawBehind ? -1 : 4
+      })
+    }
   }
 
   /**
@@ -288,6 +305,7 @@ export class SceneManager {
     this.worldviewContext.onUnmount(this.gridInstance)
     this.worldviewContext.onUnmount(this.axesInstance)
     this.worldviewContext.onUnmount(this.pointsInstance)
+    this.worldviewContext.onUnmount(this.mapInstance)
     this.pathInstances.forEach((instance) => {
       this.worldviewContext.onUnmount(instance)
     })
@@ -484,6 +502,103 @@ export class SceneManager {
   }
 
   /**
+   * 更新地图数据（从 ROS OccupancyGrid 消息）
+   */
+  updateMap(message: any): void {
+    if (!message || !message.info || !message.data || !Array.isArray(message.data)) {
+      this.mapData = null
+      this.mapRawMessage = null
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
+      return
+    }
+
+    const info = message.info
+    const width = info.width || 0
+    const height = info.height || 0
+    const resolution = info.resolution || 0.05
+    const origin = info.origin || {}
+    const originPos = origin.position || { x: 0, y: 0, z: 0 }
+
+    if (width === 0 || height === 0 || resolution === 0) {
+      this.mapData = null
+      this.mapRawMessage = null
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
+      return
+    }
+
+    // 保存原始消息
+    this.mapRawMessage = message
+
+    // 将 OccupancyGrid 转换为三角形
+    const triangles: any[] = []
+    const alpha = this.mapConfig.alpha ?? 0.7
+    const colorScheme = this.mapConfig.colorScheme || 'map'
+
+    // 遍历每个单元格
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const index = y * width + x
+        const occupancy = message.data[index]
+
+        // 跳过未知区域（-1）和自由空间（0），只渲染占用区域（>0）
+        if (occupancy <= 0 || occupancy === undefined) {
+          continue
+        }
+
+        // 计算单元格的世界坐标
+        const worldX = originPos.x + (x + 0.5) * resolution
+        const worldY = originPos.y + (y + 0.5) * resolution
+        const worldZ = originPos.z
+
+        // 计算单元格的四个角点
+        const halfRes = resolution * 0.5
+        const p1 = { x: worldX - halfRes, y: worldY - halfRes, z: worldZ }
+        const p2 = { x: worldX + halfRes, y: worldY - halfRes, z: worldZ }
+        const p3 = { x: worldX + halfRes, y: worldY + halfRes, z: worldZ }
+        const p4 = { x: worldX - halfRes, y: worldY + halfRes, z: worldZ }
+
+        // 根据占用值和颜色方案计算颜色
+        const occupancyValue = occupancy / 100.0 // ROS 中占用值是 0-100
+        let color: { r: number; g: number; b: number; a: number }
+
+        if (colorScheme === 'map') {
+          // 标准地图颜色：占用区域为深灰色
+          const gray = 0.5 + occupancyValue * 0.3
+          color = { r: gray, g: gray, b: gray, a: alpha }
+        } else if (colorScheme === 'costmap') {
+          // 代价地图颜色：从绿色到红色
+          color = {
+            r: occupancyValue,
+            g: 1.0 - occupancyValue * 0.5,
+            b: 0.2,
+            a: alpha
+          }
+        } else {
+          // 默认：白色
+          color = { r: 1.0, g: 1.0, b: 1.0, a: alpha }
+        }
+
+        // 创建两个三角形组成一个矩形
+        // 注意：pose 使用地图原点，points 已经是世界坐标
+        triangles.push({
+          pose: {
+            position: { x: 0, y: 0, z: 0 },
+            orientation: { x: 0, y: 0, z: 0, w: 1 }
+          },
+          points: [p1, p2, p3, p1, p3, p4],
+          color: color
+        })
+      }
+    }
+
+    this.mapData = triangles.length > 0 ? triangles : null
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
+  }
+
+  /**
    * 更新 Map 配置选项（透明度、颜色方案、绘制顺序等）
    */
   updateMapOptions(options: { 
@@ -496,12 +611,10 @@ export class SceneManager {
       ...this.mapConfig,
       ...options
     }
-    // 如果 Map 数据存在，应用新配置并重新渲染
-    if (this.mapData) {
-      // TODO: 应用配置到 Map 数据（alpha、colorScheme、drawBehind）
-      // 这里需要根据实际的 Map 渲染实现来更新
-      this.registerDrawCalls()
-      this.worldviewContext.onDirty()
+    // 如果 Map 原始消息存在，重新生成地图数据以应用新配置
+    if (this.mapRawMessage) {
+      // 重新处理地图数据以应用新配置
+      this.updateMap(this.mapRawMessage)
     }
   }
 

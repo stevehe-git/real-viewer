@@ -4,6 +4,7 @@
  */
 import { watch } from 'vue'
 import { useRvizStore } from '@/stores/rviz'
+import { topicSubscriptionManager } from '@/services/topicSubscriptionManager'
 
 export interface DisplaySyncContext {
   setGridVisible: (visible: boolean) => void
@@ -20,6 +21,7 @@ export interface DisplaySyncContext {
     offsetZ?: number
   }) => void
   setAxesOptions: (options: { length?: number; radius?: number; alpha?: number }) => void
+  updateMap: (message: any) => void
   setMapOptions: (options: { 
     alpha?: number
     colorScheme?: string
@@ -122,11 +124,12 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     const mapComponent = rvizStore.displayComponents.find(c => c.type === 'map')
     
     if (!mapComponent) {
-      // Map 组件不存在，不处理
+      // Map 组件不存在，清除地图数据
+      context.updateMap(null)
       return
     }
 
-    // Map 组件存在，更新配置选项
+    // Map 组件存在，更新配置选项和数据
     if (mapComponent.enabled) {
       const options = mapComponent.options || {}
       context.setMapOptions({
@@ -134,6 +137,15 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
         colorScheme: options.colorScheme,
         drawBehind: options.drawBehind
       })
+
+      // 获取地图数据并更新
+      const mapMessage = topicSubscriptionManager.getLatestMessage(mapComponent.id)
+      if (mapMessage) {
+        context.updateMap(mapMessage)
+      }
+    } else {
+      // Map 组件被禁用，清除地图数据
+      context.updateMap(null)
     }
   }
 
@@ -273,9 +285,34 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
           colorScheme: mapConfig.colorScheme,
           drawBehind: mapConfig.drawBehind
         })
+        // 配置变化后，重新同步地图数据以应用新配置
+        syncMapDisplay()
       }
     },
     { deep: true }
+  )
+
+  // 监听地图组件的数据变化（从 topicSubscriptionManager）
+  watch(
+    () => {
+      const mapComponent = rvizStore.displayComponents.find(c => c.type === 'map')
+      if (!mapComponent || !mapComponent.enabled) {
+        return null
+      }
+      // 访问状态更新触发器以确保响应式追踪
+      const trigger = topicSubscriptionManager.getStatusUpdateTrigger()
+      trigger.value
+      return topicSubscriptionManager.getLatestMessage(mapComponent.id)
+    },
+    (mapMessage) => {
+      if (mapMessage) {
+        context.updateMap(mapMessage)
+      } else {
+        // 如果没有消息，清除地图
+        context.updateMap(null)
+      }
+    },
+    { immediate: true, deep: true }
   )
 
   // 监听 LaserScan 组件的配置选项变化（样式、大小、透明度、颜色转换器等）
