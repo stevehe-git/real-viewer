@@ -13,10 +13,6 @@
           class="image-content"
           @error="handleImageError"
         />
-        <div v-if="imageInfo" class="image-info">
-          <span>尺寸: {{ imageInfo.width }} × {{ imageInfo.height }}</span>
-          <span v-if="imageInfo.encoding">编码: {{ imageInfo.encoding }}</span>
-        </div>
       </div>
     </div>
   </BasePanel>
@@ -345,17 +341,4 @@ onUnmounted(() => {
   object-fit: contain;
 }
 
-.image-info {
-  position: absolute;
-  bottom: 8px;
-  left: 8px;
-  right: 8px;
-  display: flex;
-  justify-content: space-between;
-  background: rgba(0, 0, 0, 0.6);
-  color: white;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-}
 </style>
