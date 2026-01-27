@@ -4,8 +4,10 @@
  */
 import type { Regl, PointCloudData, PathData, RenderOptions } from '../types'
 import { grid, lines, makePointsCommand, cylinders, triangles, makeArrowsCommand } from '../commands'
-import { quat, vec3 } from 'gl-matrix'
+import { quat } from 'gl-matrix'
 import { tfManager } from '@/services/tfManager'
+import { getDataProcessorWorker } from '@/workers/dataProcessorWorker'
+import type { TFProcessRequest } from '@/workers/dataProcessor.worker'
 
 export class SceneManager {
   private reglContext: Regl
@@ -1067,7 +1069,7 @@ export class SceneManager {
         this.arrowsCommand = makeArrowsCommand()(this.reglContext)
       }
       // 更新 TF 数据
-      this.updateTFData()
+      this.updateTFData().catch(err => console.error('Failed to update TF data:', err))
     }
     
     this.registerDrawCalls()
@@ -1100,7 +1102,7 @@ export class SceneManager {
     
     // 更新 TF 数据
     if (this.tfVisible) {
-      this.updateTFData()
+      this.updateTFData().catch(err => console.error('Failed to update TF data:', err))
     }
     
     this.registerDrawCalls()
@@ -1120,14 +1122,13 @@ export class SceneManager {
   /**
    * 更新 TF 数据（从 tfManager 获取）
    * 参照 RViz 和 regl-worldview 的主流方案
+   * 使用 Web Worker 处理耗时计算，避免阻塞主线程
    */
-  private updateTFData(): void {
+  private async updateTFData(): Promise<void> {
     const showAxes = this.tfConfig.showAxes !== false // 默认显示
     const showArrows = this.tfConfig.showArrows !== false // 默认显示
     const markerScale = this.tfConfig.markerScale || 1.0
     const markerAlpha = this.tfConfig.markerAlpha !== undefined ? this.tfConfig.markerAlpha : 1.0
-    const axisLength = 0.1 * markerScale
-    const axisRadius = 0.01 * markerScale
     
     // 获取固定帧
     const fixedFrame = tfManager.getFixedFrame()
@@ -1160,143 +1161,61 @@ export class SceneManager {
     }
     this.tfDataHash = configHash
     
-    const axes: any[] = []
-    const arrows: any[] = []
-    
-    // 创建旋转四元数辅助函数
-    const createRotationQuaternion = (axis: 'x' | 'y' | 'z', angle: number) => {
-      const q = quat.create()
-      switch (axis) {
-        case 'x':
-          quat.setAxisAngle(q, [1, 0, 0], angle)
-          break
-        case 'y':
-          quat.setAxisAngle(q, [0, 1, 0], angle)
-          break
-        case 'z':
-          quat.setAxisAngle(q, [0, 0, 1], angle)
-          break
-      }
-      return { x: q[0], y: q[1], z: q[2], w: q[3] }
-    }
-    
-    // 遍历所有 frames，生成 axes 和 arrows
-    filteredFrames.forEach(frameName => {
+    // 收集所有 frame 的 frameInfo（在主线程中计算，因为需要访问 tfManager）
+    // 确保数据完全可序列化（只包含基本类型和普通对象）
+    const frameInfos = filteredFrames.map(frameName => {
       const frameInfo = tfManager.getFrameInfo(frameName, fixedFrame)
-      
-      if (!frameInfo.position || !frameInfo.orientation) {
-        return // 跳过无效的 frame
-      }
-      
-      const position = frameInfo.position
-      const orientation = frameInfo.orientation
-      
-      // 将 orientation 转换为 quat
-      const frameQuat = quat.fromValues(orientation.x, orientation.y, orientation.z, orientation.w)
-      
-      if (showAxes) {
-        // X轴：红色，沿 frame 的 X 方向
-        const xAxisBaseRotation = createRotationQuaternion('y', -Math.PI / 2)
-        const xAxisQuat = quat.create()
-        quat.multiply(
-          xAxisQuat,
-          frameQuat,
-          [xAxisBaseRotation.x, xAxisBaseRotation.y, xAxisBaseRotation.z, xAxisBaseRotation.w]
-        )
-        
-        const xAxisDir = vec3.fromValues(1, 0, 0)
-        vec3.transformQuat(xAxisDir, xAxisDir, frameQuat)
-        
-        axes.push({
-          pose: {
-            position: {
-              x: position.x + xAxisDir[0] * axisLength / 2,
-              y: position.y + xAxisDir[1] * axisLength / 2,
-              z: position.z + xAxisDir[2] * axisLength / 2
-            },
-            orientation: {
-              x: xAxisQuat[0],
-              y: xAxisQuat[1],
-              z: xAxisQuat[2],
-              w: xAxisQuat[3]
-            }
-          },
-          scale: { x: axisRadius, y: axisRadius, z: axisLength },
-          color: { r: 1.0, g: 0.0, b: 0.0, a: markerAlpha }
-        })
-        
-        // Y轴：绿色，沿 frame 的 Y 方向
-        const yAxisBaseRotation = createRotationQuaternion('x', -Math.PI / 2)
-        const yAxisQuat = quat.create()
-        quat.multiply(
-          yAxisQuat,
-          frameQuat,
-          [yAxisBaseRotation.x, yAxisBaseRotation.y, yAxisBaseRotation.z, yAxisBaseRotation.w]
-        )
-        
-        const yAxisDir = vec3.fromValues(0, 1, 0)
-        vec3.transformQuat(yAxisDir, yAxisDir, frameQuat)
-        
-        axes.push({
-          pose: {
-            position: {
-              x: position.x + yAxisDir[0] * axisLength / 2,
-              y: position.y + yAxisDir[1] * axisLength / 2,
-              z: position.z + yAxisDir[2] * axisLength / 2
-            },
-            orientation: {
-              x: yAxisQuat[0],
-              y: yAxisQuat[1],
-              z: yAxisQuat[2],
-              w: yAxisQuat[3]
-            }
-          },
-          scale: { x: axisRadius, y: axisRadius, z: axisLength },
-          color: { r: 0.0, g: 1.0, b: 0.0, a: markerAlpha }
-        })
-        
-        // Z轴：蓝色，沿 frame 的 Z 方向
-        const zAxisDir = vec3.fromValues(0, 0, 1)
-        vec3.transformQuat(zAxisDir, zAxisDir, frameQuat)
-        
-        axes.push({
-          pose: {
-            position: {
-              x: position.x + zAxisDir[0] * axisLength / 2,
-              y: position.y + zAxisDir[1] * axisLength / 2,
-              z: position.z + zAxisDir[2] * axisLength / 2
-            },
-            orientation: {
-              x: frameQuat[0],
-              y: frameQuat[1],
-              z: frameQuat[2],
-              w: frameQuat[3]
-            }
-          },
-          scale: { x: axisRadius, y: axisRadius, z: axisLength },
-          color: { r: 0.0, g: 0.0, b: 1.0, a: markerAlpha }
-        })
-      }
-      
-      if (showArrows && frameInfo.parent) {
-        // 获取父 frame 的位置
-        const parentInfo = tfManager.getFrameInfo(frameInfo.parent, fixedFrame)
-        if (parentInfo.position) {
-          arrows.push({
-            points: [
-              { x: parentInfo.position.x, y: parentInfo.position.y, z: parentInfo.position.z },
-              { x: position.x, y: position.y, z: position.z }
-            ],
-            scale: { x: axisRadius * 2, y: axisRadius * 2, z: axisLength * 0.3 },
-            color: { r: 0.5, g: 0.5, b: 0.5, a: markerAlpha }
-          })
-        }
+      return {
+        frameName: String(frameName),
+        parent: frameInfo.parent ? String(frameInfo.parent) : null,
+        position: frameInfo.position ? {
+          x: Number(frameInfo.position.x),
+          y: Number(frameInfo.position.y),
+          z: Number(frameInfo.position.z)
+        } : null,
+        orientation: frameInfo.orientation ? {
+          x: Number(frameInfo.orientation.x),
+          y: Number(frameInfo.orientation.y),
+          z: Number(frameInfo.orientation.z),
+          w: Number(frameInfo.orientation.w)
+        } : null
       }
     })
     
-    this.tfData = {
-      axes,
-      arrows
+    // 使用 Web Worker 处理 axes 和 arrows 的生成（耗时计算）
+    try {
+      const worker = getDataProcessorWorker()
+      // 使用 JSON 序列化/反序列化确保数据完全可克隆
+      const serializableRequest: TFProcessRequest = JSON.parse(JSON.stringify({
+        type: 'processTF',
+        frames: filteredFrames.map(f => String(f)),
+        frameInfos,
+        config: {
+          showAxes: Boolean(showAxes),
+          showArrows: Boolean(showArrows),
+          markerScale: Number(markerScale),
+          markerAlpha: Number(markerAlpha)
+        }
+      }))
+      
+      const request: TFProcessRequest = serializableRequest
+      
+      const result = await worker.processTF(request)
+      
+      if (result.error) {
+        console.error('TF processing error:', result.error)
+        this.tfData = { axes: [], arrows: [] }
+        return
+      }
+      
+      this.tfData = {
+        axes: result.axes,
+        arrows: result.arrows
+      }
+    } catch (error) {
+      console.error('Failed to process TF data in Worker:', error)
+      // 回退到空数据
+      this.tfData = { axes: [], arrows: [] }
     }
   }
 

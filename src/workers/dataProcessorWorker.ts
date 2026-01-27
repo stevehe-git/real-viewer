@@ -10,7 +10,9 @@ import type {
   ImageProcessRequest,
   ImageProcessResult,
   PathProcessRequest,
-  PathProcessResult
+  PathProcessResult,
+  TFProcessRequest,
+  TFProcessResult
 } from './dataProcessor.worker'
 
 export class DataProcessorWorker {
@@ -56,10 +58,26 @@ export class DataProcessorWorker {
     }
   }
 
-  private handleMessage(data: MapProcessResult | PointCloudProcessResult | ImageProcessResult | PathProcessResult): void {
+  private handleMessage(data: MapProcessResult | PointCloudProcessResult | ImageProcessResult | PathProcessResult | TFProcessResult): void {
     if (data.type === 'mapProcessed') {
       const result = data as MapProcessResult
       const requestId = result.componentId // 使用 componentId 作为请求ID
+      const pending = this.pendingRequests.get(requestId)
+      
+      if (pending) {
+        clearTimeout(pending.timeout)
+        this.pendingRequests.delete(requestId)
+        
+        if (result.error) {
+          pending.reject(new Error(result.error))
+        } else {
+          pending.resolve(result)
+        }
+      }
+    } else if (data.type === 'tfProcessed') {
+      const result = data as TFProcessResult
+      // TF 处理使用固定的 requestId
+      const requestId = 'tf_process'
       const pending = this.pendingRequests.get(requestId)
       
       if (pending) {
@@ -138,6 +156,25 @@ export class DataProcessorWorker {
     }
 
     const requestId = `path_${this.requestIdCounter++}`
+    return this.sendRequest(requestId, request, 5000)
+  }
+
+  /**
+   * 处理 TF 数据（异步）
+   */
+  async processTF(request: TFProcessRequest): Promise<TFProcessResult> {
+    if (!this.worker) {
+      // 回退到主线程处理（简化实现，直接返回空数据）
+      return {
+        type: 'tfProcessed',
+        axes: [],
+        arrows: [],
+        error: 'TF processing requires Worker'
+      }
+    }
+
+    // TF 处理使用固定的 requestId，新的请求会取消旧的
+    const requestId = 'tf_process'
     return this.sendRequest(requestId, request, 5000)
   }
 

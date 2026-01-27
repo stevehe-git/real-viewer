@@ -57,8 +57,32 @@ export interface PathProcessResult {
   error?: string
 }
 
-type WorkerRequest = MapProcessRequest | PointCloudProcessRequest | ImageProcessRequest | PathProcessRequest
-type WorkerResponse = MapProcessResult | PointCloudProcessResult | ImageProcessResult | PathProcessResult
+export interface TFProcessRequest {
+  type: 'processTF'
+  frames: string[]
+  frameInfos: Array<{
+    frameName: string
+    parent: string | null
+    position: { x: number; y: number; z: number } | null
+    orientation: { x: number; y: number; z: number; w: number } | null
+  }>
+  config: {
+    showAxes?: boolean
+    showArrows?: boolean
+    markerScale?: number
+    markerAlpha?: number
+  }
+}
+
+export interface TFProcessResult {
+  type: 'tfProcessed'
+  axes: any[]
+  arrows: any[]
+  error?: string
+}
+
+type WorkerRequest = MapProcessRequest | PointCloudProcessRequest | ImageProcessRequest | PathProcessRequest | TFProcessRequest
+type WorkerResponse = MapProcessResult | PointCloudProcessResult | ImageProcessResult | PathProcessResult | TFProcessResult
 
 /**
  * 处理地图数据（OccupancyGrid 转三角形）
@@ -396,6 +420,162 @@ function processImage(request: ImageProcessRequest): ImageProcessResult {
 }
 
 /**
+ * 处理 TF 数据（生成 axes 和 arrows）
+ * 注意：Worker 中不能使用 gl-matrix，所以需要主线程先计算好 frameInfo
+ */
+function processTF(request: TFProcessRequest): TFProcessResult {
+  try {
+    const { frames, frameInfos, config } = request
+    const {
+      showAxes = true,
+      showArrows = true,
+      markerScale = 1.0,
+      markerAlpha = 1.0
+    } = config
+
+    const axisLength = 0.1 * markerScale
+    const axisRadius = 0.01 * markerScale
+
+    // 创建 frameInfo 映射
+    const frameInfoMap = new Map<string, typeof frameInfos[0]>()
+    frameInfos.forEach(info => {
+      frameInfoMap.set(info.frameName, info)
+    })
+
+    const axes: any[] = []
+    const arrows: any[] = []
+
+    // 简单的四元数乘法（用于旋转）
+    const multiplyQuaternions = (q1: { x: number; y: number; z: number; w: number }, q2: { x: number; y: number; z: number; w: number }) => {
+      return {
+        x: q1.w * q2.x + q1.x * q2.w + q1.y * q2.z - q1.z * q2.y,
+        y: q1.w * q2.y - q1.x * q2.z + q1.y * q2.w + q1.z * q2.x,
+        z: q1.w * q2.z + q1.x * q2.y - q1.y * q2.x + q1.z * q2.w,
+        w: q1.w * q2.w - q1.x * q2.x - q1.y * q2.y - q1.z * q2.z
+      }
+    }
+
+    // 旋转向量（使用四元数）
+    const rotateVector = (v: [number, number, number], q: { x: number; y: number; z: number; w: number }): [number, number, number] => {
+      // q * v * q^-1
+      const qv = { x: v[0], y: v[1], z: v[2], w: 0 }
+      const qConj = { x: -q.x, y: -q.y, z: -q.z, w: q.w }
+      const qvq = multiplyQuaternions(multiplyQuaternions(q, qv), qConj)
+      return [qvq.x, qvq.y, qvq.z]
+    }
+
+    // 创建旋转四元数（绕轴旋转）
+    const createRotationQuaternion = (axis: 'x' | 'y' | 'z', angle: number) => {
+      const halfAngle = angle / 2
+      const s = Math.sin(halfAngle)
+      const c = Math.cos(halfAngle)
+      switch (axis) {
+        case 'x':
+          return { x: s, y: 0, z: 0, w: c }
+        case 'y':
+          return { x: 0, y: s, z: 0, w: c }
+        case 'z':
+          return { x: 0, y: 0, z: s, w: c }
+      }
+    }
+
+    // 遍历所有 frames，生成 axes 和 arrows
+    for (const frameName of frames) {
+      const frameInfo = frameInfoMap.get(frameName)
+      if (!frameInfo || !frameInfo.position || !frameInfo.orientation) {
+        continue // 跳过无效的 frame
+      }
+
+      const position = frameInfo.position
+      const orientation = frameInfo.orientation
+      const frameQuat = orientation
+
+      if (showAxes) {
+        // X轴：红色，沿 frame 的 X 方向
+        const xAxisBaseRotation = createRotationQuaternion('y', -Math.PI / 2)
+        const xAxisQuat = multiplyQuaternions(frameQuat, xAxisBaseRotation)
+        const xAxisDir = rotateVector([1, 0, 0], frameQuat)
+
+        axes.push({
+          pose: {
+            position: {
+              x: position.x + xAxisDir[0] * axisLength / 2,
+              y: position.y + xAxisDir[1] * axisLength / 2,
+              z: position.z + xAxisDir[2] * axisLength / 2
+            },
+            orientation: xAxisQuat
+          },
+          scale: { x: axisRadius, y: axisRadius, z: axisLength },
+          color: { r: 1.0, g: 0.0, b: 0.0, a: markerAlpha }
+        })
+
+        // Y轴：绿色，沿 frame 的 Y 方向
+        const yAxisBaseRotation = createRotationQuaternion('x', -Math.PI / 2)
+        const yAxisQuat = multiplyQuaternions(frameQuat, yAxisBaseRotation)
+        const yAxisDir = rotateVector([0, 1, 0], frameQuat)
+
+        axes.push({
+          pose: {
+            position: {
+              x: position.x + yAxisDir[0] * axisLength / 2,
+              y: position.y + yAxisDir[1] * axisLength / 2,
+              z: position.z + yAxisDir[2] * axisLength / 2
+            },
+            orientation: yAxisQuat
+          },
+          scale: { x: axisRadius, y: axisRadius, z: axisLength },
+          color: { r: 0.0, g: 1.0, b: 0.0, a: markerAlpha }
+        })
+
+        // Z轴：蓝色，沿 frame 的 Z 方向
+        const zAxisDir = rotateVector([0, 0, 1], frameQuat)
+
+        axes.push({
+          pose: {
+            position: {
+              x: position.x + zAxisDir[0] * axisLength / 2,
+              y: position.y + zAxisDir[1] * axisLength / 2,
+              z: position.z + zAxisDir[2] * axisLength / 2
+            },
+            orientation: frameQuat
+          },
+          scale: { x: axisRadius, y: axisRadius, z: axisLength },
+          color: { r: 0.0, g: 0.0, b: 1.0, a: markerAlpha }
+        })
+      }
+
+      if (showArrows && frameInfo.parent) {
+        // 获取父 frame 的位置
+        const parentInfo = frameInfoMap.get(frameInfo.parent)
+        if (parentInfo && parentInfo.position) {
+          arrows.push({
+            points: [
+              { x: parentInfo.position.x, y: parentInfo.position.y, z: parentInfo.position.z },
+              { x: position.x, y: position.y, z: position.z }
+            ],
+            scale: { x: axisRadius * 2, y: axisRadius * 2, z: axisLength * 0.3 },
+            color: { r: 0.5, g: 0.5, b: 0.5, a: markerAlpha }
+          })
+        }
+      }
+    }
+
+    return {
+      type: 'tfProcessed',
+      axes,
+      arrows
+    }
+  } catch (error: any) {
+    return {
+      type: 'tfProcessed',
+      axes: [],
+      arrows: [],
+      error: error?.message || 'Unknown error'
+    }
+  }
+}
+
+/**
  * 处理路径数据
  */
 function processPath(request: PathProcessRequest): PathProcessResult {
@@ -462,6 +642,9 @@ self.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
       case 'processPath':
         response = processPath(request)
         break
+      case 'processTF':
+        response = processTF(request)
+        break
       default:
         throw new Error(`Unknown request type: ${(request as any).type}`)
     }
@@ -501,6 +684,10 @@ self.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
     } else if (request.type === 'processPath') {
       errorResponse.type = 'pathProcessed'
       errorResponse.pathData = null
+    } else if (request.type === 'processTF') {
+      errorResponse.type = 'tfProcessed'
+      errorResponse.axes = []
+      errorResponse.arrows = []
     }
     
     self.postMessage(errorResponse)
