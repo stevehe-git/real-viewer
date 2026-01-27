@@ -296,6 +296,9 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     { deep: true }
   )
 
+  // 缓存上次处理的消息时间戳，用于去重
+  const lastProcessedMessageTimes = new Map<string, number>()
+  
   // 监听所有地图组件的数据变化（从 topicSubscriptionManager）
   watch(
     () => {
@@ -304,23 +307,35 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
       const trigger = topicSubscriptionManager.getStatusUpdateTrigger()
       trigger.value
       
-      // 返回所有地图组件的消息映射
-      const messages: Record<string, any> = {}
+      // 返回所有地图组件的消息映射（包含时间戳用于去重）
+      const messages: Record<string, { message: any; timestamp: number }> = {}
       mapComponents.forEach(mapComponent => {
         if (mapComponent.enabled) {
           const message = topicSubscriptionManager.getLatestMessage(mapComponent.id)
           if (message) {
-            messages[mapComponent.id] = message
+            // 获取消息的时间戳（如果有）
+            const timestamp = message.header?.stamp?.sec 
+              ? message.header.stamp.sec * 1000 + (message.header.stamp.nsec || 0) / 1000000
+              : Date.now()
+            
+            messages[mapComponent.id] = { message, timestamp }
           }
         }
       })
       return messages
     },
     (mapMessages) => {
-      // 更新所有地图
-      Object.entries(mapMessages).forEach(([componentId, mapMessage]) => {
-        if (mapMessage) {
-          context.updateMap(mapMessage, componentId)
+      // 更新所有地图（只处理真正变化的消息）
+      Object.entries(mapMessages).forEach(([componentId, { message, timestamp }]) => {
+        if (message) {
+          // 检查消息是否真的变化了（通过时间戳比较）
+          const lastTimestamp = lastProcessedMessageTimes.get(componentId)
+          if (lastTimestamp === undefined || lastTimestamp !== timestamp) {
+            // 消息已变化，更新地图
+            lastProcessedMessageTimes.set(componentId, timestamp)
+            context.updateMap(message, componentId)
+          }
+          // 如果时间戳相同，说明是同一个消息，跳过处理（去重）
         }
       })
       
@@ -330,11 +345,12 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
         .filter(c => c.type === 'map')
         .forEach(mapComponent => {
           if (!mapComponent.enabled || !currentMapIds.has(mapComponent.id)) {
+            lastProcessedMessageTimes.delete(mapComponent.id) // 清理缓存
             context.removeMap(mapComponent.id)
           }
         })
     },
-    { immediate: true, deep: true }
+    { immediate: true, deep: false } // 改为 deep: false，因为我们已经在 watch 函数中手动检查变化
   )
 
   // 监听 LaserScan 组件的配置选项变化（样式、大小、透明度、颜色转换器等）

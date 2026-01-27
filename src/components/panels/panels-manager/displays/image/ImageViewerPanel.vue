@@ -280,10 +280,9 @@ onUnmounted(() => {
     currentBlobUrl = null
   }
   
-  // 清理 canvas 和 ImageData 引用
+  // 清理 canvas 和 context 引用
   canvas = null
   ctx = null
-  cachedImageData = null
 })
 </script>
 

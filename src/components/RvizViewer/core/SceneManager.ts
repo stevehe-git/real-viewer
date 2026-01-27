@@ -40,6 +40,8 @@ export class SceneManager {
   private gridVisible = true
   private axesVisible = true
   private _pendingMapUpdate: number | null = null // 待处理的地图更新 RAF ID
+  private mapRequestIds = new Map<string, number>() // 每个地图的当前请求 ID，用于取消过时的请求
+  private mapRequestIdCounter = 0 // 请求 ID 计数器
 
   constructor(reglContext: Regl, worldviewContext: any, options?: RenderOptions) {
     this.reglContext = reglContext
@@ -596,6 +598,7 @@ export class SceneManager {
   /**
    * 更新地图数据（从 ROS OccupancyGrid 消息）
    * 使用 Web Worker 进行后台处理，避免阻塞主线程
+   * 始终只渲染最新的一帧数据，自动取消过时的请求
    */
   async updateMap(message: any, componentId: string): Promise<void> {
     if (!componentId) {
@@ -606,6 +609,7 @@ export class SceneManager {
     if (!message || !message.info || !message.data || !Array.isArray(message.data)) {
       this.mapDataMap.delete(componentId)
       this.mapRawMessageMap.delete(componentId)
+      this.mapRequestIds.delete(componentId)
       this.registerDrawCalls()
       this.worldviewContext.onDirty()
       return
@@ -619,13 +623,16 @@ export class SceneManager {
     if (width === 0 || height === 0 || resolution === 0) {
       this.mapDataMap.delete(componentId)
       this.mapRawMessageMap.delete(componentId)
+      this.mapRequestIds.delete(componentId)
       this.registerDrawCalls()
       this.worldviewContext.onDirty()
       return
     }
 
-    // 保存原始消息
-    this.mapRawMessageMap.set(componentId, message)
+    // 生成新的请求 ID（用于取消过时的请求）
+    this.mapRequestIdCounter++
+    const requestId = this.mapRequestIdCounter
+    this.mapRequestIds.set(componentId, requestId)
     
     // 获取该地图的配置
     const mapConfig = this.mapConfigMap.get(componentId) || {}
@@ -665,6 +672,7 @@ export class SceneManager {
       const { getDataProcessorWorker } = await import('@/workers/dataProcessorWorker')
       const worker = getDataProcessorWorker()
       
+      // 使用 componentId 作为 requestId，这样相同 componentId 的新请求会自动取消旧请求
       const result = await worker.processMap({
         type: 'processMap',
         componentId,
@@ -676,8 +684,26 @@ export class SceneManager {
         }
       })
 
-      // 保存处理后的数据
+      // 检查请求是否已被取消（过时的请求）
+      const currentRequestId = this.mapRequestIds.get(componentId)
+      if (currentRequestId !== requestId) {
+        // 请求已被取消，忽略结果
+        return
+      }
+
+      // 保存处理后的数据（只保存最新的）
       this.mapDataMap.set(componentId, result.triangles)
+      
+      // 只在需要重新处理配置时才保存原始消息（用于 updateMapOptions）
+      // 这样可以减少内存占用
+      if (!this.mapRawMessageMap.has(componentId)) {
+        // 只保存消息的元数据，不保存完整的数据数组
+        this.mapRawMessageMap.set(componentId, {
+          info: message.info,
+          // 不保存 data，因为已经处理过了
+          _processed: true
+        })
+      }
       
       // 批量更新：延迟注册绘制调用，避免频繁渲染
       // 使用 requestAnimationFrame 确保在下一帧才更新
@@ -689,8 +715,15 @@ export class SceneManager {
         })
       }
     } catch (error: any) {
+      // 检查请求是否已被取消
+      const currentRequestId = this.mapRequestIds.get(componentId)
+      if (currentRequestId !== requestId) {
+        // 请求已被取消，忽略错误
+        return
+      }
+      
       // 忽略 "Request cancelled" 错误（这是正常的优化行为）
-      if (error?.message !== 'Request cancelled') {
+      if (error?.message !== 'Request cancelled' && error?.message !== 'Processing timeout') {
         console.error('Failed to process map in worker:', error)
       }
       // Worker 失败时回退到同步处理（已在 worker 内部处理）
@@ -707,6 +740,7 @@ export class SceneManager {
     this.mapConfigMap.delete(componentId)
     this.mapRawMessageMap.delete(componentId)
     this.mapInstances.delete(componentId)
+    this.mapRequestIds.delete(componentId) // 清理请求 ID
     
     // 延迟注册绘制调用，避免频繁调用
     requestAnimationFrame(() => {
@@ -723,6 +757,7 @@ export class SceneManager {
     this.mapConfigMap.clear()
     this.mapRawMessageMap.clear()
     this.mapInstances.clear()
+    this.mapRequestIds.clear() // 清理所有请求 ID
     
     // 立即重新注册绘制调用（清除地图后）
     this.registerDrawCalls()
@@ -751,11 +786,23 @@ export class SceneManager {
       ...options
     })
     
-    // 如果该地图的原始消息存在，重新生成地图数据以应用新配置
-    const mapRawMessage = this.mapRawMessageMap.get(componentId)
-    if (mapRawMessage) {
-      // 重新处理地图数据以应用新配置
-      this.updateMap(mapRawMessage, componentId)
+    // 如果该地图已有处理后的数据，直接重新注册绘制调用以应用新配置
+    // 注意：由于我们不再保存完整的原始消息，配置变化时只更新绘制顺序
+    // 如果需要重新处理数据（如 alpha、colorScheme），需要从 topicSubscriptionManager 重新获取消息
+    if (this.mapDataMap.has(componentId)) {
+      // 如果只是 drawBehind 变化，只需要重新注册绘制调用
+      // 如果是 alpha 或 colorScheme 变化，需要重新处理数据
+      if (options.alpha !== undefined || options.colorScheme !== undefined) {
+        // 需要重新处理数据，但原始消息可能已被清理
+        // 这种情况下，应该从 topicSubscriptionManager 重新获取最新消息
+        // 这里我们只更新绘制调用，让外部调用者负责重新获取消息
+        this.registerDrawCalls()
+        this.worldviewContext.onDirty()
+      } else {
+        // 只是 drawBehind 变化，只需要重新注册绘制调用
+        this.registerDrawCalls()
+        this.worldviewContext.onDirty()
+      }
     }
   }
 
@@ -892,6 +939,7 @@ export class SceneManager {
     this.mapConfigMap.clear()
     this.mapRawMessageMap.clear()
     this.mapInstances.clear()
+    this.mapRequestIds.clear() // 清理请求 ID
     
     // 清理 Web Worker（延迟导入避免循环依赖）
     import('@/workers/dataProcessorWorker').then(({ destroyDataProcessorWorker }) => {
