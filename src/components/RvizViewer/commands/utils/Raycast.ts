@@ -25,7 +25,6 @@ export class Ray {
     return vec3.distance(this.origin, point)
   }
 
-  // https://commons.apache.org/proper/commons-math/javadocs/api-3.6/src-html/org/apache/commons/math3/geometry/euclidean/threed/Plane.html#line.394
   planeIntersection(planeCoordinate: Vec3, planeNormal: Vec3): Vec3 | null {
     const d = vec3.dot(planeNormal, planeCoordinate)
     const cosine = vec3.dot(planeNormal, this.dir)

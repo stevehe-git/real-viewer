@@ -9,7 +9,7 @@ import type { Vec3, Vec4 } from '../types'
 const scratch = [0, 0, 0, 0, 0, 0, 0, 0, 0]
 
 /**
- * gl-matrix 版本的 three.js Euler.setFromQuaternion
+ * 四元数转欧拉角
  * 假设默认 XYZ 顺序
  * @param out 输出的欧拉角数组 [x, y, z]
  * @param q 四元数 [x, y, z, w]

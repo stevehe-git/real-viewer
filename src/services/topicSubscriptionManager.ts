@@ -3,6 +3,8 @@
  * 统一管理所有组件的话题订阅，避免重复订阅
  */
 import { useRvizStore } from '@/stores/rviz'
+import { toRaw } from 'vue'
+import * as ROSLIB from 'roslib'
 
 interface Subscription {
   componentId: string
@@ -109,44 +111,40 @@ class TopicSubscriptionManager {
     const rvizStore = useRvizStore()
     const plugin = rvizStore.communicationState.currentPlugin
 
-    // 获取ROS实例
-    // @ts-ignore
-    const ros = plugin?.getROSInstance?.()
+    // 获取ROS实例，使用 toRaw 确保获取原始对象（避免响应式代理问题）
+    const rawPlugin = toRaw(plugin)
+    const ros = rawPlugin?.getROSInstance?.()
     if (!ros) {
       errorCallback('ROS instance not available')
       return
     }
 
+    // 确保 ros 也是原始对象
+    const rawRos = toRaw(ros)
+
     try {
-      // 动态导入roslib（如果可用）
-      // 注意：需要安装roslib: npm install roslib
-      // 这里使用动态导入以避免在roslib未安装时出错
-      import('roslib').then((ROSLIB) => {
-        const messageType = this.getMessageType(topic)
-        const subscriber = new ROSLIB.Topic({
-          ros: ros,
-          name: topic,
-          messageType: messageType,
-          queue_size: queueSize
-        })
-
-        subscriber.subscribe((message: any) => {
-          const subscription = this.subscriptions.get(componentId)
-          if (subscription) {
-            subscription.lastMessage = message
-            subscription.messages.push(message)
-            // 保持队列大小
-            if (subscription.messages.length > queueSize) {
-              subscription.messages.shift()
-            }
-            messageCallback(message)
-          }
-        })
-
-        this.rosSubscribers.set(componentId, subscriber)
-      }).catch(() => {
-        errorCallback('ROSLIB not installed. Please run: npm install roslib')
+      const messageType = this.getMessageType(topic)
+      const subscriber = new ROSLIB.Topic({
+        ros: rawRos,
+        name: topic,
+        messageType: messageType,
+        queue_size: queueSize
       })
+
+      subscriber.subscribe((message: any) => {
+        const subscription = this.subscriptions.get(componentId)
+        if (subscription) {
+          subscription.lastMessage = message
+          subscription.messages.push(message)
+          // 保持队列大小
+          if (subscription.messages.length > queueSize) {
+            subscription.messages.shift()
+          }
+          messageCallback(message)
+        }
+      })
+
+      this.rosSubscribers.set(componentId, subscriber)
     } catch (error: any) {
       errorCallback(error.message || 'Failed to subscribe to ROS topic')
     }

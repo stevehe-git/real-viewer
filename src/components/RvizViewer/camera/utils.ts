@@ -4,7 +4,7 @@
  */
 
 /**
- * gl-matrix clone of three.js Vector3.setFromSpherical
+ * 从球坐标转换为笛卡尔坐标
  * phi: polar angle (between poles, 0 - pi)
  * theta: azimuthal angle (around equator, 0 - 2pi)
  */

@@ -84,7 +84,7 @@ const constantRGBAArray = (count: number, { r, g, b, a = 1 }: Color): Float32Arr
 // default blend func params to be mixed into regl commands
 export const defaultReglBlend = {
   enable: true,
-  // this is the same gl.BlendFunc used by three.js by default
+  // standard alpha blending function
   func: {
     src: 'src alpha',
     dst: 'one minus src alpha',

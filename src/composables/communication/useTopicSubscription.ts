@@ -50,6 +50,13 @@ export function useTopicSubscription(
         return
       }
 
+      // 检查是否已经订阅（避免重复订阅）
+      if (topicSubscriptionManager.isSubscribed(componentId)) {
+        status.value.subscribed = true
+        status.value.error = null
+        return
+      }
+
       // 通过topicSubscriptionManager订阅
       topicSubscriptionManager.subscribe(
         componentId,
@@ -62,6 +69,8 @@ export function useTopicSubscription(
           status.value.messageCount++
           status.value.lastMessageTime = Date.now()
           status.value.error = null
+          // 更新组件数据到 store
+          rvizStore.updateComponentData(componentId, message)
         },
         (error: string) => {
           status.value.error = error

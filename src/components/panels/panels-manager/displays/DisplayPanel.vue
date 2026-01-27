@@ -155,10 +155,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, reactive } from 'vue'
+import { ref, computed, watch, reactive, onMounted, onUnmounted } from 'vue'
 import { useRvizStore } from '@/stores/rviz'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { topicSubscriptionManager } from '@/services/topicSubscriptionManager'
+import { useDisplayTopicSubscription } from '@/composables/communication/useDisplayTopicSubscription'
 import BasePanel from '../../BasePanel.vue'
 import DisplayTypeSelector from './DisplayTypeSelector.vue'
 import {
@@ -197,6 +198,9 @@ import RobotModelConfig from './robot-model/RobotModelConfig.vue'
 import { tfManager } from '@/services/tfManager'
 
 const rvizStore = useRvizStore()
+
+// 使用全局话题订阅管理器（自动订阅所有显示配置中的 topic）
+useDisplayTopicSubscription()
 
 // 显示组件列表
 const displayComponents = computed(() => rvizStore.displayComponents)
