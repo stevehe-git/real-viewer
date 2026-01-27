@@ -752,7 +752,7 @@ function processLaserScan(request: LaserScanProcessRequest): LaserScanProcessRes
       let color = defaultColor
       if (colorTransformer === 'Intensity' && intensities.length > i) {
         const intensity = intensities[i]
-        if (intensity !== undefined && intensity !== null) {
+        if (intensity !== undefined && intensity !== null && isFinite(intensity)) {
           // 归一化强度值
           const normalizedIntensity = intensityMax > intensityMin
             ? (intensity - intensityMin) / (intensityMax - intensityMin)
@@ -772,10 +772,16 @@ function processLaserScan(request: LaserScanProcessRequest): LaserScanProcessRes
               a: alpha
             }
           }
+        } else {
+          // 强度数据无效，使用 Flat 颜色
+          color = { r: 1, g: 0, b: 0, a: alpha } // 默认红色
         }
-      } else {
-        // Flat 颜色
+      } else if (colorTransformer === 'Flat') {
+        // Flat 颜色模式
         color = { r: 1, g: 0, b: 0, a: alpha } // 默认红色
+      } else {
+        // 其他情况，使用默认颜色（白色）
+        color = defaultColor
       }
       
       // 确保 color 有 alpha 属性

@@ -583,6 +583,7 @@ export class WorldviewContext {
       }
       const cmd = this._compiled.get(reglCommand)
       if (!cmd) {
+        console.warn(`WorldviewContext: Command not compiled for instance:`, instance?.displayName || instance)
         continue
       }
       // draw hitmap
@@ -595,7 +596,17 @@ export class WorldviewContext {
           cmd(hitmapProps, true)
         }
       } else if (!isHitmap) {
-        cmd(children, false)
+        // 调试日志
+        if (instance?.displayName === 'BatchLaserScans' || instance?.displayName?.includes('LaserScan')) {
+          console.log(`WorldviewContext: Rendering ${instance.displayName}, children type:`, Array.isArray(children) ? 'array' : typeof children, 'length:', Array.isArray(children) ? children.length : 'N/A')
+        }
+        try {
+          cmd(children, false)
+        } catch (error: any) {
+          console.error(`WorldviewContext: Error rendering ${instance?.displayName || 'unknown'}:`, error)
+          console.error('Children:', children)
+          console.error('Command:', cmd)
+        }
       }
     }
   }

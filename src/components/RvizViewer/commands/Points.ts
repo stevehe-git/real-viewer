@@ -20,9 +20,12 @@ export const makePointsCommand = ({ useWorldSpaceSize }: PointsProps) => {
     }
 
     const [minLimitPointSize, maxLimitPointSize] = regl.limits.pointSizeDims
-    return withPose({
-      primitive: 'points',
-      vert: `
+    
+    // 创建 regl command（用于渲染单个 PointType）
+    const command = regl(
+      withPose({
+        primitive: 'points',
+        vert: `
     precision mediump float;
 
     #WITH_POSE
@@ -69,36 +72,61 @@ export const makePointsCommand = ({ useWorldSpaceSize }: PointsProps) => {
       gl_PointSize = min(maxPointSize, max(minPointSize, gl_PointSize));
     }
     `,
-      frag: `
+        frag: `
     precision mediump float;
     varying vec4 fragColor;
     void main () {
-      gl_FragColor = vec4(fragColor.x, fragColor.y, fragColor.z, 1);
+      gl_FragColor = fragColor;
     }
     `,
-      attributes: {
-        point: (_context: any, props: any) => {
-          return props.points.map((point: any) => (Array.isArray(point) ? point : pointToVec3(point)))
+        attributes: {
+          point: (_context: any, props: any) => {
+            return props.points.map((point: any) => (Array.isArray(point) ? point : pointToVec3(point)))
+          },
+          color: (_context: any, props: any) => {
+            const colors = getVertexColors(props)
+            return colors
+          }
         },
-        color: (_context: any, props: any) => {
-          const colors = getVertexColors(props)
-          return colors
-        }
-      },
 
-      uniforms: {
-        pointSize: (_context: any, props: any) => {
-          return props.scale?.x || 1
+        uniforms: {
+          pointSize: (_context: any, props: any) => {
+            return props.scale?.x || 1
+          },
+          useWorldSpaceSize: !!useWorldSpaceSize,
+          viewportWidth: regl.context('viewportWidth'),
+          viewportHeight: regl.context('viewportHeight'),
+          minPointSize: minLimitPointSize,
+          maxPointSize: maxLimitPointSize
         },
-        useWorldSpaceSize: !!useWorldSpaceSize,
-        viewportWidth: regl.context('viewportWidth'),
-        viewportHeight: regl.context('viewportHeight'),
-        minPointSize: minLimitPointSize,
-        maxPointSize: maxLimitPointSize
-      },
 
-      count: regl.prop('points.length')
-    })
+        count: regl.prop('points.length')
+      })
+    )
+
+    // 返回包装函数，支持数组和单个对象
+    return (inProps: any) => {
+      if (Array.isArray(inProps)) {
+        // 如果是数组，遍历每个元素并渲染
+        inProps.forEach((pointData: any, index: number) => {
+          if (!pointData || !pointData.points || pointData.points.length === 0) {
+            console.warn(`Points: Invalid point data at index ${index}`, pointData)
+            return
+          }
+          console.log(`Points: Rendering point cloud ${index}:`, {
+            points: pointData.points?.length,
+            pose: pointData.pose,
+            color: pointData.color,
+            colors: pointData.colors?.length,
+            scale: pointData.scale
+          })
+          command(pointData)
+        })
+      } else {
+        // 如果是单个对象，直接渲染
+        command(inProps)
+      }
+    }
   }
 }
 

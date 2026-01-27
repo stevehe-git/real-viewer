@@ -14,6 +14,7 @@ export class SceneManager {
   private worldviewContext: any // WorldviewContext
   private gridCommand: any = null
   private pointsCommand: any = null
+  private pointsCommandWithWorldSpace: any = null // 带 useWorldSpaceSize 的 Points 命令
   private linesCommand: any = null
   private cylindersCommand: any = null
   private trianglesCommand: any = null
@@ -113,6 +114,8 @@ export class SceneManager {
 
     // 初始化 Points 命令
     this.pointsCommand = makePointsCommand({})(this.reglContext)
+    // 初始化带 useWorldSpaceSize 的 Points 命令（用于 LaserScan 和 PointCloud）
+    this.pointsCommandWithWorldSpace = makePointsCommand({ useWorldSpaceSize: true })
 
     // 初始化 Lines 命令（用于路径）
     this.linesCommand = lines(this.reglContext)
@@ -306,7 +309,7 @@ export class SceneManager {
     }
 
     // 注册所有 PointCloud（批量渲染）
-    if (this.pointsCommand && this.pointCloudDataMap.size > 0) {
+    if (this.pointsCommandWithWorldSpace && this.pointCloudDataMap.size > 0) {
       const allPointClouds: any[] = []
       this.pointCloudDataMap.forEach((pointCloudData) => {
         if (pointCloudData) {
@@ -319,10 +322,10 @@ export class SceneManager {
           displayName: 'BatchPointClouds',
           _isBatch: true
         }
-        this.worldviewContext.onMount(batchPointCloudInstance, makePointsCommand({}))
+        this.worldviewContext.onMount(batchPointCloudInstance, this.pointsCommandWithWorldSpace)
         this.worldviewContext.registerDrawCall({
           instance: batchPointCloudInstance,
-          reglCommand: makePointsCommand({}),
+          reglCommand: this.pointsCommandWithWorldSpace,
           children: allPointClouds,
           layerIndex: 2
         })
@@ -330,7 +333,7 @@ export class SceneManager {
     }
 
     // 注册所有 PointCloud2（批量渲染）
-    if (this.pointsCommand && this.pointCloud2DataMap.size > 0) {
+    if (this.pointsCommandWithWorldSpace && this.pointCloud2DataMap.size > 0) {
       const allPointCloud2s: any[] = []
       this.pointCloud2DataMap.forEach((pointCloud2Data) => {
         if (pointCloud2Data) {
@@ -343,10 +346,10 @@ export class SceneManager {
           displayName: 'BatchPointCloud2s',
           _isBatch: true
         }
-        this.worldviewContext.onMount(batchPointCloud2Instance, makePointsCommand({}))
+        this.worldviewContext.onMount(batchPointCloud2Instance, this.pointsCommandWithWorldSpace)
         this.worldviewContext.registerDrawCall({
           instance: batchPointCloud2Instance,
-          reglCommand: makePointsCommand({}),
+          reglCommand: this.pointsCommandWithWorldSpace,
           children: allPointCloud2s,
           layerIndex: 2.5
         })
@@ -424,12 +427,33 @@ export class SceneManager {
           displayName: 'BatchLaserScans',
           _isBatch: true
         }
-        this.worldviewContext.onMount(batchLaserScanInstance, makePointsCommand({}))
+        // 使用同一个命令引用（pointsCommandWithWorldSpace）
+        this.worldviewContext.onMount(batchLaserScanInstance, this.pointsCommandWithWorldSpace)
         this.worldviewContext.registerDrawCall({
           instance: batchLaserScanInstance,
-          reglCommand: makePointsCommand({}),
+          reglCommand: this.pointsCommandWithWorldSpace,
           children: allLaserScans,
           layerIndex: 5
+        })
+        const totalPoints = allLaserScans.reduce((sum, scan) => sum + (scan.points?.length || 0), 0)
+        console.log(`Registered ${allLaserScans.length} LaserScan(s) for rendering, total points: ${totalPoints}`)
+        allLaserScans.forEach((scan, idx) => {
+          // 展开 Proxy 对象以查看实际值
+          const scaleValue = scan.scale ? { x: scan.scale.x, y: scan.scale.y, z: scan.scale.z } : null
+          const poseValue = scan.pose ? {
+            position: scan.pose.position ? { x: scan.pose.position.x, y: scan.pose.position.y, z: scan.pose.position.z } : null,
+            orientation: scan.pose.orientation ? { x: scan.pose.orientation.x, y: scan.pose.orientation.y, z: scan.pose.orientation.z, w: scan.pose.orientation.w } : null
+          } : null
+          console.log(`  LaserScan ${idx}:`, {
+            points: scan.points?.length || 0,
+            colors: scan.colors?.length || 0,
+            color: scan.color,
+            scale: scaleValue,
+            pose: poseValue,
+            firstPoint: scan.points?.[0],
+            firstColor: scan.colors?.[0],
+            lastPoint: scan.points?.[scan.points.length - 1]
+          })
         })
       }
     }
@@ -1119,8 +1143,93 @@ export class SceneManager {
         return
       }
 
+      if (!result.data) {
+        console.warn('LaserScan data is null, skipping')
+        return
+      }
+
+      // 应用 TF 变换（如果有 frame_id）
+      let transformedData = result.data
+      if (message.header?.frame_id) {
+        const frameId = message.header.frame_id
+        const fixedFrame = tfManager.getFixedFrame()
+        const frameInfo = tfManager.getFrameInfo(frameId, fixedFrame)
+        
+        if (frameInfo && frameInfo.position && frameInfo.orientation) {
+          // 应用 TF 变换到 pose
+          transformedData = {
+            ...result.data,
+            pose: {
+              position: {
+                x: frameInfo.position.x,
+                y: frameInfo.position.y,
+                z: frameInfo.position.z
+              },
+              orientation: {
+                x: frameInfo.orientation.x,
+                y: frameInfo.orientation.y,
+                z: frameInfo.orientation.z,
+                w: frameInfo.orientation.w
+              }
+            }
+          }
+        } else {
+          // 如果没有 TF 信息，使用默认 pose（原点）
+          console.warn(`No TF transform found for frame_id: ${frameId}, using default pose`)
+        }
+      }
+
+      // 确保点的大小足够大（至少 0.05 米，这样在屏幕上可见）
+      const minSize = 0.05 // 最小点大小（米）
+      const currentSize = transformedData.scale?.x || config.size || 0.01
+      const finalSize = Math.max(minSize, currentSize)
+      
+      if (transformedData.scale && transformedData.scale.x < minSize) {
+        transformedData = {
+          ...transformedData,
+          scale: {
+            x: finalSize,
+            y: finalSize,
+            z: finalSize
+          }
+        }
+        console.log(`LaserScan ${componentId}: Increased point size from ${currentSize} to ${finalSize}`)
+      }
+
+      // 调试日志
+      if (transformedData.points && transformedData.points.length > 0) {
+        const firstPoint = transformedData.points[0]
+        const firstColor = transformedData.colors?.[0] || transformedData.color
+        const scaleValue = transformedData.scale ? { x: transformedData.scale.x, y: transformedData.scale.y, z: transformedData.scale.z } : null
+        const poseValue = transformedData.pose ? {
+          position: transformedData.pose.position ? { x: transformedData.pose.position.x, y: transformedData.pose.position.y, z: transformedData.pose.position.z } : null,
+          orientation: transformedData.pose.orientation ? { x: transformedData.pose.orientation.x, y: transformedData.pose.orientation.y, z: transformedData.pose.orientation.z, w: transformedData.pose.orientation.w } : null
+        } : null
+        console.log(`LaserScan ${componentId}: ${transformedData.points.length} points processed`, {
+          size: config.size || 0.01,
+          finalSize: finalSize,
+          alpha: config.alpha || 1.0,
+          scale: scaleValue,
+          pose: poseValue,
+          firstPoint,
+          firstColor,
+          hasColors: !!transformedData.colors,
+          hasColor: !!transformedData.color,
+          pointsRange: transformedData.points.length > 0 ? {
+            minX: Math.min(...transformedData.points.map((p: any) => p.x)),
+            maxX: Math.max(...transformedData.points.map((p: any) => p.x)),
+            minY: Math.min(...transformedData.points.map((p: any) => p.y)),
+            maxY: Math.max(...transformedData.points.map((p: any) => p.y)),
+            minZ: Math.min(...transformedData.points.map((p: any) => p.z)),
+            maxZ: Math.max(...transformedData.points.map((p: any) => p.z))
+          } : null
+        })
+      } else {
+        console.warn(`LaserScan ${componentId}: No points in processed data`)
+      }
+
       // 保存处理后的数据
-      this.laserScanDataMap.set(componentId, result.data)
+      this.laserScanDataMap.set(componentId, transformedData)
 
       // 延迟注册绘制调用
       requestAnimationFrame(() => {
