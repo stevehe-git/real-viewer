@@ -365,21 +365,35 @@ export class DataProcessorWorker {
         const endX = Math.min(startX + downscaleFactor, width)
         const endY = Math.min(startY + downscaleFactor, height)
         
-        let hasOccupied = false
-        let maxOccupancy = 0
+        // 统计采样区域内的单元格值
+        let hasCell = false
+        let hasUnknown = false
+        let maxOccupancy = -1
         
         for (let y = startY; y < endY; y++) {
           for (let x = startX; x < endX; x++) {
             const index = y * width + x
             const occupancy = message.data[index]
-            if (occupancy > 0) {
-              hasOccupied = true
+            
+            if (occupancy === -1) {
+              hasCell = true
+              hasUnknown = true
+              if (maxOccupancy < -1) {
+                maxOccupancy = -1
+              }
+            } else if (occupancy === 0) {
+              hasCell = true
+              if (maxOccupancy < 0) {
+                maxOccupancy = 0
+              }
+            } else if (occupancy > 0 && occupancy <= 100) {
+              hasCell = true
               maxOccupancy = Math.max(maxOccupancy, occupancy)
             }
           }
         }
         
-        if (!hasOccupied) {
+        if (!hasCell) {
           continue
         }
 
@@ -393,21 +407,80 @@ export class DataProcessorWorker {
         const p3 = { x: worldX + halfRes, y: worldY + halfRes, z: worldZ }
         const p4 = { x: worldX - halfRes, y: worldY + halfRes, z: worldZ }
 
-        const occupancyValue = maxOccupancy / 100.0
         let color: { r: number; g: number; b: number; a: number }
 
         if (colorScheme === 'map') {
-          const gray = 0.5 + occupancyValue * 0.3
-          color = { r: gray, g: gray, b: gray, a: alpha }
+          if (hasUnknown && maxOccupancy === -1) {
+            // 未知区域：深青灰色
+            color = { r: 0.25, g: 0.45, b: 0.45, a: alpha }
+          } else if (maxOccupancy === 0) {
+            color = { r: 0.7, g: 0.7, b: 0.7, a: alpha }
+          } else if (maxOccupancy > 0 && maxOccupancy <= 100) {
+            const normalizedOccupancy = maxOccupancy / 100.0
+            const gray = Math.max(0.0, 0.5 - normalizedOccupancy * 0.5)
+            color = { r: gray, g: gray, b: gray, a: alpha }
+          } else {
+            // 混合区域：优先显示已知区域
+            if (maxOccupancy === 0) {
+              color = { r: 0.7, g: 0.7, b: 0.7, a: alpha }
+            } else if (maxOccupancy > 0 && maxOccupancy <= 100) {
+              const normalizedOccupancy = maxOccupancy / 100.0
+              const gray = Math.max(0.0, 0.5 - normalizedOccupancy * 0.5)
+              color = { r: gray, g: gray, b: gray, a: alpha }
+            } else {
+              color = { r: 0.25, g: 0.45, b: 0.45, a: alpha }
+            }
+          }
         } else if (colorScheme === 'costmap') {
-          color = {
-            r: occupancyValue,
-            g: 1.0 - occupancyValue * 0.5,
-            b: 0.2,
-            a: alpha
+          if (hasUnknown && maxOccupancy === -1) {
+            // 未知区域：深青灰色
+            color = { r: 0.25, g: 0.45, b: 0.45, a: alpha }
+          } else if (maxOccupancy === 0) {
+            color = { r: 0.2, g: 0.8, b: 0.2, a: alpha }
+          } else if (maxOccupancy > 0 && maxOccupancy <= 100) {
+            const normalizedOccupancy = maxOccupancy / 100.0
+            color = {
+              r: Math.min(1.0, normalizedOccupancy * 2),
+              g: Math.max(0.0, 1.0 - normalizedOccupancy * 0.5),
+              b: 0.2,
+              a: alpha
+            }
+          } else {
+            // 混合区域：优先显示已知区域
+            if (maxOccupancy === 0) {
+              color = { r: 0.2, g: 0.8, b: 0.2, a: alpha }
+            } else if (maxOccupancy > 0 && maxOccupancy <= 100) {
+              const normalizedOccupancy = maxOccupancy / 100.0
+              color = {
+                r: Math.min(1.0, normalizedOccupancy * 2),
+                g: Math.max(0.0, 1.0 - normalizedOccupancy * 0.5),
+                b: 0.2,
+                a: alpha
+              }
+            } else {
+              color = { r: 0.25, g: 0.45, b: 0.45, a: alpha }
+            }
           }
         } else {
-          color = { r: 1.0, g: 1.0, b: 1.0, a: alpha }
+          if (hasUnknown && maxOccupancy === -1) {
+            // 未知区域：深青灰色
+            color = { r: 0.25, g: 0.45, b: 0.45, a: alpha }
+          } else if (maxOccupancy === 0) {
+            color = { r: 1.0, g: 1.0, b: 1.0, a: alpha }
+          } else if (maxOccupancy > 0 && maxOccupancy <= 100) {
+            const normalizedOccupancy = maxOccupancy / 100.0
+            color = { r: normalizedOccupancy, g: normalizedOccupancy, b: normalizedOccupancy, a: alpha }
+          } else {
+            // 混合区域：优先显示已知区域
+            if (maxOccupancy === 0) {
+              color = { r: 1.0, g: 1.0, b: 1.0, a: alpha }
+            } else if (maxOccupancy > 0 && maxOccupancy <= 100) {
+              const normalizedOccupancy = maxOccupancy / 100.0
+              color = { r: normalizedOccupancy, g: normalizedOccupancy, b: normalizedOccupancy, a: alpha }
+            } else {
+              color = { r: 0.25, g: 0.45, b: 0.45, a: alpha }
+            }
+          }
         }
 
         allPoints.push(p1, p2, p3)

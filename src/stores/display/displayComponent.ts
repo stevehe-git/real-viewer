@@ -47,7 +47,7 @@ export function getDefaultOptions(type: string): Record<string, any> {
     },
     map: {
       topic: '/map',
-      alpha: 0.7,
+      alpha: 1.0, // RViz 默认完全不透明，显示更清晰
       colorScheme: 'map',
       drawBehind: false,
       resolution: 0,

@@ -183,24 +183,45 @@ function processMap(request: MapProcessRequest): MapProcessResult {
         const endX = Math.min(startX + downscaleFactor, width)
         const endY = Math.min(startY + downscaleFactor, height)
         
-        // 检查采样区域是否包含占用单元格
-        let hasOccupied = false
-        let maxOccupancy = 0
+        // 统计采样区域内的单元格值
+        // 在 RViz 中：
+        // -1: 未知区域（显示浅绿色）
+        // 0: 自由空间（浅灰色）
+        // 1-100: 占用区域（深灰色，值越大越深）
+        let hasCell = false // 是否有单元格需要显示
+        let hasUnknown = false // 是否有未知区域（-1）
+        let maxOccupancy = -1 // 最大占用值（-1表示未知，0表示自由，1-100表示占用）
         
-        // 在采样区域内查找占用单元格
+        // 在采样区域内统计单元格值
         for (let y = startY; y < endY; y++) {
           for (let x = startX; x < endX; x++) {
             const index = y * width + x
             const occupancy = message.data[index]
-            if (occupancy > 0) {
-              hasOccupied = true
+            
+            // 处理不同的占用值
+            if (occupancy === -1) {
+              // 未知区域，标记为需要显示
+              hasCell = true
+              hasUnknown = true
+              if (maxOccupancy < -1) {
+                maxOccupancy = -1
+              }
+            } else if (occupancy === 0) {
+              // 自由空间
+              hasCell = true
+              if (maxOccupancy < 0) {
+                maxOccupancy = 0
+              }
+            } else if (occupancy > 0 && occupancy <= 100) {
+              // 占用区域
+              hasCell = true
               maxOccupancy = Math.max(maxOccupancy, occupancy)
             }
           }
         }
         
-        // 如果采样区域没有占用单元格，跳过
-        if (!hasOccupied) {
+        // 如果采样区域没有任何单元格，跳过
+        if (!hasCell) {
           continue
         }
 
@@ -216,22 +237,95 @@ function processMap(request: MapProcessRequest): MapProcessResult {
         const p3 = { x: worldX + halfRes, y: worldY + halfRes, z: worldZ }
         const p4 = { x: worldX - halfRes, y: worldY + halfRes, z: worldZ }
 
-        // 根据占用值和颜色方案计算颜色
-        const occupancyValue = maxOccupancy / 100.0
+        // 根据占用值和颜色方案计算颜色（参照 RViz）
         let color: { r: number; g: number; b: number; a: number }
 
         if (colorScheme === 'map') {
-          const gray = 0.5 + occupancyValue * 0.3
-          color = { r: gray, g: gray, b: gray, a: alpha }
+          // RViz 的 map 颜色方案（精确复刻）：
+          // -1: 未知区域（深青灰色）
+          // 0: 自由空间（浅灰色 (0.7, 0.7, 0.7)）
+          // 1-100: 占用区域（深灰色，值越大越深）
+          if (hasUnknown && maxOccupancy === -1) {
+            // 未知区域：深青灰色 (dark teal-gray)
+            color = { r: 0.25, g: 0.45, b: 0.45, a: alpha }
+          } else if (maxOccupancy === 0) {
+            // 自由空间：浅灰色，与 RViz 完全一致
+            color = { r: 0.7, g: 0.7, b: 0.7, a: alpha }
+          } else if (maxOccupancy > 0 && maxOccupancy <= 100) {
+            // 占用区域：深灰色渐变
+            // RViz 使用线性映射：gray = 0.5 - (occupancy / 100.0) * 0.5
+            // 占用值 1: gray = 0.5 - 0.01 * 0.5 = 0.495
+            // 占用值 100: gray = 0.5 - 1.0 * 0.5 = 0.0
+            const normalizedOccupancy = maxOccupancy / 100.0
+            const gray = Math.max(0.0, 0.5 - normalizedOccupancy * 0.5)
+            color = { r: gray, g: gray, b: gray, a: alpha }
+          } else {
+            // 混合区域：如果同时有未知和已知区域，优先显示已知区域
+            if (maxOccupancy === 0) {
+              color = { r: 0.7, g: 0.7, b: 0.7, a: alpha }
+            } else if (maxOccupancy > 0 && maxOccupancy <= 100) {
+              const normalizedOccupancy = maxOccupancy / 100.0
+              const gray = Math.max(0.0, 0.5 - normalizedOccupancy * 0.5)
+              color = { r: gray, g: gray, b: gray, a: alpha }
+            } else {
+              // 只有未知区域
+              color = { r: 0.25, g: 0.45, b: 0.45, a: alpha }
+            }
+          }
         } else if (colorScheme === 'costmap') {
-          color = {
-            r: occupancyValue,
-            g: 1.0 - occupancyValue * 0.5,
-            b: 0.2,
-            a: alpha
+          // Costmap 颜色方案：使用渐变色
+          if (hasUnknown && maxOccupancy === -1) {
+            // 未知区域：深青灰色
+            color = { r: 0.25, g: 0.45, b: 0.45, a: alpha }
+          } else if (maxOccupancy === 0) {
+            // 自由空间：浅绿色
+            color = { r: 0.2, g: 0.8, b: 0.2, a: alpha }
+          } else if (maxOccupancy > 0 && maxOccupancy <= 100) {
+            // 占用区域：从黄色到红色渐变
+            const normalizedOccupancy = maxOccupancy / 100.0
+            color = {
+              r: Math.min(1.0, normalizedOccupancy * 2),
+              g: Math.max(0.0, 1.0 - normalizedOccupancy * 0.5),
+              b: 0.2,
+              a: alpha
+            }
+          } else {
+            // 混合区域：优先显示已知区域
+            if (maxOccupancy === 0) {
+              color = { r: 0.2, g: 0.8, b: 0.2, a: alpha }
+            } else if (maxOccupancy > 0 && maxOccupancy <= 100) {
+              const normalizedOccupancy = maxOccupancy / 100.0
+              color = {
+                r: Math.min(1.0, normalizedOccupancy * 2),
+                g: Math.max(0.0, 1.0 - normalizedOccupancy * 0.5),
+                b: 0.2,
+                a: alpha
+              }
+            } else {
+              color = { r: 0.25, g: 0.45, b: 0.45, a: alpha }
+            }
           }
         } else {
-          color = { r: 1.0, g: 1.0, b: 1.0, a: alpha }
+          // raw 或其他方案：使用原始值
+          if (hasUnknown && maxOccupancy === -1) {
+            // 未知区域：深青灰色
+            color = { r: 0.25, g: 0.45, b: 0.45, a: alpha }
+          } else if (maxOccupancy === 0) {
+            color = { r: 1.0, g: 1.0, b: 1.0, a: alpha }
+          } else if (maxOccupancy > 0 && maxOccupancy <= 100) {
+            const normalizedOccupancy = maxOccupancy / 100.0
+            color = { r: normalizedOccupancy, g: normalizedOccupancy, b: normalizedOccupancy, a: alpha }
+          } else {
+            // 混合区域：优先显示已知区域
+            if (maxOccupancy === 0) {
+              color = { r: 1.0, g: 1.0, b: 1.0, a: alpha }
+            } else if (maxOccupancy > 0 && maxOccupancy <= 100) {
+              const normalizedOccupancy = maxOccupancy / 100.0
+              color = { r: normalizedOccupancy, g: normalizedOccupancy, b: normalizedOccupancy, a: alpha }
+            } else {
+              color = { r: 0.25, g: 0.45, b: 0.45, a: alpha }
+            }
+          }
         }
 
         // 添加两个三角形（组成矩形）
