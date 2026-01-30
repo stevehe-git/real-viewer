@@ -15,6 +15,7 @@
 import * as ROSLIB from 'roslib'
 import { ref, toRaw, computed } from 'vue'
 import { quat, vec3, mat4 } from 'gl-matrix'
+import { tfDebugger } from '@/utils/debug'
 
 export interface TransformFrame {
   name: string
@@ -246,6 +247,9 @@ class TFManager {
       this.tfTopic.subscribe((message: any) => {
         const now = Date.now()
         
+        // 调试：记录消息接收
+        tfDebugger.recordMessage()
+        
         this.subscriptionStatus.value = {
           subscribed: true,
           hasData: true,
@@ -254,6 +258,7 @@ class TFManager {
         }
         
         if (message && message.transforms && Array.isArray(message.transforms)) {
+          tfDebugger.log(`Received ${message.transforms.length} dynamic transforms`, 'debug')
           message.transforms.forEach((transform: any) => {
             this.processTransform(transform, false, now) // false = 动态变换
           })
@@ -270,6 +275,9 @@ class TFManager {
       this.tfStaticTopic.subscribe((message: any) => {
         const now = Date.now()
         
+        // 调试：记录静态消息接收
+        tfDebugger.recordMessage()
+        
         this.subscriptionStatus.value = {
           subscribed: true,
           hasData: true,
@@ -278,6 +286,7 @@ class TFManager {
         }
         
         if (message && message.transforms && Array.isArray(message.transforms)) {
+          tfDebugger.log(`Received ${message.transforms.length} static transforms`, 'debug')
           message.transforms.forEach((transform: any) => {
             this.processTransform(transform, true, now) // true = 静态变换
           })

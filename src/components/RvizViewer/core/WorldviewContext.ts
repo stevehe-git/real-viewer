@@ -23,6 +23,7 @@ import HitmapObjectIdManager from '../utils/HitmapObjectIdManager'
 import queuePromise from '../utils/queuePromise'
 import { getRayFromClick } from '../commands/utils/Raycast'
 import { camera, CameraStore, DEFAULT_CAMERA_STATE, type CameraState } from '../camera'
+import { renderDebugger } from '@/utils/debug'
 
 type ConstructorArgs = {
   dimension: Dimensions
@@ -256,6 +257,8 @@ export class WorldviewContext {
   }
 
   _paint(): void {
+    const frameStartTime = renderDebugger.recordFrameStart()
+    
     this._needsPaint = false
     this._lastPaintTime = performance.now()
     
@@ -265,6 +268,7 @@ export class WorldviewContext {
     
     // 优化：只在有统计对象时才重置（使用 for 循环）
     const cmdObjects = this.reglCommandObjects
+    let drawCallCount = 0
     for (let i = 0; i < cmdObjects.length; i++) {
       const obj = cmdObjects[i]
       if (obj && obj.stats) {
@@ -277,6 +281,7 @@ export class WorldviewContext {
     this._clearCanvas(regl)
     camera.draw(this.cameraStore.state, () => {
       this._drawInput()
+      drawCallCount = this._drawCalls.size
     })
 
     // 优化：只在有回调时才遍历（使用 for...of 循环，性能更好）
@@ -285,6 +290,9 @@ export class WorldviewContext {
         paintCall()
       }
     }
+    
+    // 记录帧结束
+    renderDebugger.recordFrameEnd(frameStartTime, drawCallCount)
     
     // More React state updates may have happened while we were painting, since paint happens
     // outside the normal React render flow. If this is the case, we need to paint again.

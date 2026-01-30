@@ -8,6 +8,7 @@ import { quat } from 'gl-matrix'
 import { tfManager } from '@/services/tfManager'
 import { getDataProcessorWorker } from '@/workers/dataProcessorWorker'
 import type { TFProcessRequest } from '@/workers/dataProcessor.worker'
+import { tfDebugger, renderDebugger } from '@/utils/debug'
 
 export class SceneManager {
   private reglContext: Regl
@@ -1599,6 +1600,8 @@ export class SceneManager {
    * 使用 Web Worker 处理耗时计算，避免阻塞主线程
    */
   private async updateTFData(): Promise<void> {
+    const processStartTime = tfDebugger.recordProcessStart()
+    
     const showAxes = this.tfConfig.showAxes !== false // 默认显示
     const showArrows = this.tfConfig.showArrows !== false // 默认显示
     const markerScale = this.tfConfig.markerScale !== undefined ? this.tfConfig.markerScale : 2.0
@@ -1609,6 +1612,8 @@ export class SceneManager {
     
     // 获取所有 frames
     const allFrames = tfManager.getFrames()
+    
+    tfDebugger.log(`Processing TF data: ${allFrames.length} total frames, fixed frame: ${fixedFrame}`, 'debug')
     
     // 过滤 frames（根据 filterWhitelist 和 filterBlacklist）
     let filteredFrames = allFrames
@@ -1627,6 +1632,8 @@ export class SceneManager {
       filteredFrames = filteredFrames.filter(f => enabledFrames.includes(f))
     }
     
+    tfDebugger.log(`Filtered to ${filteredFrames.length} frames`, 'debug')
+    
     // 生成数据哈希，用于检测是否需要重新处理
     // 注意：这里只检查配置和 frames 列表，不检查 frame 的位置变化
     // 因为 frame 位置变化时，需要重新渲染
@@ -1639,6 +1646,7 @@ export class SceneManager {
     // 但即使哈希相同，也继续处理（因为 frame 位置可能变化了）
     if (this.tfDataHash !== configHash) {
       this.tfDataHash = configHash
+      tfDebugger.log(`TF config hash changed: ${configHash}`, 'debug')
     }
     
     // 收集所有 frame 的 frameInfo（在主线程中计算，因为需要访问 tfManager）
@@ -1665,6 +1673,8 @@ export class SceneManager {
     // 使用 Web Worker 处理 axes 和 arrows 的生成（耗时计算）
     try {
       const worker = getDataProcessorWorker()
+      const workerStartTime = tfDebugger.recordWorkerProcessStart()
+      
       // 使用 JSON 序列化/反序列化确保数据完全可克隆
       const serializableRequest: TFProcessRequest = JSON.parse(JSON.stringify({
         type: 'processTF',
@@ -1682,11 +1692,15 @@ export class SceneManager {
       
       const result = await worker.processTF(request)
       
+      tfDebugger.recordWorkerProcessEnd(workerStartTime)
+      
       if (result.error) {
+        tfDebugger.log(`TF processing error: ${result.error}`, 'error')
         console.error('TF processing error:', result.error)
         this.tfData = { axes: [], arrows: [] }
         this.registerDrawCalls()
         this.worldviewContext.onDirty()
+        tfDebugger.recordProcessEnd(processStartTime)
         return
       }
       
@@ -1695,15 +1709,23 @@ export class SceneManager {
         arrows: result.arrows
       }
       
+      tfDebugger.log(`TF data updated: ${result.axes?.length || 0} axes, ${result.arrows?.length || 0} arrows`, 'debug')
+      
       // 更新完成后，重新注册绘制调用并触发渲染
+      const renderStartTime = tfDebugger.recordRenderStart()
       this.registerDrawCalls()
       this.worldviewContext.onDirty()
+      tfDebugger.recordRenderEnd(renderStartTime)
+      
+      tfDebugger.recordProcessEnd(processStartTime)
     } catch (error) {
+      tfDebugger.log(`Failed to process TF data in Worker: ${error}`, 'error')
       console.error('Failed to process TF data in Worker:', error)
       // 回退到空数据
       this.tfData = { axes: [], arrows: [] }
       this.registerDrawCalls()
       this.worldviewContext.onDirty()
+      tfDebugger.recordProcessEnd(processStartTime)
     }
   }
 
