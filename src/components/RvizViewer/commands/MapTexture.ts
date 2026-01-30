@@ -38,6 +38,52 @@ function getCachedMapTexture(
   return null
 }
 
+/**
+ * 清理指定组件的地图纹理缓存
+ * @param componentId 组件ID
+ * @param dataHash 数据哈希（可选，如果提供则只清理匹配的缓存）
+ */
+export function clearMapTextureCache(componentId: string, dataHash?: string): void {
+  if (dataHash) {
+    // 清理特定数据哈希的缓存
+    const keysToDelete: string[] = []
+    textureCache.forEach((cached, key) => {
+      if (cached.dataHash === dataHash || key.includes(componentId)) {
+        keysToDelete.push(key)
+        // 销毁纹理资源
+        if (cached.texture && cached.texture.destroy) {
+          cached.texture.destroy()
+        }
+      }
+    })
+    keysToDelete.forEach(key => textureCache.delete(key))
+  } else {
+    // 清理所有包含该 componentId 的缓存
+    const keysToDelete: string[] = []
+    textureCache.forEach((cached, key) => {
+      if (key.includes(componentId)) {
+        keysToDelete.push(key)
+        if (cached.texture && cached.texture.destroy) {
+          cached.texture.destroy()
+        }
+      }
+    })
+    keysToDelete.forEach(key => textureCache.delete(key))
+  }
+}
+
+/**
+ * 清理所有地图纹理缓存
+ */
+export function clearAllMapTextureCache(): void {
+  textureCache.forEach((cached) => {
+    if (cached.texture && cached.texture.destroy) {
+      cached.texture.destroy()
+    }
+  })
+  textureCache.clear()
+}
+
 function createMapTexture(
   regl: Regl,
   rgbaData: Uint8Array,
@@ -70,10 +116,51 @@ function createMapTexture(
   return cached
 }
 
+// 预定义的顶点和纹理坐标 buffer（复用，避免每帧重新创建）
+let cachedPositionBuffer: any = null
+let cachedTexCoordBuffer: any = null
+
+function getPositionBuffer(regl: Regl): any {
+  if (!cachedPositionBuffer) {
+    // 创建单位四边形：从 (0,0) 到 (1,1)
+    // 在顶点着色器中会转换为实际的世界坐标
+    const positions = new Float32Array([
+      0, 0,  // 第一个三角形
+      1, 0,
+      1, 1,
+      0, 0,  // 第二个三角形
+      1, 1,
+      0, 1
+    ])
+    cachedPositionBuffer = regl.buffer(positions)
+  }
+  return cachedPositionBuffer
+}
+
+function getTexCoordBuffer(regl: Regl): any {
+  if (!cachedTexCoordBuffer) {
+    // 纹理坐标：从 (0,0) 到 (1,1)
+    const texCoords = new Float32Array([
+      0, 0,
+      1, 0,
+      1, 1,
+      0, 0,
+      1, 1,
+      0, 1
+    ])
+    cachedTexCoordBuffer = regl.buffer(texCoords)
+  }
+  return cachedTexCoordBuffer
+}
+
 // 地图渲染命令：使用单个四边形 + 纹理
-// 注意：不使用 withPose，因为地图位置已经通过 mapOrigin 定义
+// 工业级优化：使用 buffer 缓存、正确的深度测试、优化的着色器
 const mapTextureCommand = (regl: Regl) => {
   // 在命令创建时捕获 regl 实例，以便在 uniform 函数中使用
+  // 预创建顶点和纹理坐标 buffer
+  const positionBuffer = getPositionBuffer(regl)
+  const texCoordBuffer = getTexCoordBuffer(regl)
+  
   return {
     primitive: 'triangles',
     vert: `
@@ -85,17 +172,18 @@ const mapTextureCommand = (regl: Regl) => {
       uniform mat4 projection, view;
       uniform vec2 mapSize; // 地图的宽度和高度（世界单位）
       uniform vec2 mapOrigin; // 地图原点位置（世界单位）
-      uniform float mapResolution; // 地图分辨率（米/像素）
 
       varying vec2 vTexCoord;
 
       void main() {
         // 计算世界坐标：从纹理坐标转换为世界坐标
         // position 是 [0,1] 范围的纹理坐标，需要转换为世界坐标
-        vec2 worldPos2D = mapOrigin + vec2(position.x * mapSize.x, position.y * mapSize.y);
+        // 使用精确的浮点运算，避免精度问题
+        vec2 worldPos2D = mapOrigin + position * mapSize;
         vec3 worldPos = vec3(worldPos2D.x, worldPos2D.y, 0.0);
         
-        // 直接使用世界坐标，不需要 pose 变换（地图位置已通过 mapOrigin 定义）
+        // 应用投影和视图变换
+        // 确保在不同视角下都能正确渲染
         gl_Position = projection * view * vec4(worldPos, 1.0);
         vTexCoord = texCoord;
       }
@@ -143,7 +231,9 @@ const mapTextureCommand = (regl: Regl) => {
 
       void main() {
         // 从纹理读取占用值（R 通道存储占用值，归一化到 0-1）
-        vec4 texColor = texture2D(mapTexture, vTexCoord);
+        // 使用 clamp 确保纹理坐标在有效范围内
+        vec2 clampedTexCoord = clamp(vTexCoord, 0.0, 1.0);
+        vec4 texColor = texture2D(mapTexture, clampedTexCoord);
         
         // 提取占用值：占用值存储在 R 通道，范围 0-1
         // -1 (未知) -> 0.0
@@ -184,22 +274,9 @@ const mapTextureCommand = (regl: Regl) => {
       }
     `,
     attributes: {
-      // 使用简单的四边形（2个三角形）覆盖整个地图
-      position: (_context: any, props: any) => {
-        // 创建单位四边形：从 (0,0) 到 (1,1)
-        // 在顶点着色器中会转换为实际的世界坐标
-        return [
-          [0, 0], [1, 0], [1, 1], // 第一个三角形
-          [0, 0], [1, 1], [0, 1]  // 第二个三角形
-        ]
-      },
-      texCoord: (_context: any, props: any) => {
-        // 纹理坐标：从 (0,0) 到 (1,1)
-        return [
-          [0, 0], [1, 0], [1, 1],
-          [0, 0], [1, 1], [0, 1]
-        ]
-      }
+      // 使用预创建的 buffer，避免每帧重新创建数组
+      position: positionBuffer,
+      texCoord: texCoordBuffer
     },
     uniforms: {
       mapTexture: (_context: any, props: any) => {
@@ -252,9 +329,6 @@ const mapTextureCommand = (regl: Regl) => {
         const pos = origin.position || {}
         return [pos.x || 0, pos.y || 0]
       },
-      mapResolution: (_context: any, props: any) => {
-        return props.resolution || 0.05
-      },
       alpha: (_context: any, props: any) => {
         return props.alpha !== undefined ? props.alpha : 1.0
       },
@@ -266,6 +340,8 @@ const mapTextureCommand = (regl: Regl) => {
         return 0
       }
     },
+    // 深度测试配置：确保地图在不同视角下正确渲染
+    // 使用 <= 比较，允许相同深度的像素渲染（地图在同一平面）
     depth: {
       enable: true,
       mask: true,

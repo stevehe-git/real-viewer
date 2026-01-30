@@ -4,6 +4,7 @@
  */
 import type { Regl, PointCloudData, PathData, RenderOptions } from '../types'
 import { grid, lines, makePointsCommand, cylinders, triangles, makeArrowsCommand, makeMapTextureCommand } from '../commands'
+import { clearMapTextureCache, clearAllMapTextureCache } from '../commands/MapTexture'
 import { quat } from 'gl-matrix'
 import { tfManager } from '@/services/tfManager'
 import { getDataProcessorWorker } from '@/workers/dataProcessorWorker'
@@ -523,6 +524,17 @@ export class SceneManager {
         children: this.tfData.arrows,
         layerIndex: 5.6
       })
+    }
+  }
+
+  /**
+   * 取消注册指定组件的绘制调用
+   * @param componentId 组件ID
+   */
+  private unregisterDrawCall(componentId: string): void {
+    const instance = this.mapInstances.get(componentId)
+    if (instance) {
+      this.worldviewContext.onUnmount(instance)
     }
   }
 
@@ -1060,6 +1072,23 @@ export class SceneManager {
    * @param componentId 组件ID
    */
   removeMap(componentId: string): void {
+    // 立即注销 draw call，确保渲染不再包含该地图
+    this.unregisterDrawCall(componentId)
+    
+    // 获取数据哈希和纹理数据，用于清理纹理缓存
+    const dataHash = this.mapDataHashMap.get(componentId)
+    const textureData = this.mapTextureDataMap.get(componentId)
+    
+    // 清理纹理缓存（在清理数据之前）
+    if (dataHash && textureData?.dataHash) {
+      clearMapTextureCache(componentId, textureData.dataHash)
+    } else if (dataHash) {
+      clearMapTextureCache(componentId, dataHash)
+    } else {
+      clearMapTextureCache(componentId)
+    }
+    
+    // 清理所有相关数据
     this.mapDataMap.delete(componentId)
     this.mapTextureDataMap.delete(componentId) // 清理纹理数据
     this.mapConfigMap.delete(componentId)
@@ -1068,17 +1097,19 @@ export class SceneManager {
     this.mapInstances.delete(componentId)
     this.mapRequestIds.delete(componentId) // 清理请求 ID
     
-    // 延迟注册绘制调用，避免频繁调用
-    requestAnimationFrame(() => {
-      this.registerDrawCalls()
-      this.worldviewContext.onDirty()
-    })
+    // 立即重新注册绘制调用，确保移除立即生效
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
   }
 
   /**
    * 清除所有地图数据（用于断开连接时）
    */
   clearAllMaps(): void {
+    // 清理所有纹理缓存
+    clearAllMapTextureCache()
+    
+    // 清理所有相关数据
     this.mapDataMap.clear()
     this.mapTextureDataMap.clear() // 清理所有纹理数据
     this.mapConfigMap.clear()
@@ -1086,6 +1117,11 @@ export class SceneManager {
     this.mapDataHashMap.clear() // 清理所有数据哈希
     this.mapInstances.clear()
     this.mapRequestIds.clear() // 清理所有请求 ID
+    
+    // 注销所有地图的 draw call
+    this.mapInstances.forEach((instance) => {
+      this.worldviewContext.onUnmount(instance)
+    })
     
     // 立即重新注册绘制调用（清除地图后）
     this.registerDrawCalls()
