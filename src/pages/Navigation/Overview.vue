@@ -130,12 +130,33 @@ const viewControl = useViewControl({
 // 显示配置同步（监听 displayComponents 变化，实时同步到渲染器）
 let displaySyncInstance: ReturnType<typeof useDisplaySync> | null = null
 
+// 监听帧率设置变化
+watch(
+  () => rvizStore.sceneState.fps,
+  (fps) => {
+    const worldview = viewerRef.value?.getWorldview()
+    if (worldview && fps) {
+      worldview.setTargetFPS(fps)
+      // 交互模式帧率设为正常模式的 50%
+      worldview.setInteractionFPS(Math.max(1, Math.floor(fps * 0.5)))
+      // 大地图交互模式帧率设为正常模式的 33%
+      worldview.setLargeMapInteractionFPS(Math.max(1, Math.floor(fps * 0.33)))
+    }
+  },
+  { immediate: true }
+)
+
 watch(
   () => viewerRef.value?.getSceneManager(),
   (sceneManager) => {
     if (sceneManager) {
       const worldview = viewerRef.value?.getWorldview()
       if (worldview) {
+        // 初始化时设置帧率
+        const fps = rvizStore.sceneState.fps || 60
+        worldview.setTargetFPS(fps)
+        worldview.setInteractionFPS(Math.max(1, Math.floor(fps * 0.5)))
+        worldview.setLargeMapInteractionFPS(Math.max(1, Math.floor(fps * 0.33)))
         // 检查 sceneManager 是否有 setTFVisible 方法
         // 如果没有，说明是旧版本，需要重新创建 displaySyncInstance
         const needsUpdate = !displaySyncInstance || typeof (sceneManager as any).setTFVisible !== 'function'

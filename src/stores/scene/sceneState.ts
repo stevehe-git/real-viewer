@@ -32,7 +32,7 @@ export const useSceneStore = defineStore('scene', () => {
     showMap: false,
     showLaser: false,
     backgroundColor: '#808080',
-    fps: 60,
+    fps: 30,
     cameraPos: { x: 0, y: 0, z: 0 },
     objectCount: 0,
     memoryUsage: 0,

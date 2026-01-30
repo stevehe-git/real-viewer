@@ -81,7 +81,7 @@ const backgroundColor = computed(() => {
 
 // 获取帧率
 const frameRate = computed(() => {
-  return rvizStore.sceneState.fps || 60
+  return rvizStore.sceneState.fps || 30
 })
 
 // 获取默认灯光（从 sceneState 或 options 中获取）

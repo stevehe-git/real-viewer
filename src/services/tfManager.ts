@@ -247,8 +247,8 @@ class TFManager {
       this.tfTopic.subscribe((message: any) => {
         const now = Date.now()
         
-        // 调试：记录消息接收
-        tfDebugger.recordMessage()
+        // 调试：记录动态消息接收
+        tfDebugger.recordMessage(false)
         
         this.subscriptionStatus.value = {
           subscribed: true,
@@ -276,7 +276,7 @@ class TFManager {
         const now = Date.now()
         
         // 调试：记录静态消息接收
-        tfDebugger.recordMessage()
+        tfDebugger.recordMessage(true)
         
         this.subscriptionStatus.value = {
           subscribed: true,

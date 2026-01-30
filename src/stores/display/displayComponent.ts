@@ -131,7 +131,7 @@ export function getDefaultOptions(type: string): Record<string, any> {
     'global-options': {
       fixedFrame: 'map',
       backgroundColor: '#808080',
-      frameRate: 60,
+      frameRate: 30,
       defaultLight: true
     }
   }

@@ -81,6 +81,15 @@ export class WorldviewContext {
   private _minFrameInterval = 1000 / this._targetFPS // 最小帧间隔（ms）
   private _interactionFrameInterval = 1000 / this._interactionFPS // 交互模式最小帧间隔（ms）
   private _largeMapInteractionFrameInterval = 1000 / this._largeMapInteractionFPS // 大地图交互模式最小帧间隔（ms）
+  
+  /**
+   * 更新帧率设置
+   */
+  private updateFrameIntervals(): void {
+    this._minFrameInterval = 1000 / this._targetFPS
+    this._interactionFrameInterval = 1000 / this._interactionFPS
+    this._largeMapInteractionFrameInterval = 1000 / this._largeMapInteractionFPS
+  }
   private _isInteracting = false // 是否正在交互（旋转/平移）
   private _hasLargeMap = false // 是否有大地图（用于进一步降低帧率）
   private _interactionTimeout: number | null = null // 交互超时定时器
@@ -345,6 +354,43 @@ export class WorldviewContext {
    */
   setHasLargeMap(hasLargeMap: boolean): void {
     this._hasLargeMap = hasLargeMap
+  }
+  
+  /**
+   * 设置目标帧率（正常模式）
+   */
+  setTargetFPS(fps: number): void {
+    if (fps > 0 && fps <= 120) {
+      this._targetFPS = fps
+      this.updateFrameIntervals()
+    }
+  }
+  
+  /**
+   * 设置交互模式帧率
+   */
+  setInteractionFPS(fps: number): void {
+    if (fps > 0 && fps <= 120) {
+      this._interactionFPS = fps
+      this.updateFrameIntervals()
+    }
+  }
+  
+  /**
+   * 设置大地图交互模式帧率
+   */
+  setLargeMapInteractionFPS(fps: number): void {
+    if (fps > 0 && fps <= 120) {
+      this._largeMapInteractionFPS = fps
+      this.updateFrameIntervals()
+    }
+  }
+  
+  /**
+   * 获取当前目标帧率
+   */
+  getTargetFPS(): number {
+    return this._targetFPS
   }
 
   /**

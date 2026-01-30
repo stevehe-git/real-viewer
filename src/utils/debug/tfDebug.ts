@@ -24,6 +24,9 @@ interface TFStats {
   messageCount: number
   lastMessageTime: number
   messageFrequency: number // Hz
+  dynamicMessageCount: number // 动态消息计数
+  staticMessageCount: number // 静态消息计数
+  dynamicMessageFrequency: number // 动态消息频率（Hz）
   
   // Worker 相关
   workerProcessCount: number
@@ -50,6 +53,9 @@ class TFDebugger {
     messageCount: 0,
     lastMessageTime: 0,
     messageFrequency: 0,
+    dynamicMessageCount: 0,
+    staticMessageCount: 0,
+    dynamicMessageFrequency: 0,
     workerProcessCount: 0,
     workerProcessTime: 0,
     workerLastProcessTime: 0,
@@ -64,6 +70,8 @@ class TFDebugger {
   private processTimes: number[] = []
   private renderTimes: number[] = []
   private messageTimes: number[] = []
+  private dynamicMessageTimes: number[] = [] // 动态消息时间戳
+  private staticMessageTimes: number[] = [] // 静态消息时间戳
   private workerProcessTimes: number[] = []
 
   /**
@@ -122,17 +130,27 @@ class TFDebugger {
 
   /**
    * 记录 TF 消息接收
+   * @param isStatic 是否为静态消息（/tf_static）
    */
-  recordMessage(): void {
+  recordMessage(isStatic: boolean = false): void {
     if (!debugManager.isModuleEnabled(MODULE_NAME)) return
     
     this.stats.messageCount++
     this.messageTimes.push(Date.now())
     
+    if (isStatic) {
+      this.stats.staticMessageCount++
+      this.staticMessageTimes.push(Date.now())
+    } else {
+      this.stats.dynamicMessageCount++
+      this.dynamicMessageTimes.push(Date.now())
+    }
+    
     this.updateFrequency()
     
     if (debugManager.shouldLog('debug')) {
-      console.debug(`[TF Debug] Message received (total: ${this.stats.messageCount})`)
+      const type = isStatic ? 'static' : 'dynamic'
+      console.debug(`[TF Debug] ${type} message received (total: ${this.stats.messageCount}, dynamic: ${this.stats.dynamicMessageCount}, static: ${this.stats.staticMessageCount})`)
     }
   }
 
@@ -203,22 +221,30 @@ class TFDebugger {
     this.lastFrequencyUpdate = now
     const windowStart = now - this.frequencyUpdateInterval
     
+    // 计算频率（转换为 Hz：5秒内的数量 / 5秒）
+    const windowSeconds = this.frequencyUpdateInterval / 1000
+    
     // 计算处理频率
-    this.stats.processFrequency = this.processTimes.filter(t => t >= windowStart).length
+    this.stats.processFrequency = this.processTimes.filter(t => t >= windowStart).length / windowSeconds
     
     // 计算渲染频率
-    this.stats.renderFrequency = this.renderTimes.filter(t => t >= windowStart).length
+    this.stats.renderFrequency = this.renderTimes.filter(t => t >= windowStart).length / windowSeconds
     
-    // 计算消息频率
-    this.stats.messageFrequency = this.messageTimes.filter(t => t >= windowStart).length
+    // 计算消息频率（只统计动态消息，静态消息不计入频率）
+    const dynamicMessagesInWindow = this.dynamicMessageTimes.filter(t => t >= windowStart).length
+    this.stats.dynamicMessageFrequency = dynamicMessagesInWindow / windowSeconds
+    // 保留总消息频率用于兼容性（但主要关注动态消息频率）
+    this.stats.messageFrequency = this.messageTimes.filter(t => t >= windowStart).length / windowSeconds
     
     // 计算 Worker 处理频率
-    this.stats.workerProcessFrequency = this.workerProcessTimes.filter(t => t >= windowStart).length
+    this.stats.workerProcessFrequency = this.workerProcessTimes.filter(t => t >= windowStart).length / windowSeconds
     
     // 清理旧数据（保留最近5秒的数据）
     this.processTimes = this.processTimes.filter(t => t >= windowStart)
     this.renderTimes = this.renderTimes.filter(t => t >= windowStart)
     this.messageTimes = this.messageTimes.filter(t => t >= windowStart)
+    this.dynamicMessageTimes = this.dynamicMessageTimes.filter(t => t >= windowStart)
+    this.staticMessageTimes = this.staticMessageTimes.filter(t => t >= windowStart)
     this.workerProcessTimes = this.workerProcessTimes.filter(t => t >= windowStart)
     
     // 输出统计信息
@@ -236,7 +262,7 @@ class TFDebugger {
     console.log(`[TF Debug] Stats:
   Process: ${this.stats.processFrequency.toFixed(1)} Hz (avg: ${(this.stats.processTime / Math.max(this.stats.processCount, 1)).toFixed(2)}ms, last: ${this.stats.lastProcessTime.toFixed(2)}ms)
   Render: ${this.stats.renderFrequency.toFixed(1)} Hz (avg: ${(this.stats.renderTime / Math.max(this.stats.renderCount, 1)).toFixed(2)}ms, last: ${this.stats.lastRenderTime.toFixed(2)}ms)
-  Messages: ${this.stats.messageFrequency.toFixed(1)} Hz (total: ${this.stats.messageCount})
+  Messages: ${this.stats.dynamicMessageFrequency.toFixed(1)} Hz (total: ${this.stats.messageCount}, dynamic: ${this.stats.dynamicMessageCount}, static: ${this.stats.staticMessageCount})
   Worker: ${this.stats.workerProcessFrequency.toFixed(1)} Hz (avg: ${(this.stats.workerProcessTime / Math.max(this.stats.workerProcessCount, 1)).toFixed(2)}ms, last: ${this.stats.workerLastProcessTime.toFixed(2)}ms)
   Cache: ${(this.stats.cacheHitRate * 100).toFixed(1)}% hit rate (${this.stats.cacheHitCount} hits, ${this.stats.cacheMissCount} misses)`)
   }
@@ -264,6 +290,9 @@ class TFDebugger {
       messageCount: 0,
       lastMessageTime: 0,
       messageFrequency: 0,
+      dynamicMessageCount: 0,
+      staticMessageCount: 0,
+      dynamicMessageFrequency: 0,
       workerProcessCount: 0,
       workerProcessTime: 0,
       workerLastProcessTime: 0,
@@ -275,6 +304,8 @@ class TFDebugger {
     this.processTimes = []
     this.renderTimes = []
     this.messageTimes = []
+    this.dynamicMessageTimes = []
+    this.staticMessageTimes = []
     this.workerProcessTimes = []
   }
 

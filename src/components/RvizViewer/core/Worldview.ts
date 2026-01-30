@@ -65,6 +65,34 @@ export class Worldview {
   getContext(): WorldviewContext {
     return this.context
   }
+  
+  /**
+   * 设置目标帧率（正常模式）
+   */
+  setTargetFPS(fps: number): void {
+    this.context.setTargetFPS(fps)
+  }
+  
+  /**
+   * 设置交互模式帧率
+   */
+  setInteractionFPS(fps: number): void {
+    this.context.setInteractionFPS(fps)
+  }
+  
+  /**
+   * 设置大地图交互模式帧率
+   */
+  setLargeMapInteractionFPS(fps: number): void {
+    this.context.setLargeMapInteractionFPS(fps)
+  }
+  
+  /**
+   * 获取当前目标帧率
+   */
+  getTargetFPS(): number {
+    return this.context.getTargetFPS()
+  }
 
   /**
    * 更新尺寸
