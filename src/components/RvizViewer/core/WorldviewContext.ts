@@ -455,22 +455,6 @@ export class WorldviewContext {
   isInteracting(): boolean {
     return this._isInteracting
   }
-  
-  /**
-   * 设置目标帧率（用于性能调优）
-   */
-  setTargetFPS(fps: number): void {
-    this._targetFPS = Math.max(1, Math.min(120, fps)) // 限制在1-120fps之间
-    this._minFrameInterval = 1000 / this._targetFPS
-  }
-  
-  /**
-   * 设置交互模式目标帧率（用于性能调优）
-   */
-  setInteractionFPS(fps: number): void {
-    this._interactionFPS = Math.max(1, Math.min(60, fps)) // 限制在1-60fps之间
-    this._interactionFrameInterval = 1000 / this._interactionFPS
-  }
 
   readHitmap = queuePromise(
     (

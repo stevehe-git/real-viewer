@@ -173,13 +173,6 @@ export class Worldview {
   isInteracting(): boolean {
     return this.context.isInteracting()
   }
-  
-  /**
-   * 设置目标帧率（用于性能调优）
-   */
-  setTargetFPS(fps: number): void {
-    this.context.setTargetFPS(fps)
-  }
 
   /**
    * 销毁
