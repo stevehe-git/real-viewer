@@ -16,6 +16,7 @@ import * as ROSLIB from 'roslib'
 import { ref, toRaw, computed } from 'vue'
 import { quat, vec3, mat4 } from 'gl-matrix'
 import { tfDebugger } from '@/utils/debug'
+import { getTFTreeProcessorWorker } from '@/workers/tfTreeProcessorWorker'
 
 export interface TransformFrame {
   name: string
@@ -87,6 +88,12 @@ class TFManager {
   // 数据更新节流
   private dataUpdateThrottleTimer: number | null = null
   private pendingDataUpdate = false
+  
+  // Worker 管理器
+  private tfTreeWorker = getTFTreeProcessorWorker()
+  
+  // 异步更新标志（防止重复更新）
+  private isUpdatingTree = false
 
   /**
    * 获取所有变换数据（合并静态和动态）
@@ -358,7 +365,7 @@ class TFManager {
     
     // 更新 frames 列表和树结构
     this.updateFramesList()
-    this.updateTFTree()
+    this.updateTFTreeAsync()
     
     // 触发数据更新通知（节流）
     this.triggerDataUpdateThrottled()
@@ -421,9 +428,46 @@ class TFManager {
   }
 
   /**
-   * 更新 TF 树结构
+   * 更新 TF 树结构（异步，使用 Worker）
    */
-  private updateTFTree() {
+  private async updateTFTreeAsync() {
+    // 防止重复更新
+    if (this.isUpdatingTree) {
+      return
+    }
+    
+    this.isUpdatingTree = true
+    
+    try {
+      const now = Date.now()
+      const result = await this.tfTreeWorker.updateTFTree(
+        this.dynamicTransforms.value,
+        this.staticTransforms.value,
+        Array.from(this.availableFrames.value),
+        this.frameTimeout,
+        now
+      )
+      
+      if (result.error) {
+        console.error('TF Worker tree update error:', result.error)
+        // 回退到同步更新
+        this.updateTFTreeSync()
+      } else {
+        this.tfTree.value = result.tfTree
+      }
+    } catch (error) {
+      console.error('TF Worker tree update failed, falling back to sync:', error)
+      // 回退到同步更新
+      this.updateTFTreeSync()
+    } finally {
+      this.isUpdatingTree = false
+    }
+  }
+  
+  /**
+   * 更新 TF 树结构（同步，回退方案）
+   */
+  private updateTFTreeSync() {
     const now = Date.now()
     const timeoutMs = this.frameTimeout * 1000
     
@@ -499,6 +543,7 @@ class TFManager {
     
     this.tfTree.value = rootNodes
   }
+  
 
   /**
    * 获取 TF 树结构
@@ -542,7 +587,7 @@ class TFManager {
    */
   setFrameTimeout(timeout: number) {
     this.frameTimeout = timeout
-    this.updateTFTree()
+    this.updateTFTreeAsync()
   }
 
   /**
@@ -853,7 +898,7 @@ class TFManager {
     }
     
     // 更新树结构
-    this.updateTFTree()
+    this.updateTFTreeAsync()
   }
 
   /**
