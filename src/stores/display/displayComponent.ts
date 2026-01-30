@@ -127,6 +127,12 @@ export function getDefaultOptions(type: string): Record<string, any> {
         { name: 'wheel_left_link', enabled: true },
         { name: 'wheel_right_link', enabled: true }
       ]
+    },
+    'global-options': {
+      fixedFrame: 'map',
+      backgroundColor: '#808080',
+      frameRate: 60,
+      defaultLight: true
     }
   }
   return defaults[type] || {}

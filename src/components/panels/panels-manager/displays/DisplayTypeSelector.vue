@@ -97,7 +97,8 @@ import {
   Monitor,
   Files,
   Share,
-  Box
+  Box,
+  Setting
 } from '@element-plus/icons-vue'
 
 interface DisplayType {
@@ -219,6 +220,13 @@ const categories = ref([
         name: 'RobotModel',
         icon: markRaw(Box),
         description: 'Displays a robot model from a URDF file.',
+        category: 'rviz'
+      },
+      {
+        id: 'global-options',
+        name: 'Global Options',
+        icon: markRaw(Setting),
+        description: 'Global visualization options including fixed frame, background color, frame rate, and default light.',
         category: 'rviz'
       }
     ]

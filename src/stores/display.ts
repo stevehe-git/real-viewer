@@ -51,6 +51,12 @@ export const useDisplayStore = defineStore('display', () => {
 
   // 删除组件
   function removeComponent(componentId: string) {
+    // 不允许删除 global-options 组件
+    const component = displayComponents.value.find(c => c.id === componentId)
+    if (component && component.type === 'global-options') {
+      return
+    }
+    
     const index = displayComponents.value.findIndex(c => c.id === componentId)
     if (index > -1) {
       displayComponents.value.splice(index, 1)
@@ -95,10 +101,32 @@ export const useDisplayStore = defineStore('display', () => {
     return componentData.value.get(componentId) || null
   }
 
-  // 初始化：添加默认网格组件
+  // 初始化：添加默认组件
   function initialize() {
-    // 如果显示组件列表为空，添加默认的网格组件
-    if (displayComponents.value.length === 0) {
+    // 确保 global-options 组件始终存在
+    const globalOptionsId = 'display-global-options-default'
+    const existingGlobalOptions = displayComponents.value.find(
+      c => c.id === globalOptionsId || c.type === 'global-options'
+    )
+    
+    if (!existingGlobalOptions) {
+      const globalOptionsComponent: DisplayComponentData = {
+        id: globalOptionsId,
+        name: 'Global Options',
+        type: 'global-options',
+        enabled: true,
+        expanded: true,
+        options: getDefaultOptions('global-options')
+      }
+      // 插入到列表开头，确保它总是第一个显示
+      displayComponents.value.unshift(globalOptionsComponent)
+    }
+    
+    // 如果显示组件列表为空（除了 global-options），添加默认的网格组件
+    const nonGlobalOptionsComponents = displayComponents.value.filter(
+      c => c.type !== 'global-options'
+    )
+    if (nonGlobalOptionsComponents.length === 0) {
       const defaultGridComponent: DisplayComponentData = {
         id: 'display-grid-default',
         name: 'Grid',

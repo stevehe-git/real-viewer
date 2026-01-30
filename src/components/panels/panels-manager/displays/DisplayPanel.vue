@@ -30,8 +30,8 @@
           </div>
 
           <div v-show="expandedComponents.has(component.id)" class="display-item-content">
-            <!-- Status子项 -->
-            <div class="display-sub-item">
+            <!-- Status子项（global-options 类型不显示） -->
+            <div v-if="component.type !== 'global-options'" class="display-sub-item">
               <div class="sub-item-header" @click.stop="toggleSubItem(component.id, 'status')">
                 <el-icon 
                   class="sub-item-icon" 
@@ -118,7 +118,7 @@
           重命名
         </el-button>
         <el-button
-          v-if="selectedComponentId"
+          v-if="selectedComponentId && selectedComponent?.type !== 'global-options'"
           size="small"
           type="danger"
           @click="handleRemove"
@@ -157,6 +157,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, reactive, onMounted, onUnmounted } from 'vue'
 import { useRvizStore } from '@/stores/rviz'
+import { useDisplayStore } from '@/stores/display'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useTopicSubscription, type SubscriptionStatus } from '@/composables/communication/useTopicSubscription'
 import { topicSubscriptionManager } from '@/services/topicSubscriptionManager'
@@ -182,7 +183,8 @@ import {
   Share,
   Warning,
   Box,
-  Files
+  Files,
+  Setting
 } from '@element-plus/icons-vue'
 import GridConfig from './grid/GridConfig.vue'
 import AxesConfig from './axes/AxesConfig.vue'
@@ -195,6 +197,7 @@ import LaserScanConfig from './laser-scan/LaserScanConfig.vue'
 import PointCloud2Config from './point-cloud2/PointCloud2Config.vue'
 import TFConfig from './tf/TFConfig.vue'
 import RobotModelConfig from './robot-model/RobotModelConfig.vue'
+import GlobalOptionsConfig from './global-options/GlobalOptionsConfig.vue'
 import { tfManager } from '@/services/tfManager'
 
 const rvizStore = useRvizStore()
@@ -353,8 +356,19 @@ watch(
   }
 )
 
-// 组件挂载时，如果已连接，立即订阅所有组件
+// 组件挂载时，确保 global-options 组件存在
 onMounted(() => {
+  // 确保 global-options 组件存在（通过调用 store 的 initialize 方法）
+  const globalOptionsExists = displayComponents.value.some(
+    c => c.type === 'global-options'
+  )
+  if (!globalOptionsExists) {
+    // 直接调用 display store 的 initialize 方法
+    const displayStore = useDisplayStore()
+    displayStore.initialize()
+  }
+  
+  // 如果已连接，立即订阅所有组件
   if (rvizStore.communicationState.isConnected) {
     displayComponents.value.forEach(component => {
       if (TOPIC_COMPONENT_TYPES.includes(component.type)) {
@@ -374,6 +388,12 @@ onUnmounted(() => {
 
 // 选中的组件ID
 const selectedComponentId = ref<string | null>(null)
+
+// 选中的组件（计算属性）
+const selectedComponent = computed(() => {
+  if (!selectedComponentId.value) return null
+  return rvizStore.displayComponents.find(c => c.id === selectedComponentId.value) || null
+})
 
 // 展开的组件ID集合
 const expandedComponents = ref<Set<string>>(new Set())
@@ -447,7 +467,8 @@ function getComponentIcon(type: string) {
     laserscan: DataLine,
     pointcloud2: Monitor,
     tf: Share,
-    robotmodel: Box
+    robotmodel: Box,
+    'global-options': Setting
   }
   return icons[type] || Monitor
 }
@@ -465,7 +486,8 @@ function getConfigComponent(type: string) {
     laserscan: LaserScanConfig,
     pointcloud2: PointCloud2Config,
     tf: TFConfig,
-    robotmodel: RobotModelConfig
+    robotmodel: RobotModelConfig,
+    'global-options': GlobalOptionsConfig
   }
   return components[type] || 'div'
 }
@@ -648,6 +670,12 @@ function handleRemove() {
 
   const component = rvizStore.displayComponents.find(c => c.id === selectedComponentId.value)
   if (!component) return
+
+  // 不允许删除 global-options 组件
+  if (component.type === 'global-options') {
+    ElMessage.warning('Global Options 组件不能删除')
+    return
+  }
 
   ElMessageBox.confirm(
     `确定要删除显示组件 "${component.name}" 吗？`,
