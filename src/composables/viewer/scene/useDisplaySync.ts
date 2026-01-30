@@ -154,8 +154,18 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
   /**
    * 同步 Map 显示状态（支持多个地图）
    */
-  function syncMapDisplay(): void {
+  function syncMapDisplay(previousMapIds?: Set<string>): Set<string> {
     const mapComponents = rvizStore.displayComponents.filter(c => c.type === 'map')
+    const currentMapIds = new Set(mapComponents.map(c => c.id))
+    
+    // 清理已删除的地图组件数据
+    if (previousMapIds) {
+      previousMapIds.forEach(componentId => {
+        if (!currentMapIds.has(componentId)) {
+          context.removeMap(componentId)
+        }
+      })
+    }
     
     // 处理每个地图组件
     mapComponents.forEach((mapComponent) => {
@@ -177,13 +187,25 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
         context.removeMap(mapComponent.id)
       }
     })
+    
+    return currentMapIds
   }
 
   /**
    * 同步 LaserScan 显示状态（支持多个 LaserScan）
    */
-  function syncLaserScanDisplay(): void {
+  function syncLaserScanDisplay(previousLaserScanIds?: Set<string>): Set<string> {
     const laserScanComponents = rvizStore.displayComponents.filter(c => c.type === 'laserscan')
+    const currentLaserScanIds = new Set(laserScanComponents.map(c => c.id))
+    
+    // 清理已删除的 LaserScan 组件数据
+    if (previousLaserScanIds) {
+      previousLaserScanIds.forEach(componentId => {
+        if (!currentLaserScanIds.has(componentId)) {
+          context.removeLaserScan(componentId)
+        }
+      })
+    }
     
     // 处理每个 LaserScan 组件
     laserScanComponents.forEach((laserScanComponent) => {
@@ -212,13 +234,25 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
         context.removeLaserScan(laserScanComponent.id)
       }
     })
+    
+    return currentLaserScanIds
   }
 
   /**
    * 同步 PointCloud 显示状态（支持多个 PointCloud）
    */
-  function syncPointCloudDisplay(): void {
+  function syncPointCloudDisplay(previousPointCloudIds?: Set<string>): Set<string> {
     const pointCloudComponents = rvizStore.displayComponents.filter(c => c.type === 'pointcloud')
+    const currentPointCloudIds = new Set(pointCloudComponents.map(c => c.id))
+    
+    // 清理已删除的 PointCloud 组件数据
+    if (previousPointCloudIds) {
+      previousPointCloudIds.forEach(componentId => {
+        if (!currentPointCloudIds.has(componentId)) {
+          context.removePointCloud(componentId)
+        }
+      })
+    }
     
     // 处理每个 PointCloud 组件
     pointCloudComponents.forEach((pointCloudComponent) => {
@@ -239,13 +273,25 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
         context.removePointCloud(pointCloudComponent.id)
       }
     })
+    
+    return currentPointCloudIds
   }
 
   /**
    * 同步 PointCloud2 显示状态（支持多个 PointCloud2）
    */
-  function syncPointCloud2Display(): void {
+  function syncPointCloud2Display(previousPointCloud2Ids?: Set<string>): Set<string> {
     const pointCloud2Components = rvizStore.displayComponents.filter(c => c.type === 'pointcloud2')
+    const currentPointCloud2Ids = new Set(pointCloud2Components.map(c => c.id))
+    
+    // 清理已删除的 PointCloud2 组件数据
+    if (previousPointCloud2Ids) {
+      previousPointCloud2Ids.forEach(componentId => {
+        if (!currentPointCloud2Ids.has(componentId)) {
+          context.removePointCloud2(componentId)
+        }
+      })
+    }
     
     // 处理每个 PointCloud2 组件
     pointCloud2Components.forEach((pointCloud2Component) => {
@@ -270,6 +316,8 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
         context.removePointCloud2(pointCloud2Component.id)
       }
     })
+    
+    return currentPointCloud2Ids
   }
 
   /**
@@ -321,23 +369,44 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
   /**
    * 同步所有显示组件
    */
-  function syncAllDisplays(): void {
+  function syncAllDisplays(previousComponentIds?: {
+    mapIds?: Set<string>
+    laserScanIds?: Set<string>
+    pointCloudIds?: Set<string>
+    pointCloud2Ids?: Set<string>
+  }): void {
     syncGridDisplay()
     syncAxesDisplay()
-    syncMapDisplay()
-    syncLaserScanDisplay()
-    syncPointCloudDisplay()
-    syncPointCloud2Display()
+    const currentMapIds = syncMapDisplay(previousComponentIds?.mapIds)
+    const currentLaserScanIds = syncLaserScanDisplay(previousComponentIds?.laserScanIds)
+    const currentPointCloudIds = syncPointCloudDisplay(previousComponentIds?.pointCloudIds)
+    const currentPointCloud2Ids = syncPointCloud2Display(previousComponentIds?.pointCloud2Ids)
     syncTFDisplay()
+    
+    return {
+      mapIds: currentMapIds,
+      laserScanIds: currentLaserScanIds,
+      pointCloudIds: currentPointCloudIds,
+      pointCloud2Ids: currentPointCloud2Ids
+    }
   }
+
+  // 保存之前的组件 ID，用于检测删除
+  let previousComponentIds: {
+    mapIds?: Set<string>
+    laserScanIds?: Set<string>
+    pointCloudIds?: Set<string>
+    pointCloud2Ids?: Set<string>
+  } = {}
 
   // 监听 displayComponents 数组的变化（添加、删除）
   watch(
     () => rvizStore.displayComponents,
     () => {
-      syncAllDisplays()
+      const currentIds = syncAllDisplays(previousComponentIds)
+      previousComponentIds = currentIds
     },
-    { deep: true }
+    { deep: true, immediate: true }
   )
 
   // 监听每个组件的 enabled 状态变化
