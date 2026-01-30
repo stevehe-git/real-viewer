@@ -76,8 +76,8 @@ export class WorldviewContext {
   // 性能优化：帧率限制和交互模式检测
   private _lastPaintTime = 0
   private _targetFPS = 60 // 正常模式目标帧率
-  private _interactionFPS = 30 // 交互模式目标帧率（降低以节省CPU）
-  private _largeMapInteractionFPS = 20 // 大地图交互模式目标帧率（进一步降低）
+  private _interactionFPS = 60 // 交互模式目标帧率（提高以获得流畅体验）
+  private _largeMapInteractionFPS = 45 // 大地图交互模式目标帧率（适度降低以平衡性能）
   private _minFrameInterval = 1000 / this._targetFPS // 最小帧间隔（ms）
   private _interactionFrameInterval = 1000 / this._interactionFPS // 交互模式最小帧间隔（ms）
   private _largeMapInteractionFrameInterval = 1000 / this._largeMapInteractionFPS // 大地图交互模式最小帧间隔（ms）
@@ -333,6 +333,14 @@ export class WorldviewContext {
       minInterval = this._hasLargeMap 
         ? this._largeMapInteractionFrameInterval 
         : this._interactionFrameInterval
+      
+      // 交互模式下，如果距离上次渲染时间很短，直接使用 requestAnimationFrame
+      // 这样可以获得更流畅的体验，避免 setTimeout 带来的延迟
+      if (timeSinceLastPaint < minInterval && timeSinceLastPaint < 8) {
+        // 如果距离上次渲染不到8ms，直接安排下一帧渲染（约120fps上限）
+        this._frame = requestAnimationFrame(() => this.paint())
+        return
+      }
     } else {
       minInterval = this._minFrameInterval
     }
@@ -341,11 +349,16 @@ export class WorldviewContext {
       // 已达到最小帧间隔，立即安排渲染
       this._frame = requestAnimationFrame(() => this.paint())
     } else {
-      // 未达到最小帧间隔，延迟渲染
+      // 未达到最小帧间隔，延迟渲染（仅在非交互模式或延迟较大时）
       const delay = minInterval - timeSinceLastPaint
-      this._frame = window.setTimeout(() => {
+      // 如果延迟很小（< 2ms），直接使用 requestAnimationFrame 避免 setTimeout 的开销
+      if (delay < 2) {
         this._frame = requestAnimationFrame(() => this.paint())
-      }, delay) as any
+      } else {
+        this._frame = window.setTimeout(() => {
+          this._frame = requestAnimationFrame(() => this.paint())
+        }, delay) as any
+      }
     }
   }
   
@@ -401,6 +414,21 @@ export class WorldviewContext {
     
     // 如果没有待处理的渲染请求，安排下一次渲染
     if (this._frame === null) {
+      // 交互模式下，如果距离上次渲染时间很短，直接使用 requestAnimationFrame
+      // 这样可以获得更低的延迟
+      if (this._isInteracting) {
+        const now = performance.now()
+        const timeSinceLastPaint = now - this._lastPaintTime
+        const minInterval = this._hasLargeMap 
+          ? this._largeMapInteractionFrameInterval 
+          : this._interactionFrameInterval
+        
+        // 如果距离上次渲染时间很短（< 4ms），直接安排下一帧渲染
+        if (timeSinceLastPaint < 4) {
+          this._frame = requestAnimationFrame(() => this.paint())
+          return
+        }
+      }
       this._scheduleNextPaint()
     }
   }

@@ -49,8 +49,7 @@ const cameraController = ref<WorldviewCameraController | null>(null)
 const gridVisible = ref(props.options?.enableGrid ?? true)
 const axesVisible = ref(props.options?.enableAxes ?? true)
 let resizeObserver: ResizeObserver | null = null
-// 用于节流鼠标和滚轮事件的动画帧请求
-let mouseMoveFrame: number | null = null
+// 用于节流滚轮事件的动画帧请求
 let wheelFrame: number | null = null
 
 // 初始化
@@ -139,7 +138,7 @@ function setupEventListeners(): void {
   })
 
   // 鼠标移动（使用 window 监听，确保在画布外也能响应）
-  // 优化：使用 requestAnimationFrame 节流，避免频繁处理鼠标移动事件
+  // 优化：交互模式下直接处理，不使用 requestAnimationFrame 节流，以获得更流畅的体验
   const handleMouseMove = (e: MouseEvent) => {
     if (cameraController.value?.isDragging()) {
       // 标记开始交互（用于性能优化）
@@ -147,18 +146,10 @@ function setupEventListeners(): void {
         worldview.value.markInteractionStart()
       }
       
-      // 取消之前的帧请求，只处理最新的鼠标位置
-      if (mouseMoveFrame !== null) {
-        cancelAnimationFrame(mouseMoveFrame)
-      }
-      
-      // 使用 requestAnimationFrame 节流，确保在下一帧才处理
-      mouseMoveFrame = requestAnimationFrame(() => {
-        cameraController.value?.onMouseMove(e)
-        // 相机状态已通过共享的 CameraStore 自动更新
-        // WorldviewContext 的回调会自动触发渲染（已优化为使用 onDirty）
-        mouseMoveFrame = null
-      })
+      // 交互模式下直接处理鼠标移动，不等待 requestAnimationFrame
+      // 这样可以获得更低的延迟和更流畅的体验
+      // 渲染会通过 CameraStore 的回调自动触发，并由 WorldviewContext 的帧率限制控制
+      cameraController.value.onMouseMove(e)
     }
   }
   window.addEventListener('mousemove', handleMouseMove)
