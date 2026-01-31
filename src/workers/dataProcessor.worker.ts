@@ -599,13 +599,41 @@ function processTF(request: TFProcessRequest): TFProcessResult {
         // 获取父 frame 的位置
         const parentInfo = frameInfoMap.get(frameInfo.parent)
         if (parentInfo && parentInfo.position) {
+          // 计算箭头长度
+          const dx = position.x - parentInfo.position.x
+          const dy = position.y - parentInfo.position.y
+          const dz = position.z - parentInfo.position.z
+          const arrowLength = Math.sqrt(dx * dx + dy * dy + dz * dz)
+
+          // 箭头默认长度是0.1，如果小于0.1，则不显示
+          if (arrowLength < 0.1) {
+            continue
+          }
+          
+          // 箭头尺寸：根据长度动态调整，但保持最小和最大限制
+          // 箭头头部宽度：基于 axisRadius，但稍微大一些以更清晰
+          const arrowShaftRadius = axisRadius * 0.2
+          // 箭头头部长度：基于箭头总长度的比例，但至少是 shaft 宽度的 2 倍
+          const arrowHeadLength = 0.1
+          // 箭头头部宽度：是 shaft 宽度的 2 倍
+          const arrowHeadRadius = arrowShaftRadius * 10
+          
           arrows.push({
             points: [
-              { x: parentInfo.position.x, y: parentInfo.position.y, z: parentInfo.position.z },
-              { x: position.x, y: position.y, z: position.z }
+              { x: position.x, y: position.y, z: position.z },
+              { x: parentInfo.position.x, y: parentInfo.position.y, z: parentInfo.position.z }
             ],
-            scale: { x: axisRadius * 2, y: axisRadius * 2, z: axisLength * 0.3 },
-            color: { r: 0.5, g: 0.5, b: 0.5, a: markerAlpha }
+            // scale: x 和 y 是箭头 shaft 的半径，z 是箭头头部的长度
+            // Arrows.ts 会根据 points 计算总长度，然后使用 scale.z 作为头部长度
+            scale: { 
+              x: arrowShaftRadius,  // shaft 半径
+              y: arrowHeadRadius,   // head 半径（在 Arrows.ts 中会被用作 headWidth）
+              z: arrowHeadLength    // head 长度
+            },
+            // shaft 使用黄色/橙色系，更符合 RViz 的 TF 箭头显示效果
+            color: { r: 1.0, g: 0.8, b: 0.0, a: markerAlpha },
+            // 头部使用粉色，区别于 shaft 的黄色
+            headColor: { r: 1.0, g: 0.4, b: 0.8, a: markerAlpha }
           })
         }
       }

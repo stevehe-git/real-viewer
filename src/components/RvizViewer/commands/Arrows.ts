@@ -77,7 +77,8 @@ const generateArrowPrimitives = (markers: Arrow[]) => {
       // Set the original marker so we can use it in mouse events
       originalMarker: marker,
       scale: { x: headWidthX, y: headWidthY, z: headLength },
-      color: marker.color,
+      // 如果 marker.headColor 存在，使用它；否则使用 marker.color
+      color: (marker as any).headColor || marker.color,
       pose: {
         position: vec3ToPoint(headPosition),
         orientation: vec4ToOrientation(orientation)
