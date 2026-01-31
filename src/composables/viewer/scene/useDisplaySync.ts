@@ -178,6 +178,8 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
         }, mapComponent.id)
 
         // 获取地图数据并更新
+        // 注意：数据更新不会覆盖配置，因为配置存储在 SceneManager.mapConfigMap 中
+        // 数据更新时，registerDrawCalls 会从 mapConfigMap 读取最新配置
         const mapMessage = topicSubscriptionManager.getLatestMessage(mapComponent.id)
         if (mapMessage) {
           context.updateMap(mapMessage, mapComponent.id)
@@ -491,9 +493,10 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
           drawBehind: mapComponent.options?.drawBehind
         }))
     },
-    (mapConfigs) => {
+    (mapConfigs, oldMapConfigs) => {
       mapConfigs.forEach((mapConfig) => {
         if (mapConfig && mapConfig.enabled) {
+          // 立即更新配置选项，不等待数据同步
           context.setMapOptions({
             alpha: mapConfig.alpha,
             colorScheme: mapConfig.colorScheme,
@@ -501,10 +504,11 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
           }, mapConfig.id)
         }
       })
-      // 配置变化后，重新同步地图数据以应用新配置
-      syncMapDisplay()
+      
+      // 注意：不需要调用 syncMapDisplay()，因为 setMapOptions 已经会重新注册绘制调用
+      // syncMapDisplay() 主要用于数据更新，而配置更新已经通过 setMapOptions 处理
     },
-    { deep: true }
+    { deep: true, immediate: false }
   )
 
   // 缓存上次处理的消息时间戳，用于去重
@@ -543,6 +547,19 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
           const lastTimestamp = lastProcessedMessageTimes.get(componentId)
           if (lastTimestamp === undefined || lastTimestamp !== timestamp) {
             // 消息已变化，更新地图
+            // 关键修复：数据更新前，确保配置已同步到 SceneManager
+            // 这样 updateMap 调用 registerDrawCalls 时，能读取到最新配置
+            const mapComponent = rvizStore.displayComponents.find(c => c.id === componentId && c.type === 'map')
+            if (mapComponent && mapComponent.enabled) {
+              const options = mapComponent.options || {}
+              // 确保配置已同步（如果还没有同步）
+              context.setMapOptions({
+                alpha: options.alpha,
+                colorScheme: options.colorScheme,
+                drawBehind: options.drawBehind
+              }, componentId)
+            }
+            
             lastProcessedMessageTimes.set(componentId, timestamp)
             context.updateMap(message, componentId)
           }

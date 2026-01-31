@@ -198,15 +198,17 @@ const mapTextureCommand = (regl: Regl) => {
       varying vec2 vTexCoord;
 
       // 在 GPU 中计算颜色映射（map 方案）
+      // 参考 RViz：浅灰色自由空间，深灰色占用区域，深青灰色未知区域
       vec3 mapColorScheme(float occupancy) {
         if (occupancy < 0.0) {
-          // 未知区域：深青灰色
+          // 未知区域：深青灰色（teal）
           return vec3(0.25, 0.45, 0.45);
         } else if (occupancy < 0.01) {
-          // 自由空间：浅灰色
+          // 自由空间：浅灰色（light gray）
           return vec3(0.7, 0.7, 0.7);
         } else {
-          // 占用区域：深灰色渐变
+          // 占用区域：深灰色渐变（dark gray gradient）
+          // 占用值越高，颜色越深
           float normalizedOccupancy = occupancy;
           float gray = max(0.0, 0.5 - normalizedOccupancy * 0.5);
           return vec3(gray, gray, gray);
@@ -214,17 +216,25 @@ const mapTextureCommand = (regl: Regl) => {
       }
 
       // Costmap 颜色方案
+      // 参考 RViz：深灰色背景，洋红色（magenta）用于高成本区域
       vec3 costmapColorScheme(float occupancy) {
         if (occupancy < 0.0) {
+          // 未知区域：深青灰色
           return vec3(0.25, 0.45, 0.45);
         } else if (occupancy < 0.01) {
-          return vec3(0.2, 0.8, 0.2);
+          // 自由空间：深灰色（接近黑色）
+          return vec3(0.2, 0.2, 0.2);
         } else {
+          // 占用/高成本区域：洋红色渐变（magenta）
+          // 成本越高，洋红色越明显
           float normalizedOccupancy = occupancy;
+          // 洋红色：R 和 B 通道高，G 通道低
+          // 根据占用值调整洋红色的强度
+          float magentaIntensity = min(1.0, normalizedOccupancy * 1.5);
           return vec3(
-            min(1.0, normalizedOccupancy * 2.0),
-            max(0.0, 1.0 - normalizedOccupancy * 0.5),
-            0.2
+            min(1.0, 0.5 + magentaIntensity * 0.5), // R: 0.5-1.0
+            0.0,                                    // G: 0（洋红色特征）
+            min(1.0, 0.5 + magentaIntensity * 0.5) // B: 0.5-1.0
           );
         }
       }
@@ -266,8 +276,11 @@ const mapTextureCommand = (regl: Regl) => {
           }
           color = costmapColorScheme(occupancy);
         } else {
-          // raw 方案：直接使用纹理颜色
-          color = texColor.rgb;
+          // raw 方案：直接显示原始占用值（灰度图）
+          // 将 R 通道的占用值复制到 RGB 三个通道，形成灰度图
+          // 这样可以看到原始数据的分布
+          float rawValue = texColor.r;
+          color = vec3(rawValue, rawValue, rawValue);
         }
 
         gl_FragColor = vec4(color, alpha);
@@ -334,9 +347,24 @@ const mapTextureCommand = (regl: Regl) => {
       },
       colorScheme: (_context: any, props: any) => {
         // 0: map, 1: costmap, 2: raw
-        const scheme = props.colorScheme || 'map'
-        if (scheme === 'costmap') return 1
-        if (scheme === 'raw') return 2
+        // 确保正确读取 colorScheme，支持字符串和数字
+        let scheme = props?.colorScheme
+        
+        if (scheme === undefined || scheme === null) {
+          scheme = 'map'
+        }
+        // 如果是数字，直接返回（0, 1, 2）
+        if (typeof scheme === 'number') {
+          return Math.floor(scheme) % 3
+        }
+        // 如果是字符串，转换为数字
+        if (typeof scheme === 'string') {
+          scheme = scheme.toLowerCase().trim()
+          if (scheme === 'costmap') return 1
+          if (scheme === 'raw') return 2
+          return 0 // 默认 map
+        }
+        // 默认返回 map 方案
         return 0
       }
     },

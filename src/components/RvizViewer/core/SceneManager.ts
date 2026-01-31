@@ -40,6 +40,7 @@ export class SceneManager {
   private mapDataMap = new Map<string, any>() // 支持多个地图，key 为 componentId（保留向后兼容）
   private mapTextureDataMap = new Map<string, any>() // 地图纹理数据，key 为 componentId
   private mapConfigMap = new Map<string, { alpha?: number; colorScheme?: string; drawBehind?: boolean }>() // 每个地图的配置
+  private mapTextureCommandFactory: any = null // 缓存地图纹理命令工厂函数，避免重复创建
   private mapRawMessageMap = new Map<string, any>() // 保存每个地图的原始消息
   private mapDataHashMap = new Map<string, string>() // 地图数据哈希，用于检测数据是否变化
   private laserScanDataMap = new Map<string, any>() // 支持多个 LaserScan，key 为 componentId
@@ -129,6 +130,8 @@ export class SceneManager {
     
     // MapTexture 命令不需要预编译，直接使用工厂函数
     // 它会在 registerDrawCall 时由 WorldviewContext 编译
+    // 保存 MapTexture 命令工厂函数引用，确保 onMount 和 registerDrawCall 使用同一个引用
+    this.mapTextureCommandFactory = makeMapTextureCommand()
 
     // 初始化 Arrows 命令（用于 TF 箭头）
     this.arrowsCommand = makeArrowsCommand()(this.reglContext)
@@ -396,22 +399,36 @@ export class SceneManager {
           
           const mapInstance = this.mapInstances.get(componentId)!
           
-          // 使用 makeMapTextureCommand 工厂函数，而不是预编译的命令
-          const mapTextureCommandFactory = makeMapTextureCommand()
-          this.worldviewContext.onMount(mapInstance, mapTextureCommandFactory)
+          // 使用缓存的 MapTexture 命令工厂函数，确保复用同一个命令引用
+          if (!this.mapTextureCommandFactory) {
+            this.mapTextureCommandFactory = makeMapTextureCommand()
+          }
+          this.worldviewContext.onMount(mapInstance, this.mapTextureCommandFactory)
+          // 关键修复：总是从 mapConfigMap 读取最新配置，确保配置更新立即生效
+          // 即使数据更新在配置更新之后，也能使用最新的配置
+          // 使用展开运算符创建新对象，确保 regl 能检测到变化
+          const currentConfig = this.mapConfigMap.get(componentId) || {}
+          const colorScheme = currentConfig.colorScheme || 'map'
+          const alpha = currentConfig.alpha ?? 1.0
+          
+          
+          // 关键修复：创建新的 children 对象，确保 regl 能检测到 props 变化
+          // 如果使用相同的对象引用，regl 可能不会重新计算 uniform
+          const mapProps = {
+            textureData: textureData.textureData,
+            width: textureData.width,
+            height: textureData.height,
+            resolution: textureData.resolution,
+            origin: textureData.origin,
+            alpha: alpha,
+            colorScheme: colorScheme, // 确保传递字符串值
+            dataHash: textureData.dataHash
+          }
+          
           this.worldviewContext.registerDrawCall({
             instance: mapInstance,
-            reglCommand: mapTextureCommandFactory,
-            children: [{
-              textureData: textureData.textureData,
-              width: textureData.width,
-              height: textureData.height,
-              resolution: textureData.resolution,
-              origin: textureData.origin,
-              alpha: mapConfig.alpha ?? 1.0,
-              colorScheme: mapConfig.colorScheme || 'map',
-              dataHash: textureData.dataHash
-            }],
+            reglCommand: this.mapTextureCommandFactory,
+            children: [mapProps],
             layerIndex
           })
         }
@@ -921,7 +938,9 @@ export class SceneManager {
     const requestId = this.mapRequestIdCounter
     this.mapRequestIds.set(componentId, requestId)
     
-    // 获取该地图的配置
+    // 关键修复：不在 updateMap 中缓存配置，而是在 registerDrawCalls 时从 mapConfigMap 读取最新配置
+    // 这样可以确保即使配置在数据更新之后才更新，也能正确应用
+    // 注意：Worker 处理时仍然需要配置，但这里只用于 Worker 处理，不影响最终渲染
     const mapConfig = this.mapConfigMap.get(componentId) || {}
     const alpha = mapConfig.alpha ?? 0.7
     const colorScheme = mapConfig.colorScheme || 'map'
@@ -960,13 +979,15 @@ export class SceneManager {
       const worker = getDataProcessorWorker()
       
       // 使用 componentId 作为 requestId，这样相同 componentId 的新请求会自动取消旧请求
+      // 注意：Worker 处理时使用的配置只影响纹理数据的生成，不影响最终渲染时的颜色方案
+      // 最终渲染时的颜色方案在 registerDrawCalls 时从 mapConfigMap 读取
       const result = await worker.processMap({
         type: 'processMap',
         componentId,
         message: serializedMessage,
         config: {
           alpha,
-          colorScheme,
+          colorScheme, // 这个只用于 Worker 处理，不影响最终渲染
           maxOptimalSize: 200
         }
       })
@@ -1043,8 +1064,12 @@ export class SceneManager {
       
       // 批量更新：延迟注册绘制调用，避免频繁渲染
       // 使用 requestAnimationFrame 确保在下一帧才更新
+      // 关键修复：数据更新时，registerDrawCalls 会从 mapConfigMap 读取最新配置
+      // 这样即使配置在数据更新之后才更新，也能正确应用
       if (!this._pendingMapUpdate) {
         this._pendingMapUpdate = requestAnimationFrame(() => {
+          // 确保使用最新的配置重新注册绘制调用
+          // registerDrawCalls 会从 mapConfigMap 读取最新配置
           this.registerDrawCalls()
           this.worldviewContext.onDirty()
           this._pendingMapUpdate = null
@@ -1145,28 +1170,27 @@ export class SceneManager {
 
     // 更新该地图的配置
     const currentConfig = this.mapConfigMap.get(componentId) || {}
-    this.mapConfigMap.set(componentId, {
+    const newConfig = {
       ...currentConfig,
       ...options
-    })
+    }
+    this.mapConfigMap.set(componentId, newConfig)
+    
+    
+    // 检查地图数据是否存在（可能是纹理数据或三角形数据）
+    const hasMapData = this.mapDataMap.has(componentId) || this.mapTextureDataMap.has(componentId)
     
     // 如果该地图已有处理后的数据，直接重新注册绘制调用以应用新配置
-    // 注意：由于我们不再保存完整的原始消息，配置变化时只更新绘制顺序
-    // 如果需要重新处理数据（如 alpha、colorScheme），需要从 topicSubscriptionManager 重新获取消息
-    if (this.mapDataMap.has(componentId)) {
-      // 如果只是 drawBehind 变化，只需要重新注册绘制调用
-      // 如果是 alpha 或 colorScheme 变化，需要重新处理数据
-      if (options.alpha !== undefined || options.colorScheme !== undefined) {
-        // 需要重新处理数据，但原始消息可能已被清理
-        // 这种情况下，应该从 topicSubscriptionManager 重新获取最新消息
-        // 这里我们只更新绘制调用，让外部调用者负责重新获取消息
-        this.registerDrawCalls()
-        this.worldviewContext.onDirty()
-      } else {
-        // 只是 drawBehind 变化，只需要重新注册绘制调用
-        this.registerDrawCalls()
-        this.worldviewContext.onDirty()
-      }
+    // 注意：colorScheme 是在 GPU 着色器中计算的，不需要重新处理数据，只需要重新注册绘制调用
+    // alpha 也是通过 uniform 传递的，不需要重新处理数据
+    if (hasMapData) {
+      // 对于纹理渲染方式，colorScheme 和 alpha 都是通过 uniform 传递的
+      // 只需要重新注册绘制调用，新的配置会自动应用到着色器中
+      // 强制清除旧的绘制调用，确保新的配置被应用
+      this.unregisterAllDrawCalls()
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
+      
     }
   }
 

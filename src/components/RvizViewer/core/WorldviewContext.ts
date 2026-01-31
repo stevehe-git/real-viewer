@@ -220,7 +220,16 @@ export class WorldviewContext {
   }
 
   registerDrawCall(drawInput: DrawInput): void {
-    this._drawCalls.set(drawInput.instance, drawInput)
+    // 关键修复：如果 instance 已存在，更新整个 drawInput，确保 children 等 props 被更新
+    // 这样即使使用相同的 instance，也能正确更新配置
+    const existingDrawInput = this._drawCalls.get(drawInput.instance)
+    if (existingDrawInput) {
+      // 合并更新，确保新的 children 被使用
+      Object.assign(existingDrawInput, drawInput)
+    } else {
+      // 新实例，直接设置
+      this._drawCalls.set(drawInput.instance, drawInput)
+    }
     // 标记绘制调用已更新，需要重新排序
     this._drawCallsVersion++
     this._cachedSortedDrawCalls = null

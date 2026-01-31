@@ -433,10 +433,6 @@ watch(
 // 清理
 onUnmounted(() => {
   // 清理待处理的动画帧请求
-  if (mouseMoveFrame !== null) {
-    cancelAnimationFrame(mouseMoveFrame)
-    mouseMoveFrame = null
-  }
   if (wheelFrame !== null) {
     cancelAnimationFrame(wheelFrame)
     wheelFrame = null
