@@ -387,7 +387,23 @@ export class SceneManager {
     // 注册所有地图（使用纹理渲染 - 工业级优化）
     // 性能优化：使用纹理渲染替代大量三角形，性能提升 100-1000 倍
     if (this.mapTextureDataMap.size > 0) {
-      this.mapTextureDataMap.forEach((textureData, componentId) => {
+      // 关键修复：按 layerIndex 和 componentId 排序，确保渲染顺序一致
+      // 这样可以避免视图角度改变时的显示异常
+      const mapsArray = Array.from(this.mapTextureDataMap.entries())
+      // 按 layerIndex 排序，相同 layerIndex 的按 componentId 排序（确保顺序稳定）
+      mapsArray.sort(([idA], [idB]) => {
+        const configA = this.mapConfigMap.get(idA) || {}
+        const configB = this.mapConfigMap.get(idB) || {}
+        const layerA = configA.drawBehind ? -1 : 4
+        const layerB = configB.drawBehind ? -1 : 4
+        if (layerA !== layerB) {
+          return layerA - layerB
+        }
+        // 相同 layerIndex 时，按 componentId 排序（确保顺序稳定）
+        return idA.localeCompare(idB)
+      })
+      
+      mapsArray.forEach(([componentId, textureData]) => {
         if (textureData && textureData.textureData) {
           const mapConfig = this.mapConfigMap.get(componentId) || {}
           const layerIndex = mapConfig.drawBehind ? -1 : 4
@@ -406,11 +422,9 @@ export class SceneManager {
           this.worldviewContext.onMount(mapInstance, this.mapTextureCommandFactory)
           // 关键修复：总是从 mapConfigMap 读取最新配置，确保配置更新立即生效
           // 即使数据更新在配置更新之后，也能使用最新的配置
-          // 使用展开运算符创建新对象，确保 regl 能检测到变化
           const currentConfig = this.mapConfigMap.get(componentId) || {}
           const colorScheme = currentConfig.colorScheme || 'map'
           const alpha = currentConfig.alpha ?? 1.0
-          
           
           // 关键修复：创建新的 children 对象，确保 regl 能检测到 props 变化
           // 如果使用相同的对象引用，regl 可能不会重新计算 uniform

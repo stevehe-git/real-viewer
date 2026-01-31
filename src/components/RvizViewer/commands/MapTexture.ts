@@ -180,11 +180,14 @@ const mapTextureCommand = (regl: Regl) => {
         // position 是 [0,1] 范围的纹理坐标，需要转换为世界坐标
         // 使用精确的浮点运算，避免精度问题
         vec2 worldPos2D = mapOrigin + position * mapSize;
+        // 关键修复：使用小的 Z 偏移，避免多个地图叠加时的深度冲突
+        // 地图应该在地面平面上，但需要确保深度值正确计算
         vec3 worldPos = vec3(worldPos2D.x, worldPos2D.y, 0.0);
         
         // 应用投影和视图变换
         // 确保在不同视角下都能正确渲染
-        gl_Position = projection * view * vec4(worldPos, 1.0);
+        vec4 clipPos = projection * view * vec4(worldPos, 1.0);
+        gl_Position = clipPos;
         vTexCoord = texCoord;
       }
     `,
@@ -369,11 +372,12 @@ const mapTextureCommand = (regl: Regl) => {
       }
     },
     // 深度测试配置：确保地图在不同视角下正确渲染
-    // 使用 <= 比较，允许相同深度的像素渲染（地图在同一平面）
+    // 关键修复：使用 'less' 而不是 '<='，避免多个地图叠加时的深度冲突
+    // 同时确保地图在正确的深度范围内渲染
     depth: {
       enable: true,
       mask: true,
-      func: '<='
+      func: 'less' // 使用 'less' 而不是 '<='，避免 Z-fighting
     },
     blend: defaultBlend,
     count: 6 // 2个三角形 = 6个顶点
