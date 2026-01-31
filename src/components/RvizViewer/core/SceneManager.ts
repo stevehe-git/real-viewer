@@ -3,7 +3,7 @@
  * 基于 regl-worldview 的架构，使用命令系统管理场景对象
  */
 import type { Regl, PointCloudData, PathData, RenderOptions } from '../types'
-import { grid, lines, makePointsCommand, cylinders, triangles, makeArrowsCommand, makeMapTextureCommand } from '../commands'
+import { grid, lines, makePointsCommand, cylinders, makeArrowsCommand, makeMapTextureCommand } from '../commands'
 import { clearMapTextureCache, clearAllMapTextureCache } from '../commands/MapTexture'
 import { quat } from 'gl-matrix'
 import { tfManager } from '@/services/tfManager'
@@ -19,7 +19,6 @@ export class SceneManager {
   private pointsCommandWithWorldSpace: any = null // 带 useWorldSpaceSize 的 Points 命令
   private linesCommand: any = null
   private cylindersCommand: any = null
-  private trianglesCommand: any = null
   private arrowsCommand: any = null
   private arrowsCommandFactory: any = null // Arrows 命令工厂函数（用于 onMount 和 registerDrawCall）
 
@@ -37,7 +36,6 @@ export class SceneManager {
     maxColor?: { r: number; g: number; b: number }
   }>() // 每个 PointCloud2 的配置
   private pathsData: any[] = []
-  private mapDataMap = new Map<string, any>() // 支持多个地图，key 为 componentId（保留向后兼容）
   private mapTextureDataMap = new Map<string, any>() // 地图纹理数据，key 为 componentId
   private mapConfigMap = new Map<string, { alpha?: number; colorScheme?: string; drawBehind?: boolean }>() // 每个地图的配置
   private mapTextureCommandFactory: any = null // 缓存地图纹理命令工厂函数，避免重复创建
@@ -124,9 +122,6 @@ export class SceneManager {
 
     // 初始化 Lines 命令（用于路径）
     this.linesCommand = lines(this.reglContext)
-
-    // 初始化 Triangles 命令（用于地图，保留向后兼容）
-    this.trianglesCommand = triangles(this.reglContext)
     
     // MapTexture 命令不需要预编译，直接使用工厂函数
     // 它会在 registerDrawCall 时由 WorldviewContext 编译
@@ -446,46 +441,6 @@ export class SceneManager {
             layerIndex
           })
         }
-      })
-    }
-    
-    // 向后兼容：如果还有使用旧三角形方式的地图，继续渲染
-    if (this.trianglesCommand && this.mapDataMap.size > 0) {
-      const mapsByLayer = new Map<number, any[]>()
-      
-      this.mapDataMap.forEach((mapData, componentId) => {
-        // 跳过已经使用纹理渲染的地图
-        if (this.mapTextureDataMap.has(componentId)) {
-          return
-        }
-        
-        if (mapData) {
-          const mapConfig = this.mapConfigMap.get(componentId) || {}
-          const layerIndex = mapConfig.drawBehind ? -1 : 4
-          
-          if (!mapsByLayer.has(layerIndex)) {
-            mapsByLayer.set(layerIndex, [])
-          }
-          
-          const triangles = Array.isArray(mapData) ? mapData : [mapData]
-          mapsByLayer.get(layerIndex)!.push(...triangles)
-        }
-      })
-      
-      mapsByLayer.forEach((allTriangles, layerIndex) => {
-        const batchMapInstance = { 
-          displayName: `BatchMaps-Layer${layerIndex}`,
-          _isBatch: true,
-          _componentIds: Array.from(this.mapDataMap.keys())
-        }
-        
-        this.worldviewContext.onMount(batchMapInstance, triangles)
-        this.worldviewContext.registerDrawCall({
-          instance: batchMapInstance,
-          reglCommand: triangles,
-          children: allTriangles,
-          layerIndex
-        })
       })
     }
 
@@ -923,7 +878,7 @@ export class SceneManager {
     }
 
     if (!message || !message.info || !message.data || !Array.isArray(message.data)) {
-      this.mapDataMap.delete(componentId)
+      this.mapTextureDataMap.delete(componentId)
       this.mapRawMessageMap.delete(componentId)
       this.mapDataHashMap.delete(componentId)
       this.mapRequestIds.delete(componentId)
@@ -938,7 +893,7 @@ export class SceneManager {
     const resolution = info.resolution || 0.05
 
     if (width === 0 || height === 0 || resolution === 0) {
-      this.mapDataMap.delete(componentId)
+      this.mapTextureDataMap.delete(componentId)
       this.mapRawMessageMap.delete(componentId)
       this.mapDataHashMap.delete(componentId)
       this.mapRequestIds.delete(componentId)
@@ -1019,14 +974,13 @@ export class SceneManager {
       const lastHash = this.mapDataHashMap.get(componentId)
       
       // 如果数据没有变化，跳过更新（避免不必要的重新渲染）
-      if (lastHash === dataHash && this.mapDataMap.has(componentId)) {
+      if (lastHash === dataHash && this.mapTextureDataMap.has(componentId)) {
         // 数据未变化，取消请求但不清除现有数据
         return
       }
       
-      // 保存处理后的数据（优先使用纹理数据）
+      // 保存处理后的纹理数据
       if (result.textureData) {
-        // 使用新的纹理渲染方式
         this.mapTextureDataMap.set(componentId, {
           textureData: result.textureData,
           width: result.width,
@@ -1035,12 +989,6 @@ export class SceneManager {
           origin: result.origin,
           dataHash: result.dataHash || dataHash
         })
-        // 清除旧的三角形数据（如果存在）
-        this.mapDataMap.delete(componentId)
-      } else if (result.triangles) {
-        // 向后兼容：如果没有纹理数据，使用三角形
-        this.mapDataMap.set(componentId, result.triangles)
-        this.mapTextureDataMap.delete(componentId)
       }
       this.mapDataHashMap.set(componentId, dataHash)
       
@@ -1052,7 +1000,7 @@ export class SceneManager {
         // 检查所有地图，如果有任何一个大地图，就标记为有大地图
         let hasAnyLargeMap = isLargeMap
         if (!hasAnyLargeMap) {
-          this.mapDataMap.forEach((_, id) => {
+          this.mapTextureDataMap.forEach((_, id) => {
             const msg = this.mapRawMessageMap.get(id)
             if (msg?.info) {
               const area = (msg.info.width || 0) * (msg.info.height || 0)
@@ -1128,11 +1076,10 @@ export class SceneManager {
     }
     
     // 清理所有相关数据
-    this.mapDataMap.delete(componentId)
-    this.mapTextureDataMap.delete(componentId) // 清理纹理数据
+    this.mapTextureDataMap.delete(componentId)
     this.mapConfigMap.delete(componentId)
     this.mapRawMessageMap.delete(componentId)
-    this.mapDataHashMap.delete(componentId) // 清理数据哈希
+    this.mapDataHashMap.delete(componentId)
     this.mapInstances.delete(componentId)
     this.mapRequestIds.delete(componentId) // 清理请求 ID
     
@@ -1149,11 +1096,10 @@ export class SceneManager {
     clearAllMapTextureCache()
     
     // 清理所有相关数据
-    this.mapDataMap.clear()
-    this.mapTextureDataMap.clear() // 清理所有纹理数据
+    this.mapTextureDataMap.clear()
     this.mapConfigMap.clear()
     this.mapRawMessageMap.clear()
-    this.mapDataHashMap.clear() // 清理所有数据哈希
+    this.mapDataHashMap.clear()
     this.mapInstances.clear()
     this.mapRequestIds.clear() // 清理所有请求 ID
     
@@ -1191,8 +1137,8 @@ export class SceneManager {
     this.mapConfigMap.set(componentId, newConfig)
     
     
-    // 检查地图数据是否存在（可能是纹理数据或三角形数据）
-    const hasMapData = this.mapDataMap.has(componentId) || this.mapTextureDataMap.has(componentId)
+    // 检查地图数据是否存在
+    const hasMapData = this.mapTextureDataMap.has(componentId)
     
     // 如果该地图已有处理后的数据，直接重新注册绘制调用以应用新配置
     // 注意：colorScheme 是在 GPU 着色器中计算的，不需要重新处理数据，只需要重新注册绘制调用
@@ -1883,7 +1829,7 @@ export class SceneManager {
     this.cylindersCommand = null
     this.axesData = null
     this.gridData = null
-    this.mapDataMap.clear()
+    this.mapTextureDataMap.clear()
     this.mapConfigMap.clear()
     this.mapRawMessageMap.clear()
     this.mapInstances.clear()
