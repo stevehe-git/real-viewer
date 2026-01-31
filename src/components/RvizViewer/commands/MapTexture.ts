@@ -172,6 +172,7 @@ const mapTextureCommand = (regl: Regl) => {
       uniform mat4 projection, view;
       uniform vec2 mapSize; // 地图的宽度和高度（世界单位）
       uniform vec2 mapOrigin; // 地图原点位置（世界单位）
+      uniform float zOffset; // Z 轴偏移，用于多个地图叠加时的深度排序
 
       varying vec2 vTexCoord;
 
@@ -180,9 +181,10 @@ const mapTextureCommand = (regl: Regl) => {
         // position 是 [0,1] 范围的纹理坐标，需要转换为世界坐标
         // 使用精确的浮点运算，避免精度问题
         vec2 worldPos2D = mapOrigin + position * mapSize;
-        // 关键修复：使用小的 Z 偏移，避免多个地图叠加时的深度冲突
-        // 地图应该在地面平面上，但需要确保深度值正确计算
-        vec3 worldPos = vec3(worldPos2D.x, worldPos2D.y, 0.0);
+        // 关键修复：使用 Z 偏移，确保多个地图叠加时正确的渲染顺序
+        // 网格在 Z=0，地图在 Z>0（正常地图）或 Z<0（drawBehind）
+        // 偏移量足够小，视觉上仍然在同一平面
+        vec3 worldPos = vec3(worldPos2D.x, worldPos2D.y, zOffset);
         
         // 应用投影和视图变换
         // 确保在不同视角下都能正确渲染
@@ -345,6 +347,11 @@ const mapTextureCommand = (regl: Regl) => {
         const pos = origin.position || {}
         return [pos.x || 0, pos.y || 0]
       },
+      zOffset: (_context: any, props: any) => {
+        // Z 轴偏移，用于多个地图叠加时的深度排序
+        // 网格在 Z=0，地图在 Z>0（正常地图）或 Z<0（drawBehind）
+        return props.zOffset !== undefined ? props.zOffset : 0.0
+      },
       alpha: (_context: any, props: any) => {
         return props.alpha !== undefined ? props.alpha : 1.0
       },
@@ -372,12 +379,16 @@ const mapTextureCommand = (regl: Regl) => {
       }
     },
     // 深度测试配置：确保地图在不同视角下正确渲染
-    // 关键修复：使用 'less' 而不是 '<='，避免多个地图叠加时的深度冲突
-    // 同时确保地图在正确的深度范围内渲染
+    // 关键重构：多个地图叠加时的深度处理策略
+    // 1. 启用深度测试和深度写入，确保地图能正确与网格和其他地图交互
+    // 2. 使用 'lequal' 进行深度测试，允许相同或更近的深度渲染（配合 Z 偏移使用）
+    // 3. 通过 layerIndex 控制渲染顺序，网格在 layerIndex=5，地图在 layerIndex=4
+    // 4. 网格在 Z=0.0001，地图在 Z=0（正常）或 Z<0（drawBehind），通过 Z 偏移确保网格在地图上方
+    // 5. 多个地图之间通过 Z 偏移（0.001 间隔）确保正确的深度排序，避免深度冲突
     depth: {
       enable: true,
-      mask: true,
-      func: 'less' // 使用 'less' 而不是 '<='，避免 Z-fighting
+      mask: true, // 启用深度写入，确保地图能正确与网格和其他地图交互
+      func: 'lequal' // 使用 'lequal' 允许相同或更近的深度渲染，配合 Z 偏移确保正确的叠加
     },
     blend: defaultBlend,
     count: 6 // 2个三角形 = 6个顶点

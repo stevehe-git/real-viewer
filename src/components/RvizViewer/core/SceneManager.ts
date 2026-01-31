@@ -294,13 +294,14 @@ export class SceneManager {
     this.unregisterAllDrawCalls()
 
     // 注册 Grid
+    // 关键修复：网格使用更高的 layerIndex (5)，确保网格在地图之后渲染，始终可见
     if (this.gridVisible && this.gridCommand && this.gridData) {
       this.worldviewContext.onMount(this.gridInstance, grid)
       this.worldviewContext.registerDrawCall({
         instance: this.gridInstance,
         reglCommand: grid,
         children: this.gridData,
-        layerIndex: 0
+        layerIndex: 5 // 网格在地图之后渲染，确保网格始终可见
       })
     }
 
@@ -398,10 +399,26 @@ export class SceneManager {
         return idA.localeCompare(idB)
       })
       
+      // 关键重构：按顺序渲染地图，确保正确的叠加效果
+      // 通过 layerIndex 控制渲染顺序，后渲染的地图会显示在上层
+      // 为每个 layerIndex 组单独计算索引，确保 Z 偏移稳定
+      const drawBehindMaps: Array<[string, any]> = []
+      const normalMaps: Array<[string, any]> = []
+      
       mapsArray.forEach(([componentId, textureData]) => {
+        const mapConfig = this.mapConfigMap.get(componentId) || {}
+        if (mapConfig.drawBehind) {
+          drawBehindMaps.push([componentId, textureData])
+        } else {
+          normalMaps.push([componentId, textureData])
+        }
+      })
+      
+      // 先渲染 drawBehind 地图
+      drawBehindMaps.forEach(([componentId, textureData], index) => {
         if (textureData && textureData.textureData) {
           const mapConfig = this.mapConfigMap.get(componentId) || {}
-          const layerIndex = mapConfig.drawBehind ? -1 : 4
+          const layerIndex = -1
           
           // 为每个地图创建独立的 draw call（纹理渲染非常高效，不需要批量）
           if (!this.mapInstances.has(componentId)) {
@@ -415,11 +432,69 @@ export class SceneManager {
             this.mapTextureCommandFactory = makeMapTextureCommand()
           }
           this.worldviewContext.onMount(mapInstance, this.mapTextureCommandFactory)
+          
           // 关键修复：总是从 mapConfigMap 读取最新配置，确保配置更新立即生效
-          // 即使数据更新在配置更新之后，也能使用最新的配置
           const currentConfig = this.mapConfigMap.get(componentId) || {}
           const colorScheme = currentConfig.colorScheme || 'map'
           const alpha = currentConfig.alpha ?? 1.0
+          
+          // 关键重构：为每个地图分配 Z 偏移，确保多个地图叠加时正确的渲染顺序
+          // drawBehind 地图在 Z < 0（在网格下方，Z = -0.01 - index * 0.001）
+          // 网格在 Z = 0.0001，地图在 Z < 0，这样网格会在地图上方可见
+          const baseZ = -0.01
+          const zOffset = baseZ - index * 0.001
+          
+          const mapProps = {
+            textureData: textureData.textureData,
+            width: textureData.width,
+            height: textureData.height,
+            resolution: textureData.resolution,
+            origin: textureData.origin,
+            alpha: alpha,
+            colorScheme: colorScheme,
+            zOffset: zOffset,
+            dataHash: textureData.dataHash
+          }
+          
+          this.worldviewContext.registerDrawCall({
+            instance: mapInstance,
+            reglCommand: this.mapTextureCommandFactory,
+            children: [mapProps],
+            layerIndex
+          })
+        }
+      })
+      
+      // 再渲染正常地图
+      normalMaps.forEach(([componentId, textureData], index) => {
+        if (textureData && textureData.textureData) {
+          const mapConfig = this.mapConfigMap.get(componentId) || {}
+          const layerIndex = 4
+          
+          // 为每个地图创建独立的 draw call（纹理渲染非常高效，不需要批量）
+          if (!this.mapInstances.has(componentId)) {
+            this.mapInstances.set(componentId, { displayName: `Map-${componentId}` })
+          }
+          
+          const mapInstance = this.mapInstances.get(componentId)!
+          
+          // 使用缓存的 MapTexture 命令工厂函数，确保复用同一个命令引用
+          if (!this.mapTextureCommandFactory) {
+            this.mapTextureCommandFactory = makeMapTextureCommand()
+          }
+          this.worldviewContext.onMount(mapInstance, this.mapTextureCommandFactory)
+          
+          // 关键修复：总是从 mapConfigMap 读取最新配置，确保配置更新立即生效
+          const currentConfig = this.mapConfigMap.get(componentId) || {}
+          const colorScheme = currentConfig.colorScheme || 'map'
+          const alpha = currentConfig.alpha ?? 1.0
+          
+          // 关键重构：为每个地图分配 Z 偏移，确保多个地图叠加时正确的渲染顺序
+          // 正常地图在 Z = 0（与网格相同平面），按索引递增（Z = 0 + index * 0.001）
+          // 网格在 Z = 0.0001，地图在 Z = 0，这样网格会在地图上方可见
+          // 偏移量足够小，视觉上仍然在同一平面，但足以避免多个地图之间的深度冲突
+          const baseZ = 0.0
+          const zOffset = baseZ + index * 0.001
           
           // 关键修复：创建新的 children 对象，确保 regl 能检测到 props 变化
           // 如果使用相同的对象引用，regl 可能不会重新计算 uniform
@@ -431,6 +506,7 @@ export class SceneManager {
             origin: textureData.origin,
             alpha: alpha,
             colorScheme: colorScheme, // 确保传递字符串值
+            zOffset: zOffset, // Z 轴偏移，确保正确的渲染顺序
             dataHash: textureData.dataHash
           }
           

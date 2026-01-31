@@ -115,6 +115,9 @@ export function grid(regl: Regl) {
     void main () {
       fragColor = color;
       vec3 p = applyPose(point);
+      // 关键修复：网格在 Z=0.0001，确保网格在地图（Z=0）上方可见
+      // 这个微小的偏移确保网格不会被地图遮挡
+      p.z = p.z + 0.0001;
       gl_Position = projection * view * vec4(p, 1);
     }
     `,
@@ -148,6 +151,13 @@ export function grid(regl: Regl) {
       const color = props.color || DEFAULT_GRID_COLOR
       const cachedData = generateGridData(regl, count, cellSize, color)
       return cachedData.totalCount
+    },
+    // 深度测试配置：确保网格能正确渲染
+    // 网格在 Z=0，启用深度测试和深度写入，确保网格能正确与地图交互
+    depth: {
+      enable: true,
+      mask: true, // 启用深度写入，确保网格能正确与地图交互
+      func: 'lequal' // 使用 'lequal' 允许相同或更近的深度渲染
     },
     blend: defaultBlend
   })
