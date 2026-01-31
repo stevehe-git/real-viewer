@@ -38,6 +38,7 @@ export class SceneManager {
   private pathsData: any[] = []
   private mapTextureDataMap = new Map<string, any>() // 地图纹理数据，key 为 componentId
   private mapConfigMap = new Map<string, { alpha?: number; colorScheme?: string; drawBehind?: boolean }>() // 每个地图的配置
+  private mapTopicMap = new Map<string, string>() // 每个地图的话题名称，key 为 componentId，用于排序
   private mapTextureCommandFactory: any = null // 缓存地图纹理命令工厂函数，避免重复创建
   private mapRawMessageMap = new Map<string, any>() // 保存每个地图的原始消息
   private mapDataHashMap = new Map<string, string>() // 地图数据哈希，用于检测数据是否变化
@@ -386,7 +387,8 @@ export class SceneManager {
       // 关键修复：按 layerIndex 和 componentId 排序，确保渲染顺序一致
       // 这样可以避免视图角度改变时的显示异常
       const mapsArray = Array.from(this.mapTextureDataMap.entries())
-      // 按 layerIndex 排序，相同 layerIndex 的按 componentId 排序（确保顺序稳定）
+      // 按 layerIndex 排序，相同 layerIndex 的按话题名称排序（确保顺序稳定，不受创建顺序影响）
+      // 关键修复：使用话题名称排序而不是 componentId，因为 componentId 包含时间戳，会受创建顺序影响
       mapsArray.sort(([idA], [idB]) => {
         const configA = this.mapConfigMap.get(idA) || {}
         const configB = this.mapConfigMap.get(idB) || {}
@@ -395,7 +397,15 @@ export class SceneManager {
         if (layerA !== layerB) {
           return layerA - layerB
         }
-        // 相同 layerIndex 时，按 componentId 排序（确保顺序稳定）
+        // 相同 layerIndex 时，按话题名称排序（确保顺序稳定，不受创建顺序影响）
+        // 如果话题名称相同或不存在，则按 componentId 排序作为后备
+        const topicA = this.mapTopicMap.get(idA) || idA
+        const topicB = this.mapTopicMap.get(idB) || idB
+        const topicCompare = topicA.localeCompare(topicB)
+        if (topicCompare !== 0) {
+          return topicCompare
+        }
+        // 话题名称相同时，按 componentId 排序
         return idA.localeCompare(idB)
       })
       
@@ -1158,6 +1168,7 @@ export class SceneManager {
     this.mapDataHashMap.delete(componentId)
     this.mapInstances.delete(componentId)
     this.mapRequestIds.delete(componentId) // 清理请求 ID
+    this.mapTopicMap.delete(componentId) // 清理话题映射
     
     // 立即重新注册绘制调用，确保移除立即生效
     this.registerDrawCalls()
@@ -1178,6 +1189,7 @@ export class SceneManager {
     this.mapDataHashMap.clear()
     this.mapInstances.clear()
     this.mapRequestIds.clear() // 清理所有请求 ID
+    this.mapTopicMap.clear() // 清理所有话题映射
     
     // 注销所有地图的 draw call
     this.mapInstances.forEach((instance) => {
@@ -1198,6 +1210,7 @@ export class SceneManager {
     alpha?: number
     colorScheme?: string
     drawBehind?: boolean
+    topic?: string // 添加 topic 选项，用于排序
   }, componentId: string): void {
     if (!componentId) {
       console.warn('updateMapOptions: componentId is required')
@@ -1211,6 +1224,11 @@ export class SceneManager {
       ...options
     }
     this.mapConfigMap.set(componentId, newConfig)
+    
+    // 如果提供了 topic，保存到 mapTopicMap 中，用于排序
+    if (options.topic !== undefined) {
+      this.mapTopicMap.set(componentId, options.topic)
+    }
     
     
     // 检查地图数据是否存在
@@ -1239,6 +1257,7 @@ export class SceneManager {
     alpha?: number
     colorScheme?: string
     drawBehind?: boolean
+    topic?: string // 添加 topic 选项，用于排序
   }, componentId: string): void {
     this.updateMapOptions(options, componentId)
   }

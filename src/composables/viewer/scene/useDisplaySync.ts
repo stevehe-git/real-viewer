@@ -174,7 +174,8 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
         context.setMapOptions({
           alpha: options.alpha,
           colorScheme: options.colorScheme,
-          drawBehind: options.drawBehind
+          drawBehind: options.drawBehind,
+          topic: options.topic // 传递话题名称，用于排序
         }, mapComponent.id)
 
         // 获取地图数据并更新
@@ -556,7 +557,8 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
               context.setMapOptions({
                 alpha: options.alpha,
                 colorScheme: options.colorScheme,
-                drawBehind: options.drawBehind
+                drawBehind: options.drawBehind,
+                topic: options.topic // 传递话题名称，用于排序
               }, componentId)
             }
             
