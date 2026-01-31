@@ -83,6 +83,26 @@ export class SceneManager {
   private _pendingMapUpdate: number | null = null // 待处理的地图更新 RAF ID
   private mapRequestIds = new Map<string, number>() // 每个地图的当前请求 ID，用于取消过时的请求
   private mapRequestIdCounter = 0 // 请求 ID 计数器
+  
+  // 性能优化：复用数组和对象，减少内存分配
+  private _reusableArrays = {
+    allPointClouds: [] as any[],
+    allPointCloud2s: [] as any[],
+    allLaserScans: [] as any[],
+    mapsArray: [] as Array<[string, any]>,
+    drawBehindMaps: [] as Array<[string, any]>,
+    normalMaps: [] as Array<[string, any]>
+  }
+  
+  // 性能优化：复用批量实例对象
+  private _batchInstances = {
+    pointCloud: { displayName: 'BatchPointClouds', _isBatch: true },
+    pointCloud2: { displayName: 'BatchPointCloud2s', _isBatch: true },
+    laserScan: { displayName: 'BatchLaserScans', _isBatch: true }
+  }
+  
+  // 性能优化：复用mapProps对象池（按componentId缓存）
+  private _mapPropsCache = new Map<string, any>()
 
   constructor(reglContext: Regl, worldviewContext: any, options?: RenderOptions) {
     this.reglContext = reglContext
@@ -318,8 +338,11 @@ export class SceneManager {
     }
 
     // 注册所有 PointCloud（批量渲染）
+    // 性能优化：复用数组，避免每次创建新数组
     if (this.pointsCommandWithWorldSpace && this.pointCloudDataMap.size > 0) {
-      const allPointClouds: any[] = []
+      const allPointClouds = this._reusableArrays.allPointClouds
+      allPointClouds.length = 0 // 清空数组但保留引用，避免重新分配
+      
       this.pointCloudDataMap.forEach((pointCloudData) => {
         if (pointCloudData) {
           allPointClouds.push(pointCloudData)
@@ -327,10 +350,8 @@ export class SceneManager {
       })
       
       if (allPointClouds.length > 0) {
-        const batchPointCloudInstance = { 
-          displayName: 'BatchPointClouds',
-          _isBatch: true
-        }
+        // 性能优化：复用批量实例对象
+        const batchPointCloudInstance = this._batchInstances.pointCloud
         this.worldviewContext.onMount(batchPointCloudInstance, this.pointsCommandWithWorldSpace)
         this.worldviewContext.registerDrawCall({
           instance: batchPointCloudInstance,
@@ -342,8 +363,11 @@ export class SceneManager {
     }
 
     // 注册所有 PointCloud2（批量渲染）
+    // 性能优化：复用数组，避免每次创建新数组
     if (this.pointsCommandWithWorldSpace && this.pointCloud2DataMap.size > 0) {
-      const allPointCloud2s: any[] = []
+      const allPointCloud2s = this._reusableArrays.allPointCloud2s
+      allPointCloud2s.length = 0 // 清空数组但保留引用，避免重新分配
+      
       this.pointCloud2DataMap.forEach((pointCloud2Data) => {
         if (pointCloud2Data) {
           allPointCloud2s.push(pointCloud2Data)
@@ -351,10 +375,8 @@ export class SceneManager {
       })
       
       if (allPointCloud2s.length > 0) {
-        const batchPointCloud2Instance = { 
-          displayName: 'BatchPointCloud2s',
-          _isBatch: true
-        }
+        // 性能优化：复用批量实例对象
+        const batchPointCloud2Instance = this._batchInstances.pointCloud2
         this.worldviewContext.onMount(batchPointCloud2Instance, this.pointsCommandWithWorldSpace)
         this.worldviewContext.registerDrawCall({
           instance: batchPointCloud2Instance,
@@ -384,9 +406,14 @@ export class SceneManager {
     // 注册所有地图（使用纹理渲染 - 工业级优化）
     // 性能优化：使用纹理渲染替代大量三角形，性能提升 100-1000 倍
     if (this.mapTextureDataMap.size > 0) {
-      // 关键修复：按 layerIndex 和 componentId 排序，确保渲染顺序一致
-      // 这样可以避免视图角度改变时的显示异常
-      const mapsArray = Array.from(this.mapTextureDataMap.entries())
+      // 性能优化：复用数组，避免每次创建新数组
+      const mapsArray = this._reusableArrays.mapsArray
+      mapsArray.length = 0 // 清空数组但保留引用
+      
+      // 性能优化：直接遍历entries，避免Array.from创建新数组
+      for (const entry of this.mapTextureDataMap.entries()) {
+        mapsArray.push(entry)
+      }
       // 按 layerIndex 排序，相同 layerIndex 的按话题名称排序（确保顺序稳定，不受创建顺序影响）
       // 关键修复：使用话题名称排序而不是 componentId，因为 componentId 包含时间戳，会受创建顺序影响
       mapsArray.sort(([idA], [idB]) => {
@@ -412,8 +439,11 @@ export class SceneManager {
       // 关键重构：按顺序渲染地图，确保正确的叠加效果
       // 通过 layerIndex 控制渲染顺序，后渲染的地图会显示在上层
       // 为每个 layerIndex 组单独计算索引，确保 Z 偏移稳定
-      const drawBehindMaps: Array<[string, any]> = []
-      const normalMaps: Array<[string, any]> = []
+      // 性能优化：复用数组，避免每次创建新数组
+      const drawBehindMaps = this._reusableArrays.drawBehindMaps
+      const normalMaps = this._reusableArrays.normalMaps
+      drawBehindMaps.length = 0
+      normalMaps.length = 0
       
       mapsArray.forEach(([componentId, textureData]) => {
         const mapConfig = this.mapConfigMap.get(componentId) || {}
@@ -427,7 +457,6 @@ export class SceneManager {
       // 先渲染 drawBehind 地图
       drawBehindMaps.forEach(([componentId, textureData], index) => {
         if (textureData && textureData.textureData) {
-          const mapConfig = this.mapConfigMap.get(componentId) || {}
           const layerIndex = -1
           
           // 为每个地图创建独立的 draw call（纹理渲染非常高效，不需要批量）
@@ -454,16 +483,29 @@ export class SceneManager {
           const baseZ = -0.01
           const zOffset = baseZ - index * 0.001
           
-          const mapProps = {
-            textureData: textureData.textureData,
-            width: textureData.width,
-            height: textureData.height,
-            resolution: textureData.resolution,
-            origin: textureData.origin,
-            alpha: alpha,
-            colorScheme: colorScheme,
-            zOffset: zOffset,
-            dataHash: textureData.dataHash
+          // 性能优化：复用mapProps对象，只在数据变化时更新
+          let mapProps = this._mapPropsCache.get(componentId)
+          if (!mapProps || mapProps.dataHash !== textureData.dataHash || 
+              mapProps.alpha !== alpha || mapProps.colorScheme !== colorScheme || 
+              mapProps.zOffset !== zOffset) {
+            // 数据变化，创建新对象
+            mapProps = {
+              textureData: textureData.textureData,
+              width: textureData.width,
+              height: textureData.height,
+              resolution: textureData.resolution,
+              origin: textureData.origin,
+              alpha: alpha,
+              colorScheme: colorScheme,
+              zOffset: zOffset,
+              dataHash: textureData.dataHash
+            }
+            this._mapPropsCache.set(componentId, mapProps)
+          } else {
+            // 数据未变化，更新可能变化的字段（复用对象）
+            mapProps.alpha = alpha
+            mapProps.colorScheme = colorScheme
+            mapProps.zOffset = zOffset
           }
           
           this.worldviewContext.registerDrawCall({
@@ -478,7 +520,6 @@ export class SceneManager {
       // 再渲染正常地图
       normalMaps.forEach(([componentId, textureData], index) => {
         if (textureData && textureData.textureData) {
-          const mapConfig = this.mapConfigMap.get(componentId) || {}
           const layerIndex = 4
           
           // 为每个地图创建独立的 draw call（纹理渲染非常高效，不需要批量）
@@ -506,18 +547,29 @@ export class SceneManager {
           const baseZ = 0.0
           const zOffset = baseZ + index * 0.001
           
-          // 关键修复：创建新的 children 对象，确保 regl 能检测到 props 变化
-          // 如果使用相同的对象引用，regl 可能不会重新计算 uniform
-          const mapProps = {
-            textureData: textureData.textureData,
-            width: textureData.width,
-            height: textureData.height,
-            resolution: textureData.resolution,
-            origin: textureData.origin,
-            alpha: alpha,
-            colorScheme: colorScheme, // 确保传递字符串值
-            zOffset: zOffset, // Z 轴偏移，确保正确的渲染顺序
-            dataHash: textureData.dataHash
+          // 性能优化：复用mapProps对象，只在数据变化时更新
+          let mapProps = this._mapPropsCache.get(componentId)
+          if (!mapProps || mapProps.dataHash !== textureData.dataHash || 
+              mapProps.alpha !== alpha || mapProps.colorScheme !== colorScheme || 
+              mapProps.zOffset !== zOffset) {
+            // 数据变化，创建新对象
+            mapProps = {
+              textureData: textureData.textureData,
+              width: textureData.width,
+              height: textureData.height,
+              resolution: textureData.resolution,
+              origin: textureData.origin,
+              alpha: alpha,
+              colorScheme: colorScheme, // 确保传递字符串值
+              zOffset: zOffset, // Z 轴偏移，确保正确的渲染顺序
+              dataHash: textureData.dataHash
+            }
+            this._mapPropsCache.set(componentId, mapProps)
+          } else {
+            // 数据未变化，更新可能变化的字段（复用对象）
+            mapProps.alpha = alpha
+            mapProps.colorScheme = colorScheme
+            mapProps.zOffset = zOffset
           }
           
           this.worldviewContext.registerDrawCall({
@@ -531,8 +583,11 @@ export class SceneManager {
     }
 
     // 注册所有 LaserScan（批量渲染）
+    // 性能优化：复用数组，避免每次创建新数组
     if (this.pointsCommand && this.laserScanDataMap.size > 0) {
-      const allLaserScans: any[] = []
+      const allLaserScans = this._reusableArrays.allLaserScans
+      allLaserScans.length = 0 // 清空数组但保留引用，避免重新分配
+      
       this.laserScanDataMap.forEach((laserScanData) => {
         if (laserScanData) {
           allLaserScans.push(laserScanData)
@@ -540,10 +595,8 @@ export class SceneManager {
       })
       
       if (allLaserScans.length > 0) {
-        const batchLaserScanInstance = { 
-          displayName: 'BatchLaserScans',
-          _isBatch: true
-        }
+        // 性能优化：复用批量实例对象
+        const batchLaserScanInstance = this._batchInstances.laserScan
         // 使用同一个命令引用（pointsCommandWithWorldSpace）
         this.worldviewContext.onMount(batchLaserScanInstance, this.pointsCommandWithWorldSpace)
         this.worldviewContext.registerDrawCall({
@@ -625,16 +678,19 @@ export class SceneManager {
     })
     // 清除批量渲染实例（如果有）
     // 批量实例的 displayName 以 "Batch" 开头
-    const allDrawCalls = Array.from(this.worldviewContext._drawCalls?.values() || [])
-    allDrawCalls.forEach((drawCall: any) => {
-      if (drawCall?.instance?._isBatch || 
-          drawCall?.instance?.displayName?.startsWith('BatchMaps-') ||
-          drawCall?.instance?.displayName?.startsWith('BatchLaserScans') ||
-          drawCall?.instance?.displayName?.startsWith('BatchPointClouds') ||
-          drawCall?.instance?.displayName?.startsWith('BatchPointCloud2s')) {
-        this.worldviewContext.onUnmount(drawCall.instance)
+    // 性能优化：直接遍历Map，避免Array.from创建新数组
+    const drawCalls = this.worldviewContext._drawCalls
+    if (drawCalls) {
+      for (const drawCall of drawCalls.values()) {
+        if (drawCall?.instance?._isBatch || 
+            drawCall?.instance?.displayName?.startsWith('BatchMaps-') ||
+            drawCall?.instance?.displayName?.startsWith('BatchLaserScans') ||
+            drawCall?.instance?.displayName?.startsWith('BatchPointClouds') ||
+            drawCall?.instance?.displayName?.startsWith('BatchPointCloud2s')) {
+          this.worldviewContext.onUnmount(drawCall.instance)
+        }
       }
-    })
+    }
     
     // 清除 LaserScan、PointCloud、PointCloud2 实例
     this.laserScanInstances.forEach((instance) => {
@@ -1022,11 +1078,12 @@ export class SceneManager {
             }
           }
         },
-        // 确保 data 是可序列化的数组（转换为普通数组）
-        data: Array.isArray(message.data) 
-          ? Array.from(message.data) 
+        // 性能优化：避免不必要的数组复制
+        // 如果已经是普通数组，直接使用；否则才转换
+        data: Array.isArray(message.data) && !(message.data instanceof Uint8Array) && !(message.data instanceof Int8Array)
+          ? message.data // 已经是普通数组，直接使用
           : (message.data instanceof Uint8Array || message.data instanceof Int8Array)
-            ? Array.from(message.data)
+            ? Array.from(message.data) // TypedArray需要转换
             : []
       }
       
@@ -1169,6 +1226,7 @@ export class SceneManager {
     this.mapInstances.delete(componentId)
     this.mapRequestIds.delete(componentId) // 清理请求 ID
     this.mapTopicMap.delete(componentId) // 清理话题映射
+    this._mapPropsCache.delete(componentId) // 性能优化：清理mapProps缓存
     
     // 立即重新注册绘制调用，确保移除立即生效
     this.registerDrawCalls()
@@ -1190,6 +1248,7 @@ export class SceneManager {
     this.mapInstances.clear()
     this.mapRequestIds.clear() // 清理所有请求 ID
     this.mapTopicMap.clear() // 清理所有话题映射
+    this._mapPropsCache.clear() // 性能优化：清理所有mapProps缓存
     
     // 注销所有地图的 draw call
     this.mapInstances.forEach((instance) => {
