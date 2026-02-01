@@ -19,6 +19,7 @@ export { default as GLText, makeGLTextCommand, glText, generateAtlas, type TextM
 export { default as GLTFScene, makeGLTFSceneCommand, gltfScene } from './GLTFScene'
 export { default as DrawPolygons, makeDrawPolygonsCommand, drawPolygons, Polygon, PolygonPoint } from './DrawPolygon'
 export { default as PolygonBuilder } from './DrawPolygon/PolygonBuilder'
+export { default as GLImage, makeGLImageCommand, glImage, clearImageTextureCache, clearAllImageTextureCache } from './GLImage'
 export * from './utils/commandUtils'
 export { default as withRenderStateOverrides } from './utils/withRenderStateOverrides'
 export { default as fromGeometry } from './utils/fromGeometry'
