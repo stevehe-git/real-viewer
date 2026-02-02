@@ -1094,8 +1094,39 @@ export class SceneManager {
     const alpha = currentConfig.alpha ?? 1.0
     const drawBehind = currentConfig.drawBehind || false
 
-    // 所有地图在同一 Z 平面，通过 alpha 混合显示
-    const zOffset = drawBehind ? -0.01 : 0.0
+    // 参照 RViz：为每个地图分配唯一的 Z 偏移，避免深度冲突和渲染不完全
+    // 策略：
+    // 1. drawBehind 地图在 Z < 0，按添加顺序分配 -0.01, -0.02, -0.03...
+    // 2. 正常地图在 Z >= 0，按添加顺序分配 0.0, 0.001, 0.002...
+    // 3. 使用足够大的间隔（0.001）避免浮点精度问题导致的 Z-fighting
+    // 4. 确保每个地图有唯一的深度值，避免在不同视角下出现渲染不完全
+    const allMapIds = Array.from(this.mapPropsMap.keys())
+    
+    // 分离 drawBehind 和正常地图
+    const drawBehindMaps: string[] = []
+    const normalMaps: string[] = []
+    
+    for (const id of allMapIds) {
+      const config = this.mapConfigMap.get(id) || {}
+      if (config.drawBehind) {
+        drawBehindMaps.push(id)
+      } else {
+        normalMaps.push(id)
+      }
+    }
+    
+    let zOffset: number
+    if (drawBehind) {
+      // drawBehind 地图：在 Z < 0，按在 drawBehindMaps 中的索引分配
+      // 第一个 drawBehind 地图在 -0.01，第二个在 -0.02，以此类推
+      const drawBehindIndex = drawBehindMaps.indexOf(componentId)
+      zOffset = -0.01 - drawBehindIndex * 0.001
+    } else {
+      // 正常地图：在 Z >= 0，按在 normalMaps 中的索引分配
+      // 第一个正常地图在 0.0，第二个在 0.001，以此类推
+      const normalIndex = normalMaps.indexOf(componentId)
+      zOffset = normalIndex * 0.001
+    }
 
     // 创建或更新 mapProps
     let mapProps = this._mapPropsCache.get(componentId)
@@ -1151,9 +1182,20 @@ export class SceneManager {
       
       // 关键优化：只调用一次 camera.draw，在回调内部依次渲染所有地图
       // 这样 N 个地图只调用 1 次 camera.draw，而不是 N 次，大幅降低 CPU 使用率
+      // 参照 RViz：按 Z 偏移排序，确保正确的渲染顺序（从后到前）
       camera.draw(cameraState, () => {
-        // 依次渲染所有地图
-        for (const [componentId, mapProps] of this.mapPropsMap.entries()) {
+        // 将地图按 Z 偏移排序：Z 值小的先渲染（在后面），Z 值大的后渲染（在前面）
+        // 这确保了正确的深度排序，避免渲染不完全的问题
+        const sortedMaps = Array.from(this.mapPropsMap.entries())
+          .sort((a, b) => {
+            const zA = a[1].zOffset || 0
+            const zB = b[1].zOffset || 0
+            return zA - zB // 升序：Z 值小的在前（先渲染）
+          })
+        
+        // 依次渲染所有地图（按 Z 偏移从后到前）
+        // 参照 RViz：确保每个地图都能完整渲染，不会因为深度冲突导致部分区域不显示
+        for (const [componentId, mapProps] of sortedMaps) {
           const mapCommand = this.mapCommands.get(componentId)
           if (mapCommand && mapProps) {
             mapCommand([mapProps], false)
@@ -1164,6 +1206,22 @@ export class SceneManager {
     
     // 注册统一的地图渲染回调
     this.worldviewContext.registerPaintCallback(this.mapRenderCallback)
+  }
+  
+  /**
+   * 重新计算所有地图的 Z 偏移（当地图配置变化时调用）
+   * 确保所有地图都有唯一的深度值，避免深度冲突和渲染不完全
+   */
+  private recalculateAllMapZOffsets(): void {
+    // 重新计算所有地图的 Z 偏移
+    // 当 drawBehind 配置变化时，需要重新计算所有地图的 Z 偏移
+    for (const componentId of this.mapPropsMap.keys()) {
+      const textureData = this.mapTextureDataMap.get(componentId)
+      if (textureData) {
+        // 重新调用 updateMapDrawCall 来更新 Z 偏移
+        this.updateMapDrawCall(componentId)
+      }
+    }
   }
   
   /**
@@ -1260,10 +1318,12 @@ export class SceneManager {
 
     // 更新该地图的配置
     const currentConfig = this.mapConfigMap.get(componentId) || {}
+    const oldDrawBehind = currentConfig.drawBehind || false
     const newConfig = {
       ...currentConfig,
       ...options
     }
+    const newDrawBehind = newConfig.drawBehind || false
     this.mapConfigMap.set(componentId, newConfig)
     
     // 如果提供了 topic，保存到 mapTopicMap 中，用于排序
@@ -1271,14 +1331,17 @@ export class SceneManager {
       this.mapTopicMap.set(componentId, options.topic)
     }
     
-    
-    // 参照 RViz：配置变化时，只更新该地图的 draw call，不影响其他地图
     // 检查地图数据是否存在
     const hasMapData = this.mapTextureDataMap.has(componentId)
     
-    // 如果该地图已有处理后的数据，只更新该地图的 draw call
-    // 注意：colorScheme 和 alpha 都是通过 uniform 传递的，不需要重新处理数据
-    if (hasMapData) {
+    // 如果 drawBehind 配置变化，需要重新计算所有地图的 Z 偏移
+    // 因为 Z 偏移是基于所有地图的 drawBehind 状态计算的
+    if (oldDrawBehind !== newDrawBehind && hasMapData) {
+      // 重新计算所有地图的 Z 偏移
+      this.recalculateAllMapZOffsets()
+    } else if (hasMapData) {
+      // 其他配置变化（alpha、colorScheme），只更新该地图的 draw call
+      // 注意：colorScheme 和 alpha 都是通过 uniform 传递的，不需要重新处理数据
       this.updateMapDrawCall(componentId)
     }
   }
