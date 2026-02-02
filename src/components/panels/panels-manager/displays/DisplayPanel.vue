@@ -78,6 +78,7 @@
             <component
               :is="getConfigComponent(component.type)"
               :component-id="component.id"
+              :component-type="component.type"
               :options="component.options || {}"
             />
           </div>

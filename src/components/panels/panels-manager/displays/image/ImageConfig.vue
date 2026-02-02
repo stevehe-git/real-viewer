@@ -2,11 +2,10 @@
   <div class="config-content">
     <div class="config-row">
       <span class="config-label">Topic</span>
-      <el-input
+      <TopicSelector
         :model-value="options.topic"
         @update:model-value="update('topic', $event)"
-        size="small"
-        class="config-value"
+        :component-type="componentType"
       />
     </div>
     <div class="config-row">
@@ -37,13 +36,18 @@
 
 <script setup lang="ts">
 import { useRvizStore } from '@/stores/rviz'
+import TopicSelector from '../common/TopicSelector.vue'
 
 interface Props {
   componentId: string
+  componentType?: string
   options: Record<string, any>
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  componentType: 'image'
+})
+
 const rvizStore = useRvizStore()
 
 const update = (key: string, value: any) => {
