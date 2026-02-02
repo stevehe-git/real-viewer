@@ -39,9 +39,9 @@ export class SceneManager {
   private mapTextureDataMap = new Map<string, any>() // 地图纹理数据，key 为 componentId
   private mapConfigMap = new Map<string, { alpha?: number; colorScheme?: string; drawBehind?: boolean }>() // 每个地图的配置
   private mapTopicMap = new Map<string, string>() // 每个地图的话题名称，key 为 componentId，用于排序
-  private mapTextureCommandFactory: any = null // 缓存地图纹理命令工厂函数，避免重复创建
   private mapRawMessageMap = new Map<string, any>() // 保存每个地图的原始消息
   private mapDataHashMap = new Map<string, string>() // 地图数据哈希，用于检测数据是否变化
+  private mapMessageHashMap = new Map<string, string>() // 地图消息完整哈希（包含数据内容），用于精确检测变化
   private laserScanDataMap = new Map<string, any>() // 支持多个 LaserScan，key 为 componentId
   private laserScanConfigMap = new Map<string, { 
     style?: string
@@ -80,7 +80,6 @@ export class SceneManager {
     arrows: any[]
   } | null = null
   private tfDataHash: string = '' // 用于检测数据是否变化
-  private _pendingMapUpdate: number | null = null // 待处理的地图更新 RAF ID
   private mapRequestIds = new Map<string, number>() // 每个地图的当前请求 ID，用于取消过时的请求
   private mapRequestIdCounter = 0 // 请求 ID 计数器
   
@@ -144,10 +143,7 @@ export class SceneManager {
     // 初始化 Lines 命令（用于路径）
     this.linesCommand = lines(this.reglContext)
     
-    // MapTexture 命令不需要预编译，直接使用工厂函数
-    // 它会在 registerDrawCall 时由 WorldviewContext 编译
-    // 保存 MapTexture 命令工厂函数引用，确保 onMount 和 registerDrawCall 使用同一个引用
-    this.mapTextureCommandFactory = makeMapTextureCommand()
+    // 地图命令现在为每个地图独立创建，不再需要全局工厂函数
 
     // 初始化 Arrows 命令（用于 TF 箭头）
     this.arrowsCommand = makeArrowsCommand()(this.reglContext)
@@ -299,7 +295,10 @@ export class SceneManager {
   private axesInstance: any = { displayName: 'Axes' }
   private pointsInstance: any = { displayName: 'Points' }
   private pathInstances: any[] = []
-  private mapInstances = new Map<string, any>() // 每个地图的实例，key 为 componentId
+  // 彻底重构：参照 RViz，所有地图共享一次 camera.draw 调用，在回调内部依次渲染
+  private mapCommands = new Map<string, any>() // 每个地图的独立 regl command 实例
+  private mapPropsMap = new Map<string, any>() // 每个地图的渲染 props
+  private mapRenderCallback: (() => void) | null = null // 统一的地图渲染回调（所有地图共享）
   private laserScanInstances = new Map<string, any>() // 每个 LaserScan 的实例，key 为 componentId
   private pointCloudInstances = new Map<string, any>() // 每个 PointCloud 的实例，key 为 componentId
   private pointCloud2Instances = new Map<string, any>() // 每个 PointCloud2 的实例，key 为 componentId
@@ -403,184 +402,9 @@ export class SceneManager {
       }
     })
 
-    // 注册所有地图（使用纹理渲染 - 工业级优化）
-    // 性能优化：使用纹理渲染替代大量三角形，性能提升 100-1000 倍
-    if (this.mapTextureDataMap.size > 0) {
-      // 性能优化：复用数组，避免每次创建新数组
-      const mapsArray = this._reusableArrays.mapsArray
-      mapsArray.length = 0 // 清空数组但保留引用
-      
-      // 性能优化：直接遍历entries，避免Array.from创建新数组
-      for (const entry of this.mapTextureDataMap.entries()) {
-        mapsArray.push(entry)
-      }
-      // 按 layerIndex 排序，相同 layerIndex 的按话题名称排序（确保顺序稳定，不受创建顺序影响）
-      // 关键修复：使用话题名称排序而不是 componentId，因为 componentId 包含时间戳，会受创建顺序影响
-      mapsArray.sort(([idA], [idB]) => {
-        const configA = this.mapConfigMap.get(idA) || {}
-        const configB = this.mapConfigMap.get(idB) || {}
-        const layerA = configA.drawBehind ? -1 : 4
-        const layerB = configB.drawBehind ? -1 : 4
-        if (layerA !== layerB) {
-          return layerA - layerB
-        }
-        // 相同 layerIndex 时，按话题名称排序（确保顺序稳定，不受创建顺序影响）
-        // 如果话题名称相同或不存在，则按 componentId 排序作为后备
-        const topicA = this.mapTopicMap.get(idA) || idA
-        const topicB = this.mapTopicMap.get(idB) || idB
-        const topicCompare = topicA.localeCompare(topicB)
-        if (topicCompare !== 0) {
-          return topicCompare
-        }
-        // 话题名称相同时，按 componentId 排序
-        return idA.localeCompare(idB)
-      })
-      
-      // 关键重构：按顺序渲染地图，确保正确的叠加效果
-      // 通过 layerIndex 控制渲染顺序，后渲染的地图会显示在上层
-      // 为每个 layerIndex 组单独计算索引，确保 Z 偏移稳定
-      // 性能优化：复用数组，避免每次创建新数组
-      const drawBehindMaps = this._reusableArrays.drawBehindMaps
-      const normalMaps = this._reusableArrays.normalMaps
-      drawBehindMaps.length = 0
-      normalMaps.length = 0
-      
-      mapsArray.forEach(([componentId, textureData]) => {
-        const mapConfig = this.mapConfigMap.get(componentId) || {}
-        if (mapConfig.drawBehind) {
-          drawBehindMaps.push([componentId, textureData])
-        } else {
-          normalMaps.push([componentId, textureData])
-        }
-      })
-      
-      // 先渲染 drawBehind 地图
-      drawBehindMaps.forEach(([componentId, textureData], index) => {
-        if (textureData && textureData.textureData) {
-          const layerIndex = -1
-          
-          // 为每个地图创建独立的 draw call（纹理渲染非常高效，不需要批量）
-          if (!this.mapInstances.has(componentId)) {
-            this.mapInstances.set(componentId, { displayName: `Map-${componentId}` })
-          }
-          
-          const mapInstance = this.mapInstances.get(componentId)!
-          
-          // 使用缓存的 MapTexture 命令工厂函数，确保复用同一个命令引用
-          if (!this.mapTextureCommandFactory) {
-            this.mapTextureCommandFactory = makeMapTextureCommand()
-          }
-          this.worldviewContext.onMount(mapInstance, this.mapTextureCommandFactory)
-          
-          // 关键修复：总是从 mapConfigMap 读取最新配置，确保配置更新立即生效
-          const currentConfig = this.mapConfigMap.get(componentId) || {}
-          const colorScheme = currentConfig.colorScheme || 'map'
-          const alpha = currentConfig.alpha ?? 1.0
-          
-          // 关键重构：为每个地图分配 Z 偏移，确保多个地图叠加时正确的渲染顺序
-          // drawBehind 地图在 Z < 0（在网格下方，Z = -0.01 - index * 0.001）
-          // 网格在 Z = 0.0001，地图在 Z < 0，这样网格会在地图上方可见
-          const baseZ = -0.01
-          const zOffset = baseZ - index * 0.001
-          
-          // 性能优化：复用mapProps对象，只在数据变化时更新
-          let mapProps = this._mapPropsCache.get(componentId)
-          if (!mapProps || mapProps.dataHash !== textureData.dataHash || 
-              mapProps.alpha !== alpha || mapProps.colorScheme !== colorScheme || 
-              mapProps.zOffset !== zOffset) {
-            // 数据变化，创建新对象
-            mapProps = {
-              textureData: textureData.textureData,
-              width: textureData.width,
-              height: textureData.height,
-              resolution: textureData.resolution,
-              origin: textureData.origin,
-              alpha: alpha,
-              colorScheme: colorScheme,
-              zOffset: zOffset,
-              dataHash: textureData.dataHash
-            }
-            this._mapPropsCache.set(componentId, mapProps)
-          } else {
-            // 数据未变化，更新可能变化的字段（复用对象）
-            mapProps.alpha = alpha
-            mapProps.colorScheme = colorScheme
-            mapProps.zOffset = zOffset
-          }
-          
-          this.worldviewContext.registerDrawCall({
-            instance: mapInstance,
-            reglCommand: this.mapTextureCommandFactory,
-            children: [mapProps],
-            layerIndex
-          })
-        }
-      })
-      
-      // 再渲染正常地图
-      normalMaps.forEach(([componentId, textureData], index) => {
-        if (textureData && textureData.textureData) {
-          const layerIndex = 4
-          
-          // 为每个地图创建独立的 draw call（纹理渲染非常高效，不需要批量）
-          if (!this.mapInstances.has(componentId)) {
-            this.mapInstances.set(componentId, { displayName: `Map-${componentId}` })
-          }
-          
-          const mapInstance = this.mapInstances.get(componentId)!
-          
-          // 使用缓存的 MapTexture 命令工厂函数，确保复用同一个命令引用
-          if (!this.mapTextureCommandFactory) {
-            this.mapTextureCommandFactory = makeMapTextureCommand()
-          }
-          this.worldviewContext.onMount(mapInstance, this.mapTextureCommandFactory)
-          
-          // 关键修复：总是从 mapConfigMap 读取最新配置，确保配置更新立即生效
-          const currentConfig = this.mapConfigMap.get(componentId) || {}
-          const colorScheme = currentConfig.colorScheme || 'map'
-          const alpha = currentConfig.alpha ?? 1.0
-          
-          // 关键重构：为每个地图分配 Z 偏移，确保多个地图叠加时正确的渲染顺序
-          // 正常地图在 Z = 0（与网格相同平面），按索引递增（Z = 0 + index * 0.001）
-          // 网格在 Z = 0.0001，地图在 Z = 0，这样网格会在地图上方可见
-          // 偏移量足够小，视觉上仍然在同一平面，但足以避免多个地图之间的深度冲突
-          const baseZ = 0.0
-          const zOffset = baseZ + index * 0.001
-          
-          // 性能优化：复用mapProps对象，只在数据变化时更新
-          let mapProps = this._mapPropsCache.get(componentId)
-          if (!mapProps || mapProps.dataHash !== textureData.dataHash || 
-              mapProps.alpha !== alpha || mapProps.colorScheme !== colorScheme || 
-              mapProps.zOffset !== zOffset) {
-            // 数据变化，创建新对象
-            mapProps = {
-              textureData: textureData.textureData,
-              width: textureData.width,
-              height: textureData.height,
-              resolution: textureData.resolution,
-              origin: textureData.origin,
-              alpha: alpha,
-              colorScheme: colorScheme, // 确保传递字符串值
-              zOffset: zOffset, // Z 轴偏移，确保正确的渲染顺序
-              dataHash: textureData.dataHash
-            }
-            this._mapPropsCache.set(componentId, mapProps)
-          } else {
-            // 数据未变化，更新可能变化的字段（复用对象）
-            mapProps.alpha = alpha
-            mapProps.colorScheme = colorScheme
-            mapProps.zOffset = zOffset
-          }
-          
-          this.worldviewContext.registerDrawCall({
-            instance: mapInstance,
-            reglCommand: this.mapTextureCommandFactory,
-            children: [mapProps],
-            layerIndex
-          })
-        }
-      })
-    }
+    // 地图不再在 registerDrawCalls 中统一处理
+    // 每个地图独立管理，只在数据变化时更新（参照 RViz 的独立 Display 模式）
+    // 这样可以避免静态大地图每帧都重新注册，提升性能
 
     // 注册所有 LaserScan（批量渲染）
     // 性能优化：复用数组，避免每次创建新数组
@@ -656,12 +480,7 @@ export class SceneManager {
    * 取消注册指定组件的绘制调用
    * @param componentId 组件ID
    */
-  private unregisterDrawCall(componentId: string): void {
-    const instance = this.mapInstances.get(componentId)
-    if (instance) {
-      this.worldviewContext.onUnmount(instance)
-    }
-  }
+  // 已移除：不再使用 WorldviewContext 的 draw calls 系统
 
   /**
    * 取消注册所有绘制调用
@@ -672,10 +491,7 @@ export class SceneManager {
     this.worldviewContext.onUnmount(this.axesInstance)
     this.worldviewContext.onUnmount(this.pointsInstance)
     
-    // 清除地图实例（包括批量渲染实例）
-    this.mapInstances.forEach((instance) => {
-      this.worldviewContext.onUnmount(instance)
-    })
+    // 地图不再通过 draw calls 系统，已移除相关代码
     // 清除批量渲染实例（如果有）
     // 批量实例的 displayName 以 "Batch" 开头
     // 性能优化：直接遍历Map，避免Array.from创建新数组
@@ -1009,9 +825,58 @@ export class SceneManager {
   }
 
   /**
+   * 生成地图消息的完整哈希（包含数据内容）
+   * 用于精确检测数据是否变化，避免不必要的渲染更新
+   */
+  private generateMapMessageHash(message: any): string {
+    if (!message || !message.info || !message.data || !Array.isArray(message.data)) {
+      return ''
+    }
+
+    const info = message.info
+    const width = info.width || 0
+    const height = info.height || 0
+    const resolution = info.resolution || 0.05
+    const originX = info.origin?.position?.x || 0
+    const originY = info.origin?.position?.y || 0
+    const data = message.data
+    const dataLength = data.length
+
+    // 基础哈希：元数据
+    let hash = `${width}_${height}_${resolution}_${originX}_${originY}_${dataLength}`
+
+    // 数据内容哈希：采样检查（对于大地图，只检查关键部分）
+    // 检查前100个、中间100个、后100个数据点，以及数据长度
+    const sampleSize = Math.min(100, Math.floor(dataLength / 3))
+    if (dataLength > 0) {
+      // 前100个点
+      for (let i = 0; i < sampleSize && i < dataLength; i++) {
+        hash += `_${data[i]}`
+      }
+      // 中间100个点
+      if (dataLength > sampleSize * 2) {
+        const midStart = Math.floor(dataLength / 2) - Math.floor(sampleSize / 2)
+        for (let i = midStart; i < midStart + sampleSize && i < dataLength; i++) {
+          hash += `_${data[i]}`
+        }
+      }
+      // 后100个点
+      if (dataLength > sampleSize) {
+        const endStart = Math.max(0, dataLength - sampleSize)
+        for (let i = endStart; i < dataLength; i++) {
+          hash += `_${data[i]}`
+        }
+      }
+    }
+
+    return hash
+  }
+
+  /**
    * 更新地图数据（从 ROS OccupancyGrid 消息）
    * 使用 Web Worker 进行后台处理，避免阻塞主线程
    * 始终只渲染最新的一帧数据，自动取消过时的请求
+   * 优化：只有数据真正变化时才进行更新
    */
   async updateMap(message: any, componentId: string): Promise<void> {
     if (!componentId) {
@@ -1020,12 +885,18 @@ export class SceneManager {
     }
 
     if (!message || !message.info || !message.data || !Array.isArray(message.data)) {
+      // 消息无效，清理数据
+      const hadData = this.mapTextureDataMap.has(componentId)
       this.mapTextureDataMap.delete(componentId)
       this.mapRawMessageMap.delete(componentId)
       this.mapDataHashMap.delete(componentId)
+      this.mapMessageHashMap.delete(componentId)
       this.mapRequestIds.delete(componentId)
-      this.registerDrawCalls()
-      this.worldviewContext.onDirty()
+      // 只有之前有数据时才触发渲染更新
+      if (hadData) {
+        this.registerDrawCalls()
+        this.worldviewContext.onDirty()
+      }
       return
     }
 
@@ -1035,12 +906,30 @@ export class SceneManager {
     const resolution = info.resolution || 0.05
 
     if (width === 0 || height === 0 || resolution === 0) {
+      // 数据无效，清理
+      const hadData = this.mapTextureDataMap.has(componentId)
       this.mapTextureDataMap.delete(componentId)
       this.mapRawMessageMap.delete(componentId)
       this.mapDataHashMap.delete(componentId)
+      this.mapMessageHashMap.delete(componentId)
       this.mapRequestIds.delete(componentId)
-      this.registerDrawCalls()
-      this.worldviewContext.onDirty()
+      // 只有之前有数据时才触发渲染更新
+      if (hadData) {
+        this.registerDrawCalls()
+        this.worldviewContext.onDirty()
+      }
+      return
+    }
+
+    // 性能优化：提前检测消息是否真的变化了
+    // 生成完整的消息哈希（包含数据内容）
+    const messageHash = this.generateMapMessageHash(message)
+    const lastMessageHash = this.mapMessageHashMap.get(componentId)
+
+    // 如果消息哈希相同，说明数据完全没有变化，直接返回
+    // 这样可以避免不必要的 Worker 处理和渲染更新
+    if (lastMessageHash === messageHash && this.mapTextureDataMap.has(componentId)) {
+      // 数据未变化，取消请求但不清除现有数据，也不触发渲染
       return
     }
 
@@ -1111,19 +1000,11 @@ export class SceneManager {
         return
       }
 
-      // 性能优化：检查数据是否真的变化了
-      // 生成数据哈希（使用消息的宽度、高度、分辨率等关键信息）
-      const dataHash = `${width}_${height}_${resolution}_${message.info?.origin?.position?.x || 0}_${message.info?.origin?.position?.y || 0}`
-      const lastHash = this.mapDataHashMap.get(componentId)
-      
-      // 如果数据没有变化，跳过更新（避免不必要的重新渲染）
-      if (lastHash === dataHash && this.mapTextureDataMap.has(componentId)) {
-        // 数据未变化，取消请求但不清除现有数据
-        return
-      }
-      
       // 保存处理后的纹理数据
       if (result.textureData) {
+        // 生成元数据哈希（用于纹理缓存）
+        const dataHash = `${width}_${height}_${resolution}_${message.info?.origin?.position?.x || 0}_${message.info?.origin?.position?.y || 0}`
+        
         this.mapTextureDataMap.set(componentId, {
           textureData: result.textureData,
           width: result.width,
@@ -1132,8 +1013,10 @@ export class SceneManager {
           origin: result.origin,
           dataHash: result.dataHash || dataHash
         })
+        this.mapDataHashMap.set(componentId, dataHash)
+        // 保存完整的消息哈希，用于下次变化检测
+        this.mapMessageHashMap.set(componentId, messageHash)
       }
-      this.mapDataHashMap.set(componentId, dataHash)
       
       // 性能优化：检测是否有大地图，用于调整渲染帧率
       // 如果地图面积超过阈值（例如 10000 像素），认为是大地图
@@ -1167,19 +1050,9 @@ export class SceneManager {
         })
       }
       
-      // 批量更新：延迟注册绘制调用，避免频繁渲染
-      // 使用 requestAnimationFrame 确保在下一帧才更新
-      // 关键修复：数据更新时，registerDrawCalls 会从 mapConfigMap 读取最新配置
-      // 这样即使配置在数据更新之后才更新，也能正确应用
-      if (!this._pendingMapUpdate) {
-        this._pendingMapUpdate = requestAnimationFrame(() => {
-          // 确保使用最新的配置重新注册绘制调用
-          // registerDrawCalls 会从 mapConfigMap 读取最新配置
-          this.registerDrawCalls()
-          this.worldviewContext.onDirty()
-          this._pendingMapUpdate = null
-        })
-      }
+      // 参照 RViz：每个地图独立更新，只有数据变化的地图才更新 draw call
+      // 静态地图保持现有 draw call，不重复注册
+      this.updateMapDrawCall(componentId)
     } catch (error: any) {
       // 检查请求是否已被取消
       const currentRequestId = this.mapRequestIds.get(componentId)
@@ -1198,15 +1071,123 @@ export class SceneManager {
   }
 
   /**
+   * 彻底重构：每个地图独立渲染，不通过 WorldviewContext 的 draw calls 系统
+   * 为每个地图创建独立的 regl command 实例，直接渲染，避免遍历所有 draw calls
+   */
+  private updateMapDrawCall(componentId: string): void {
+    const textureData = this.mapTextureDataMap.get(componentId)
+    if (!textureData || !textureData.textureData) {
+      // 没有数据，移除渲染数据
+      this.removeMapRenderData(componentId)
+      return
+    }
+
+    // 为每个地图创建独立的 regl command 实例（关键优化）
+    if (!this.mapCommands.has(componentId)) {
+      const mapCommand = makeMapTextureCommand()(this.reglContext)
+      this.mapCommands.set(componentId, mapCommand)
+    }
+
+    // 从 mapConfigMap 读取最新配置
+    const currentConfig = this.mapConfigMap.get(componentId) || {}
+    const colorScheme = currentConfig.colorScheme || 'map'
+    const alpha = currentConfig.alpha ?? 1.0
+    const drawBehind = currentConfig.drawBehind || false
+
+    // 所有地图在同一 Z 平面，通过 alpha 混合显示
+    const zOffset = drawBehind ? -0.01 : 0.0
+
+    // 创建或更新 mapProps
+    let mapProps = this._mapPropsCache.get(componentId)
+    if (!mapProps || mapProps.dataHash !== textureData.dataHash || 
+        mapProps.alpha !== alpha || mapProps.colorScheme !== colorScheme || 
+        mapProps.zOffset !== zOffset) {
+      mapProps = {
+        textureData: textureData.textureData,
+        width: textureData.width,
+        height: textureData.height,
+        resolution: textureData.resolution,
+        origin: textureData.origin,
+        alpha: alpha,
+        colorScheme: colorScheme,
+        zOffset: zOffset,
+        dataHash: textureData.dataHash
+      }
+      this._mapPropsCache.set(componentId, mapProps)
+    } else {
+      mapProps.alpha = alpha
+      mapProps.colorScheme = colorScheme
+      mapProps.zOffset = zOffset
+    }
+
+    // 保存地图的渲染 props
+    this.mapPropsMap.set(componentId, mapProps)
+    
+    // 参照 RViz：所有地图共享一次 camera.draw 调用，在回调内部依次渲染所有地图
+    // 关键优化：N 个地图只调用 1 次 camera.draw，而不是 N 次，大幅降低 CPU 使用率
+    this.updateMapRenderCallback()
+  }
+
+  /**
+   * 更新统一的地图渲染回调（参照 RViz：所有地图共享一次 camera.draw）
+   */
+  private updateMapRenderCallback(): void {
+    // 移除旧的回调
+    if (this.mapRenderCallback) {
+      this.worldviewContext.unregisterPaintCallback(this.mapRenderCallback)
+      this.mapRenderCallback = null
+    }
+    
+    // 如果没有地图，不需要注册回调
+    if (this.mapPropsMap.size === 0) {
+      return
+    }
+    
+    // 创建统一的地图渲染回调：所有地图共享一次 camera.draw 调用
+    this.mapRenderCallback = () => {
+      if (!this.worldviewContext.initializedData) return
+      const { camera } = this.worldviewContext.initializedData
+      const cameraState = this.worldviewContext.cameraStore.state
+      
+      // 关键优化：只调用一次 camera.draw，在回调内部依次渲染所有地图
+      // 这样 N 个地图只调用 1 次 camera.draw，而不是 N 次，大幅降低 CPU 使用率
+      camera.draw(cameraState, () => {
+        // 依次渲染所有地图
+        for (const [componentId, mapProps] of this.mapPropsMap.entries()) {
+          const mapCommand = this.mapCommands.get(componentId)
+          if (mapCommand && mapProps) {
+            mapCommand([mapProps], false)
+          }
+        }
+      })
+    }
+    
+    // 注册统一的地图渲染回调
+    this.worldviewContext.registerPaintCallback(this.mapRenderCallback)
+  }
+  
+  /**
+   * 移除地图的渲染数据
+   */
+  private removeMapRenderData(componentId: string): void {
+    this.mapPropsMap.delete(componentId)
+    this.mapCommands.delete(componentId)
+    // 更新统一的地图渲染回调
+    this.updateMapRenderCallback()
+  }
+
+  /**
    * 移除地图数据
    * @param componentId 组件ID
    */
   removeMap(componentId: string): void {
-    // 立即注销 draw call，确保渲染不再包含该地图
-    this.unregisterDrawCall(componentId)
+    // 移除渲染数据
+    this.removeMapRenderData(componentId)
     
     // 获取数据哈希和纹理数据，用于清理纹理缓存
     const dataHash = this.mapDataHashMap.get(componentId)
+    // 清理消息哈希
+    this.mapMessageHashMap.delete(componentId)
     const textureData = this.mapTextureDataMap.get(componentId)
     
     // 清理纹理缓存（在清理数据之前）
@@ -1223,13 +1204,12 @@ export class SceneManager {
     this.mapConfigMap.delete(componentId)
     this.mapRawMessageMap.delete(componentId)
     this.mapDataHashMap.delete(componentId)
-    this.mapInstances.delete(componentId)
-    this.mapRequestIds.delete(componentId) // 清理请求 ID
-    this.mapTopicMap.delete(componentId) // 清理话题映射
-    this._mapPropsCache.delete(componentId) // 性能优化：清理mapProps缓存
+    this.mapMessageHashMap.delete(componentId)
+    this.mapRequestIds.delete(componentId)
+    this.mapTopicMap.delete(componentId)
+    this._mapPropsCache.delete(componentId)
     
-    // 立即重新注册绘制调用，确保移除立即生效
-    this.registerDrawCalls()
+    // 触发渲染更新
     this.worldviewContext.onDirty()
   }
 
@@ -1245,19 +1225,21 @@ export class SceneManager {
     this.mapConfigMap.clear()
     this.mapRawMessageMap.clear()
     this.mapDataHashMap.clear()
-    this.mapInstances.clear()
+    this.mapMessageHashMap.clear() // 清理所有消息哈希
     this.mapRequestIds.clear() // 清理所有请求 ID
     this.mapTopicMap.clear() // 清理所有话题映射
     this._mapPropsCache.clear() // 性能优化：清理所有mapProps缓存
     
-    // 注销所有地图的 draw call
-    this.mapInstances.forEach((instance) => {
-      this.worldviewContext.onUnmount(instance)
-    })
+    // 移除统一的地图渲染回调
+    if (this.mapRenderCallback) {
+      this.worldviewContext.unregisterPaintCallback(this.mapRenderCallback)
+      this.mapRenderCallback = null
+    }
+    this.mapPropsMap.clear()
+    this.mapCommands.clear()
     
-    // 立即重新注册绘制调用（清除地图后）
-    this.registerDrawCalls()
-    // 不调用 onDirty，由调用者统一处理最终渲染
+    // 触发渲染更新
+    this.worldviewContext.onDirty()
   }
 
   /**
@@ -1290,20 +1272,14 @@ export class SceneManager {
     }
     
     
+    // 参照 RViz：配置变化时，只更新该地图的 draw call，不影响其他地图
     // 检查地图数据是否存在
     const hasMapData = this.mapTextureDataMap.has(componentId)
     
-    // 如果该地图已有处理后的数据，直接重新注册绘制调用以应用新配置
-    // 注意：colorScheme 是在 GPU 着色器中计算的，不需要重新处理数据，只需要重新注册绘制调用
-    // alpha 也是通过 uniform 传递的，不需要重新处理数据
+    // 如果该地图已有处理后的数据，只更新该地图的 draw call
+    // 注意：colorScheme 和 alpha 都是通过 uniform 传递的，不需要重新处理数据
     if (hasMapData) {
-      // 对于纹理渲染方式，colorScheme 和 alpha 都是通过 uniform 传递的
-      // 只需要重新注册绘制调用，新的配置会自动应用到着色器中
-      // 强制清除旧的绘制调用，确保新的配置被应用
-      this.unregisterAllDrawCalls()
-      this.registerDrawCalls()
-      this.worldviewContext.onDirty()
-      
+      this.updateMapDrawCall(componentId)
     }
   }
 
@@ -1986,8 +1962,15 @@ export class SceneManager {
     this.mapTextureDataMap.clear()
     this.mapConfigMap.clear()
     this.mapRawMessageMap.clear()
-    this.mapInstances.clear()
     this.mapRequestIds.clear() // 清理请求 ID
+    // 清理地图渲染回调和命令
+    // 移除统一的地图渲染回调
+    if (this.mapRenderCallback) {
+      this.worldviewContext.unregisterPaintCallback(this.mapRenderCallback)
+      this.mapRenderCallback = null
+    }
+    this.mapPropsMap.clear()
+    this.mapCommands.clear()
     
     // 清理 Web Worker（延迟导入避免循环依赖）
     import('@/workers/dataProcessorWorker').then(({ destroyDataProcessorWorker }) => {

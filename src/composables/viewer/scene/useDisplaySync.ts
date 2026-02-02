@@ -511,8 +511,44 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     { deep: true, immediate: false }
   )
 
-  // 缓存上次处理的消息时间戳，用于去重
-  const lastProcessedMessageTimes = new Map<string, number>()
+  // 生成地图消息的快速哈希（用于初步变化检测）
+  // 这个哈希用于在 useDisplaySync 层面快速过滤，详细检测在 SceneManager.updateMap 中进行
+  const generateQuickMessageHash = (message: any): string => {
+    if (!message || !message.info || !message.data || !Array.isArray(message.data)) {
+      return ''
+    }
+    const info = message.info
+    const width = info.width || 0
+    const height = info.height || 0
+    const resolution = info.resolution || 0.05
+    const originX = info.origin?.position?.x || 0
+    const originY = info.origin?.position?.y || 0
+    const dataLength = message.data.length
+    
+    // 快速哈希：元数据 + 数据长度 + 前几个和后几个数据点
+    let hash = `${width}_${height}_${resolution}_${originX}_${originY}_${dataLength}`
+    
+    // 采样检查：只检查前10个和后10个数据点（快速检测）
+    if (dataLength > 0) {
+      const sampleSize = Math.min(10, dataLength)
+      // 前10个点
+      for (let i = 0; i < sampleSize && i < dataLength; i++) {
+        hash += `_${message.data[i]}`
+      }
+      // 后10个点
+      if (dataLength > sampleSize) {
+        const endStart = Math.max(0, dataLength - sampleSize)
+        for (let i = endStart; i < dataLength; i++) {
+          hash += `_${message.data[i]}`
+        }
+      }
+    }
+    
+    return hash
+  }
+
+  // 缓存上次处理的消息哈希，用于精确去重
+  const lastProcessedMessageHashes = new Map<string, string>()
   
   // 监听所有地图组件的数据变化（从 topicSubscriptionManager）
   watch(
@@ -522,18 +558,15 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
       const trigger = topicSubscriptionManager.getStatusUpdateTrigger()
       trigger.value
       
-      // 返回所有地图组件的消息映射（包含时间戳用于去重）
-      const messages: Record<string, { message: any; timestamp: number }> = {}
+      // 返回所有地图组件的消息映射（包含消息哈希用于精确去重）
+      const messages: Record<string, { message: any; messageHash: string }> = {}
       mapComponents.forEach(mapComponent => {
         if (mapComponent.enabled) {
           const message = topicSubscriptionManager.getLatestMessage(mapComponent.id)
           if (message) {
-            // 获取消息的时间戳（如果有）
-            const timestamp = message.header?.stamp?.sec 
-              ? message.header.stamp.sec * 1000 + (message.header.stamp.nsec || 0) / 1000000
-              : Date.now()
-            
-            messages[mapComponent.id] = { message, timestamp }
+            // 生成消息哈希用于变化检测
+            const messageHash = generateQuickMessageHash(message)
+            messages[mapComponent.id] = { message, messageHash }
           }
         }
       })
@@ -541,11 +574,12 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     },
     (mapMessages) => {
       // 更新所有地图（只处理真正变化的消息）
-      Object.entries(mapMessages).forEach(([componentId, { message, timestamp }]) => {
+      Object.entries(mapMessages).forEach(([componentId, { message, messageHash }]) => {
         if (message) {
-          // 检查消息是否真的变化了（通过时间戳比较）
-          const lastTimestamp = lastProcessedMessageTimes.get(componentId)
-          if (lastTimestamp === undefined || lastTimestamp !== timestamp) {
+          // 检查消息是否真的变化了（通过消息哈希比较）
+          // 这比时间戳更准确，因为即使时间戳不同，如果数据相同也不会触发更新
+          const lastHash = lastProcessedMessageHashes.get(componentId)
+          if (lastHash === undefined || lastHash !== messageHash) {
             // 消息已变化，更新地图
             // 关键修复：数据更新前，确保配置已同步到 SceneManager
             // 这样 updateMap 调用 registerDrawCalls 时，能读取到最新配置
@@ -560,10 +594,12 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
               }, componentId)
             }
             
-            lastProcessedMessageTimes.set(componentId, timestamp)
+            // 保存消息哈希
+            lastProcessedMessageHashes.set(componentId, messageHash)
+            // 调用 updateMap，它内部会进行更详细的检查
             context.updateMap(message, componentId)
           }
-          // 如果时间戳相同，说明是同一个消息，跳过处理（去重）
+          // 如果哈希相同，说明是同一个消息，跳过处理（去重）
         }
       })
       
@@ -573,7 +609,7 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
         .filter(c => c.type === 'map')
         .forEach(mapComponent => {
           if (!mapComponent.enabled || !currentMapIds.has(mapComponent.id)) {
-            lastProcessedMessageTimes.delete(mapComponent.id) // 清理缓存
+            lastProcessedMessageHashes.delete(mapComponent.id) // 清理缓存
             context.removeMap(mapComponent.id)
           }
         })

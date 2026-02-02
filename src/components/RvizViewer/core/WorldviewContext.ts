@@ -225,14 +225,25 @@ export class WorldviewContext {
     const existingDrawInput = this._drawCalls.get(drawInput.instance)
     if (existingDrawInput) {
       // 合并更新，确保新的 children 被使用
+      const oldLayerIndex = existingDrawInput.layerIndex || 0
+      const newLayerIndex = drawInput.layerIndex || 0
+      
       Object.assign(existingDrawInput, drawInput)
+      
+      // 优化：只有 layerIndex 变化时才失效排序缓存
+      // 如果只是更新 children 等 props，不需要重新排序
+      if (oldLayerIndex !== newLayerIndex) {
+        this._drawCallsVersion++
+        this._cachedSortedDrawCalls = null
+      }
+      // 如果 layerIndex 未变化，保持排序缓存，提升性能
     } else {
       // 新实例，直接设置
       this._drawCalls.set(drawInput.instance, drawInput)
+      // 新增 draw call 需要重新排序
+      this._drawCallsVersion++
+      this._cachedSortedDrawCalls = null
     }
-    // 标记绘制调用已更新，需要重新排序
-    this._drawCallsVersion++
-    this._cachedSortedDrawCalls = null
   }
 
   registerPaintCallback(paintFn: PaintFn): void {
