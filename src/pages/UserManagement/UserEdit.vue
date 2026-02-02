@@ -42,8 +42,8 @@
 
       <el-form-item label="状态">
         <el-radio-group v-model="userForm.status" :disabled="loading">
-          <el-radio label="active">激活</el-radio>
-          <el-radio label="inactive">禁用</el-radio>
+          <el-radio value="active">激活</el-radio>
+          <el-radio value="inactive">禁用</el-radio>
         </el-radio-group>
       </el-form-item>
 

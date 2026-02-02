@@ -22,8 +22,8 @@
       <div class="control-item">
         <span>相机模式:</span>
         <el-radio-group v-model="localCameraMode" size="small" @change="$emit('update:cameraMode', $event)">
-          <el-radio-button label="orbit">轨道</el-radio-button>
-          <el-radio-button label="firstPerson">第一人称</el-radio-button>
+          <el-radio-button value="orbit">轨道</el-radio-button>
+          <el-radio-button value="firstPerson">第一人称</el-radio-button>
         </el-radio-group>
       </div>
     </div>

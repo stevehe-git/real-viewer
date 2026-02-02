@@ -40,7 +40,7 @@
     <el-button
       v-if="rvizStore.communicationState.isConnected"
       size="small"
-      type="text"
+      link
       class="refresh-btn"
       :loading="loadingTopics"
       @click="loadTopics"

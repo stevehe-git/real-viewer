@@ -138,7 +138,7 @@
               <div class="card-header">
                 <el-icon><DocumentChecked /></el-icon>
                 <span>执行日志</span>
-                <el-button style="float: right; padding: 3px 0" type="text" @click="clearLogs">
+                <el-button style="float: right; padding: 3px 0" link @click="clearLogs">
                   清空日志
                 </el-button>
               </div>

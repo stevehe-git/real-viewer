@@ -19,7 +19,7 @@
         <div class="panel-actions">
           <el-button
             size="small"
-            type="text"
+            link
             @click="handleClose"
             class="close-btn"
           >

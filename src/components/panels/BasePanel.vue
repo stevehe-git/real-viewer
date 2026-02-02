@@ -12,7 +12,7 @@
           <el-button
             v-if="collapsible"
             size="small"
-            type="text"
+            link
             @click="toggleCollapse"
             class="collapse-btn"
           >
@@ -24,7 +24,7 @@
           <el-button
             v-if="closable"
             size="small"
-            type="text"
+            link
             @click="$emit('close')"
             class="close-btn"
           >
