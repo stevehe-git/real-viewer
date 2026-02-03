@@ -160,8 +160,8 @@ import { ref, computed, watch, reactive, onMounted, onUnmounted } from 'vue'
 import { useRvizStore } from '@/stores/rviz'
 import { useDisplayStore } from '@/stores/display'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useTopicSubscription, type SubscriptionStatus } from '@/composables/communication/useTopicSubscription'
-import { topicSubscriptionManager } from '@/services/topicSubscriptionManager'
+import { useTopicSubscription } from '@/composables/communication/useTopicSubscription'
+import { topicSubscriptionManager, type SubscriptionStatus } from '@/services/topicSubscriptionManager'
 import BasePanel from '../../BasePanel.vue'
 import DisplayTypeSelector from './DisplayTypeSelector.vue'
 import {
@@ -210,7 +210,8 @@ const displayComponents = computed(() => rvizStore.displayComponents)
 const TOPIC_COMPONENT_TYPES = ['map', 'path', 'laserscan', 'pointcloud2', 'marker', 'image', 'camera']
 
 // 为每个组件维护 useTopicSubscription 实例
-const subscriptionInstances = reactive<Map<string, ReturnType<typeof useTopicSubscription>>>(new Map())
+// 类型：Map<componentId, useTopicSubscription返回值>
+const subscriptionInstances = reactive(new Map()) as Map<string, ReturnType<typeof useTopicSubscription>>
 
 // 初始化或更新组件的订阅实例
 function setupComponentSubscription(component: any) {
@@ -243,41 +244,48 @@ function setupComponentSubscription(component: any) {
 }
 
 // 监听组件列表变化，为每个需要订阅的组件创建订阅实例
+// 关键修复：只在组件真正新增或删除时处理，不在配置改变时触发
 watch(
-  () => displayComponents.value.map(c => ({
-    id: c.id,
-    type: c.type,
-    enabled: c.enabled,
-    topic: c.options?.topic,
-    queueSize: c.options?.queueSize
-  })),
-  (newComponents, oldComponents) => {
-    // 处理新增的组件
-    newComponents.forEach(component => {
-      if (TOPIC_COMPONENT_TYPES.includes(component.type)) {
-        const fullComponent = displayComponents.value.find(c => c.id === component.id)
-        if (fullComponent) {
-          setupComponentSubscription(fullComponent)
+  () => displayComponents.value.map(c => c.id), // 只监听组件ID列表，不监听配置
+  (newIds, oldIds) => {
+    if (!oldIds) {
+      // 初始化：为所有组件创建订阅实例
+      displayComponents.value.forEach(component => {
+        if (TOPIC_COMPONENT_TYPES.includes(component.type)) {
+          setupComponentSubscription(component)
+        }
+      })
+      return
+    }
+
+    const newIdsSet = new Set(newIds)
+    const oldIdsSet = new Set(oldIds)
+
+    // 处理新增的组件（只在真正新增时创建订阅实例）
+    newIds.forEach(componentId => {
+      if (!oldIdsSet.has(componentId)) {
+        const component = displayComponents.value.find(c => c.id === componentId)
+        if (component && TOPIC_COMPONENT_TYPES.includes(component.type)) {
+          setupComponentSubscription(component)
         }
       }
     })
 
     // 处理删除的组件
-    if (oldComponents) {
-      const newIds = new Set(newComponents.map(c => c.id))
-      oldComponents.forEach(oldComponent => {
-        if (!newIds.has(oldComponent.id) && subscriptionInstances.has(oldComponent.id)) {
-          const instance = subscriptionInstances.get(oldComponent.id)
-          instance?.cleanup()
-          subscriptionInstances.delete(oldComponent.id)
-        }
-      })
-    }
+    oldIds.forEach(componentId => {
+      if (!newIdsSet.has(componentId) && subscriptionInstances.has(componentId)) {
+        const instance = subscriptionInstances.get(componentId)
+        instance?.cleanup()
+        subscriptionInstances.delete(componentId)
+      }
+    })
   },
-  { immediate: true, deep: true }
+  { immediate: true }
 )
 
-// 监听每个组件的话题和启用状态变化
+// 监听每个组件的话题、队列大小和启用状态变化
+// 参照 rviz/webviz：只有 topic 或 queueSize 改变时才重新订阅
+// 其他配置（alpha、colorScheme等）改变时，只更新 SceneManager 配置，不重新订阅
 watch(
   () => displayComponents.value.map(c => ({
     id: c.id,
@@ -311,20 +319,24 @@ watch(
       const queueSizeChanged = oldComponent.queueSize !== newComponent.queueSize
       const enabledChanged = oldComponent.enabled !== newComponent.enabled
 
-      // 如果话题或队列大小变化，重新创建订阅实例
+      // 参照 rviz/webviz：只有 topic 或 queueSize 改变时才重新订阅
+      // 注意：ROSLIB.Topic 的 queue_size 在创建时设置，无法动态修改，所以 queueSize 改变时也需要重新订阅
       if (topicChanged || queueSizeChanged) {
+        // 话题或队列大小变化，重新创建订阅实例
         const fullComponent = displayComponents.value.find(c => c.id === newComponent.id)
         if (fullComponent) {
           setupComponentSubscription(fullComponent)
         }
       } else if (enabledChanged) {
-        // 只有启用状态变化
+        // 只有启用状态变化，不重新订阅，只更新订阅状态
         if (newComponent.enabled && newComponent.topic && rvizStore.communicationState.isConnected) {
           instance.subscribe()
         } else {
           instance.unsubscribe()
         }
       }
+      // 其他配置（alpha、colorScheme、drawBehind等）改变时，不触发任何订阅相关逻辑
+      // 这些配置的更新由 useDisplaySync 中的 watch 监听处理，只更新 SceneManager 配置
     })
   },
   { deep: true }

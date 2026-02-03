@@ -34,6 +34,8 @@ export class TopicSubscriptionManager {
   private pendingStatusUpdate = false
   private rosInstance: ROSLIB.Ros | null = null
   private rosPlugin: CommunicationPlugin | null = null
+  // 记录每个componentId的当前订阅参数，用于避免重复订阅
+  private subscriptionParams = new Map<string, { topic: string; queueSize: number }>()
 
   // 组件类型到消息类型的映射
   private readonly COMPONENT_MESSAGE_TYPES: Record<string, string> = {
@@ -146,6 +148,7 @@ export class TopicSubscriptionManager {
 
   /**
    * 订阅话题
+   * 参照 rviz/webviz：只有 topic 或 queueSize 改变时才重新订阅
    */
   subscribe(
     componentId: string,
@@ -153,6 +156,34 @@ export class TopicSubscriptionManager {
     topic: string | undefined,
     queueSize: number = 10
   ): boolean {
+    // 检查话题是否有效
+    if (!this.isValidTopic(topic)) {
+      // 如果话题无效，取消订阅
+      this.unsubscribe(componentId)
+      this.subscriptionParams.delete(componentId)
+      this.statuses.set(componentId, {
+        subscribed: false,
+        hasData: false,
+        messageCount: 0,
+        lastMessageTime: null,
+        error: 'Topic not specified'
+      })
+      this.triggerStatusUpdateThrottled(true) // 立即更新状态
+      return false
+    }
+
+    // 关键优化：检查 topic 和 queueSize 是否改变
+    // 如果都没有改变，且已经订阅，则不需要重新订阅
+    const currentParams = this.subscriptionParams.get(componentId)
+    const currentStatus = this.statuses.get(componentId)
+    if (currentParams && currentStatus?.subscribed) {
+      if (currentParams.topic === topic && currentParams.queueSize === queueSize) {
+        // topic 和 queueSize 都没有改变，且已经订阅，不需要重新订阅
+        return true
+      }
+    }
+
+    // topic 或 queueSize 改变了，需要重新订阅
     // 先取消旧的订阅
     this.unsubscribe(componentId)
 
@@ -353,6 +384,9 @@ export class TopicSubscriptionManager {
 
       this.subscribers.set(componentId, subscriber)
 
+      // 保存订阅参数，用于避免重复订阅
+      this.subscriptionParams.set(componentId, { topic: topic!, queueSize })
+
       // 初始化状态
       this.statuses.set(componentId, {
         subscribed: true,
@@ -392,6 +426,9 @@ export class TopicSubscriptionManager {
       }
       this.subscribers.delete(componentId)
     }
+
+    // 清除订阅参数
+    this.subscriptionParams.delete(componentId)
 
     // 保留状态和队列，但标记为未订阅
     const currentStatus = this.statuses.get(componentId)

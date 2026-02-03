@@ -41,6 +41,8 @@ export function useTopicSubscription(
   })
   
   // 订阅话题（使用统一管理器，只在已连接时订阅）
+  // 参照 rviz/webviz：TopicSubscriptionManager 内部会检查 topic 和 queueSize 是否改变
+  // 如果没有改变且已经订阅，则不会重新订阅
   const subscribe = () => {
     if (!topic || topic.trim() === '') {
       return
@@ -49,6 +51,7 @@ export function useTopicSubscription(
     if (!rvizStore.communicationState.isConnected) {
       return
     }
+    // TopicSubscriptionManager.subscribe 内部会检查是否需要重新订阅
     rvizStore.subscribeComponentTopic(componentId, componentType, topic, queueSize)
   }
   
@@ -113,10 +116,14 @@ export function useTopicSubscription(
   watchStopHandles.push(stopWatchTopic)
   
   // 监听队列大小变化
-  const stopWatchQueueSize = watch(() => queueSize, () => {
-    // 重新订阅以应用新的队列大小（只有在已连接时）
-    if (topic && topic.trim() !== '' && rvizStore.communicationState.isConnected) {
-      subscribe()
+  // 参照 rviz/webviz：queueSize 改变时需要重新订阅（因为 ROSLIB.Topic 的 queue_size 在创建时设置，无法动态修改）
+  const stopWatchQueueSize = watch(() => queueSize, (newQueueSize, oldQueueSize) => {
+    // 只有当 queueSize 实际改变时才重新订阅
+    if (oldQueueSize !== undefined && newQueueSize !== oldQueueSize) {
+      // 重新订阅以应用新的队列大小（只有在已连接时）
+      if (topic && topic.trim() !== '' && rvizStore.communicationState.isConnected) {
+        subscribe()
+      }
     }
   })
   watchStopHandles.push(stopWatchQueueSize)
