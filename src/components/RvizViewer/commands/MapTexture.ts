@@ -40,29 +40,18 @@ function getCachedMapTexture(
 
 /**
  * 清理指定组件的地图纹理缓存
- * @param componentId 组件ID
- * @param dataHash 数据哈希（可选，如果提供则只清理匹配的缓存）
+ * @param componentId 组件ID（用于标识，实际清理基于 dataHash）
+ * @param dataHash 数据哈希（必须提供，用于精确匹配缓存 key）
  */
 export function clearMapTextureCache(componentId: string, dataHash?: string): void {
   if (dataHash) {
     // 清理特定数据哈希的缓存
+    // 注意：cacheKey 格式为 `${width}_${height}_${dataHash}`，通过 dataHash 匹配
     const keysToDelete: string[] = []
     textureCache.forEach((cached, key) => {
-      if (cached.dataHash === dataHash || key.includes(componentId)) {
+      if (key.endsWith(`_${dataHash}`) || cached.dataHash === dataHash) {
         keysToDelete.push(key)
         // 销毁纹理资源
-        if (cached.texture && cached.texture.destroy) {
-          cached.texture.destroy()
-        }
-      }
-    })
-    keysToDelete.forEach(key => textureCache.delete(key))
-  } else {
-    // 清理所有包含该 componentId 的缓存
-    const keysToDelete: string[] = []
-    textureCache.forEach((cached, key) => {
-      if (key.includes(componentId)) {
-        keysToDelete.push(key)
         if (cached.texture && cached.texture.destroy) {
           cached.texture.destroy()
         }

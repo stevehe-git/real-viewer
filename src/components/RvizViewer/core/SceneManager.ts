@@ -9,7 +9,7 @@ import { quat } from 'gl-matrix'
 import { tfManager } from '@/services/tfManager'
 import { getDataProcessorWorker } from '@/workers/dataProcessorWorker'
 import type { TFProcessRequest } from '@/workers/dataProcessor.worker'
-import { tfDebugger, renderDebugger } from '@/utils/debug'
+import { tfDebugger } from '@/utils/debug'
 
 export class SceneManager {
   private reglContext: Regl
@@ -884,6 +884,21 @@ export class SceneManager {
       return
     }
 
+    // 如果 mapTopicMap 中没有 topic，从 store 获取并设置
+    // 解决时序问题：watch 监听消息变化时，setMapOptions 可能还未执行
+    if (!this.mapTopicMap.has(componentId)) {
+      try {
+        const { useRvizStore } = await import('@/stores/rviz')
+        const rvizStore = useRvizStore()
+        const mapComponent = rvizStore.displayComponents.find(c => c.id === componentId && c.type === 'map')
+        if (mapComponent && mapComponent.options?.topic) {
+          this.mapTopicMap.set(componentId, mapComponent.options.topic)
+        }
+      } catch (error) {
+        // 忽略错误，可能是循环依赖或其他问题
+      }
+    }
+
     if (!message || !message.info || !message.data || !Array.isArray(message.data)) {
       // 消息无效，清理数据
       const hadData = this.mapTextureDataMap.has(componentId)
@@ -1328,7 +1343,36 @@ export class SceneManager {
     
     // 如果提供了 topic，保存到 mapTopicMap 中，用于排序
     if (options.topic !== undefined) {
-      this.mapTopicMap.set(componentId, options.topic)
+      const oldTopic = this.mapTopicMap.get(componentId)
+      const newTopic = options.topic
+      
+      // 如果 topic 改变，清理旧的地图数据和纹理缓存
+      // 参照 rviz/webviz：topic 改变时必须清理旧数据，避免显示错误的地图
+      if (oldTopic && oldTopic !== newTopic) {
+        const textureData = this.mapTextureDataMap.get(componentId)
+        
+        // 清理纹理缓存（必须传递 dataHash，因为 cacheKey 不包含 componentId）
+        if (textureData?.dataHash) {
+          clearMapTextureCache(componentId, textureData.dataHash)
+        } else {
+          const dataHash = this.mapDataHashMap.get(componentId)
+          if (dataHash) {
+            clearMapTextureCache(componentId, dataHash)
+          }
+        }
+        
+        // 清理该 componentId 的所有地图数据
+        this.mapTextureDataMap.delete(componentId)
+        this.mapRawMessageMap.delete(componentId)
+        this.mapDataHashMap.delete(componentId)
+        this.mapMessageHashMap.delete(componentId)
+        this.mapRequestIds.delete(componentId)
+        this._mapPropsCache.delete(componentId)
+        this.removeMapRenderData(componentId)
+        this.worldviewContext.onDirty()
+      }
+      
+      this.mapTopicMap.set(componentId, newTopic)
     }
     
     // 检查地图数据是否存在

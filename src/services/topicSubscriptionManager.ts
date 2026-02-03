@@ -184,8 +184,10 @@ export class TopicSubscriptionManager {
     }
 
     // topic 或 queueSize 改变了，需要重新订阅
-    // 先取消旧的订阅
+    // 先取消旧的订阅，并清理消息缓存（避免显示旧数据）
     this.unsubscribe(componentId)
+    // 清理消息队列，确保不会使用旧 topic 的数据
+    this.clearCache(componentId)
 
     // 检查话题是否有效
     if (!this.isValidTopic(topic)) {

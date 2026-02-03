@@ -29,6 +29,7 @@ export interface DisplaySyncContext {
     alpha?: number
     colorScheme?: string
     drawBehind?: boolean
+    topic?: string
   }, componentId: string) => void
   updateLaserScan: (message: any, componentId: string) => void | Promise<void>
   removeLaserScan: (componentId: string) => void
@@ -171,10 +172,13 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     mapComponents.forEach((mapComponent) => {
       if (mapComponent.enabled) {
         const options = mapComponent.options || {}
+        
+        // 传递 topic 到 setMapOptions，用于检测 topic 改变并清理旧数据
         context.setMapOptions({
           alpha: options.alpha,
           colorScheme: options.colorScheme,
-          drawBehind: options.drawBehind
+          drawBehind: options.drawBehind,
+          topic: options.topic
         }, mapComponent.id)
 
         // 获取地图数据并更新
@@ -376,7 +380,12 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     laserScanIds?: Set<string>
     pointCloudIds?: Set<string>
     pointCloud2Ids?: Set<string>
-  }): void {
+  }): {
+    mapIds: Set<string>
+    laserScanIds: Set<string>
+    pointCloudIds: Set<string>
+    pointCloud2Ids: Set<string>
+  } {
     syncGridDisplay()
     syncAxesDisplay()
     const currentMapIds = syncMapDisplay(previousComponentIds?.mapIds)
@@ -406,7 +415,9 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     () => rvizStore.displayComponents,
     () => {
       const currentIds = syncAllDisplays(previousComponentIds)
-      previousComponentIds = currentIds
+      if (currentIds) {
+        previousComponentIds = currentIds
+      }
     },
     { deep: true, immediate: true }
   )
@@ -493,7 +504,7 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
           drawBehind: mapComponent.options?.drawBehind
         }))
     },
-    (mapConfigs, oldMapConfigs) => {
+    (mapConfigs) => {
       mapConfigs.forEach((mapConfig) => {
         if (mapConfig && mapConfig.enabled) {
           // 立即更新配置选项，不等待数据同步
@@ -586,11 +597,12 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
             const mapComponent = rvizStore.displayComponents.find(c => c.id === componentId && c.type === 'map')
             if (mapComponent && mapComponent.enabled) {
               const options = mapComponent.options || {}
-              // 确保配置已同步（如果还没有同步）
+              // 确保配置已同步（如果还没有同步），包括 topic
               context.setMapOptions({
                 alpha: options.alpha,
                 colorScheme: options.colorScheme,
-                drawBehind: options.drawBehind
+                drawBehind: options.drawBehind,
+                topic: options.topic
               }, componentId)
             }
             
