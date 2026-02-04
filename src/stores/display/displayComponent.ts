@@ -283,10 +283,11 @@ export function createDisplayComponentManager(context: DisplayComponentContext) 
   const duplicateComponent = (componentId: string) => {
     const component = displayComponents.value.find(c => c.id === componentId)
     if (component) {
+      // 所有相同类型的 panel 使用相同的标题，不添加序号
       const duplicated: DisplayComponentData = {
         ...component,
         id: `${component.type}-${Date.now()}`,
-        name: `${component.name} (Copy)`
+        name: component.name
       }
       displayComponents.value.push(duplicated)
       selectedItem.value = duplicated.id

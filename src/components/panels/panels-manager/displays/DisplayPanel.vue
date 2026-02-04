@@ -603,11 +603,8 @@ function handleEnabledChange(componentId: string, value: boolean) {
 function handleAddDisplay(displayType: any) {
   if (!displayType) return
 
-  // 生成唯一ID和名称
-  const componentCount = rvizStore.displayComponents.filter(c => c.type === displayType.id).length
-  const componentName = componentCount > 0 
-    ? `${displayType.name} ${componentCount + 1}`
-    : displayType.name
+  // 所有相同类型的 panel 使用相同的标题，不添加序号
+  const componentName = displayType.name
 
   const newComponent = {
     id: `display-${displayType.id}-${Date.now()}`,
@@ -634,8 +631,8 @@ function handleDuplicate() {
   const component = rvizStore.displayComponents.find(c => c.id === selectedComponentId.value)
   if (!component) return
 
-  const componentCount = rvizStore.displayComponents.filter(c => c.type === component.type).length
-  const newName = `${component.name} (副本 ${componentCount})`
+  // 所有相同类型的 panel 使用相同的标题，不添加序号
+  const newName = component.name
 
   const duplicatedComponent = {
     id: `display-${component.type}-${Date.now()}`,
