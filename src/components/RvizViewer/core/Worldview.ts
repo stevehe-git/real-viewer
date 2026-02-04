@@ -103,13 +103,6 @@ export class Worldview {
   }
 
   /**
-   * 渲染（触发一次绘制）
-   */
-  paint(): void {
-    this.context.paint()
-  }
-
-  /**
    * 标记需要重新渲染
    */
   markDirty(): void {
