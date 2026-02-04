@@ -15,7 +15,6 @@ export class SceneManager {
   private reglContext: Regl
   private worldviewContext: any // WorldviewContext
   private gridCommand: any = null
-  private pointsCommand: any = null
   private pointsCommandWithWorldSpace: any = null // 带 useWorldSpaceSize 的 Points 命令
   private linesCommand: any = null
   private cylindersCommand: any = null
@@ -83,22 +82,6 @@ export class SceneManager {
   private mapRequestIds = new Map<string, number>() // 每个地图的当前请求 ID，用于取消过时的请求
   private mapRequestIdCounter = 0 // 请求 ID 计数器
   
-  // 性能优化：复用数组和对象，减少内存分配
-  private _reusableArrays = {
-    allPointClouds: [] as any[],
-    allPointCloud2s: [] as any[],
-    allLaserScans: [] as any[],
-    mapsArray: [] as Array<[string, any]>,
-    drawBehindMaps: [] as Array<[string, any]>,
-    normalMaps: [] as Array<[string, any]>
-  }
-  
-  // 性能优化：复用批量实例对象
-  private _batchInstances = {
-    pointCloud: { displayName: 'BatchPointClouds', _isBatch: true },
-    pointCloud2: { displayName: 'BatchPointCloud2s', _isBatch: true },
-    laserScan: { displayName: 'BatchLaserScans', _isBatch: true }
-  }
   
   // 性能优化：复用mapProps对象池（按componentId缓存）
   private _mapPropsCache = new Map<string, any>()
@@ -135,8 +118,6 @@ export class SceneManager {
       this.updateAxesData()
     }
 
-    // 初始化 Points 命令
-    this.pointsCommand = makePointsCommand({})(this.reglContext)
     // 初始化带 useWorldSpaceSize 的 Points 命令（用于 LaserScan 和 PointCloud）
     this.pointsCommandWithWorldSpace = makePointsCommand({ useWorldSpaceSize: true })
 
@@ -336,55 +317,41 @@ export class SceneManager {
       })
     }
 
-    // 注册所有 PointCloud（批量渲染）
-    // 性能优化：复用数组，避免每次创建新数组
-    if (this.pointsCommandWithWorldSpace && this.pointCloudDataMap.size > 0) {
-      const allPointClouds = this._reusableArrays.allPointClouds
-      allPointClouds.length = 0 // 清空数组但保留引用，避免重新分配
-      
-      this.pointCloudDataMap.forEach((pointCloudData) => {
-        if (pointCloudData) {
-          allPointClouds.push(pointCloudData)
+    // 注册所有 PointCloud（单个实例渲染）
+    this.pointCloudDataMap.forEach((pointCloudData, componentId) => {
+      if (this.pointsCommandWithWorldSpace && pointCloudData) {
+        // 获取或创建单个实例
+        if (!this.pointCloudInstances.has(componentId)) {
+          this.pointCloudInstances.set(componentId, { displayName: `PointCloud-${componentId}` })
         }
-      })
-      
-      if (allPointClouds.length > 0) {
-        // 性能优化：复用批量实例对象
-        const batchPointCloudInstance = this._batchInstances.pointCloud
-        this.worldviewContext.onMount(batchPointCloudInstance, this.pointsCommandWithWorldSpace)
+        const instance = this.pointCloudInstances.get(componentId)
+        this.worldviewContext.onMount(instance, this.pointsCommandWithWorldSpace)
         this.worldviewContext.registerDrawCall({
-          instance: batchPointCloudInstance,
+          instance: instance,
           reglCommand: this.pointsCommandWithWorldSpace,
-          children: allPointClouds,
+          children: pointCloudData,
           layerIndex: 2
         })
       }
-    }
+    })
 
-    // 注册所有 PointCloud2（批量渲染）
-    // 性能优化：复用数组，避免每次创建新数组
-    if (this.pointsCommandWithWorldSpace && this.pointCloud2DataMap.size > 0) {
-      const allPointCloud2s = this._reusableArrays.allPointCloud2s
-      allPointCloud2s.length = 0 // 清空数组但保留引用，避免重新分配
-      
-      this.pointCloud2DataMap.forEach((pointCloud2Data) => {
-        if (pointCloud2Data) {
-          allPointCloud2s.push(pointCloud2Data)
+    // 注册所有 PointCloud2（单个实例渲染）
+    this.pointCloud2DataMap.forEach((pointCloud2Data, componentId) => {
+      if (this.pointsCommandWithWorldSpace && pointCloud2Data) {
+        // 获取或创建单个实例
+        if (!this.pointCloud2Instances.has(componentId)) {
+          this.pointCloud2Instances.set(componentId, { displayName: `PointCloud2-${componentId}` })
         }
-      })
-      
-      if (allPointCloud2s.length > 0) {
-        // 性能优化：复用批量实例对象
-        const batchPointCloud2Instance = this._batchInstances.pointCloud2
-        this.worldviewContext.onMount(batchPointCloud2Instance, this.pointsCommandWithWorldSpace)
+        const instance = this.pointCloud2Instances.get(componentId)
+        this.worldviewContext.onMount(instance, this.pointsCommandWithWorldSpace)
         this.worldviewContext.registerDrawCall({
-          instance: batchPointCloud2Instance,
+          instance: instance,
           reglCommand: this.pointsCommandWithWorldSpace,
-          children: allPointCloud2s,
+          children: pointCloud2Data,
           layerIndex: 2.5
         })
       }
-    }
+    })
 
     // 注册路径
     this.pathsData.forEach((pathData, index) => {
@@ -406,51 +373,23 @@ export class SceneManager {
     // 每个地图独立管理，只在数据变化时更新（参照 RViz 的独立 Display 模式）
     // 这样可以避免静态大地图每帧都重新注册，提升性能
 
-    // 注册所有 LaserScan（批量渲染）
-    // 性能优化：复用数组，避免每次创建新数组
-    if (this.pointsCommand && this.laserScanDataMap.size > 0) {
-      const allLaserScans = this._reusableArrays.allLaserScans
-      allLaserScans.length = 0 // 清空数组但保留引用，避免重新分配
-      
-      this.laserScanDataMap.forEach((laserScanData) => {
-        if (laserScanData) {
-          allLaserScans.push(laserScanData)
+    // 注册所有 LaserScan（单个实例渲染）
+    this.laserScanDataMap.forEach((laserScanData, componentId) => {
+      if (this.pointsCommandWithWorldSpace && laserScanData) {
+        // 获取或创建单个实例
+        if (!this.laserScanInstances.has(componentId)) {
+          this.laserScanInstances.set(componentId, { displayName: `LaserScan-${componentId}` })
         }
-      })
-      
-      if (allLaserScans.length > 0) {
-        // 性能优化：复用批量实例对象
-        const batchLaserScanInstance = this._batchInstances.laserScan
-        // 使用同一个命令引用（pointsCommandWithWorldSpace）
-        this.worldviewContext.onMount(batchLaserScanInstance, this.pointsCommandWithWorldSpace)
+        const instance = this.laserScanInstances.get(componentId)
+        this.worldviewContext.onMount(instance, this.pointsCommandWithWorldSpace)
         this.worldviewContext.registerDrawCall({
-          instance: batchLaserScanInstance,
+          instance: instance,
           reglCommand: this.pointsCommandWithWorldSpace,
-          children: allLaserScans,
+          children: laserScanData,
           layerIndex: 5
         })
-        // const totalPoints = allLaserScans.reduce((sum, scan) => sum + (scan.points?.length || 0), 0)
-        // console.log(`Registered ${allLaserScans.length} LaserScan(s) for rendering, total points: ${totalPoints}`)
-        // allLaserScans.forEach((scan, idx) => {
-        //   // 展开 Proxy 对象以查看实际值
-        //   const scaleValue = scan.scale ? { x: scan.scale.x, y: scan.scale.y, z: scan.scale.z } : null
-        //   const poseValue = scan.pose ? {
-        //     position: scan.pose.position ? { x: scan.pose.position.x, y: scan.pose.position.y, z: scan.pose.position.z } : null,
-        //     orientation: scan.pose.orientation ? { x: scan.pose.orientation.x, y: scan.pose.orientation.y, z: scan.pose.orientation.z, w: scan.pose.orientation.w } : null
-        //   } : null
-        //   console.log(`  LaserScan ${idx}:`, {
-        //     points: scan.points?.length || 0,
-        //     colors: scan.colors?.length || 0,
-        //     color: scan.color,
-        //     scale: scaleValue,
-        //     pose: poseValue,
-        //     firstPoint: scan.points?.[0],
-        //     firstColor: scan.colors?.[0],
-        //     lastPoint: scan.points?.[scan.points.length - 1]
-        //   })
-        // })
       }
-    }
+    })
 
     // 注册 TF Axes（使用 Cylinders）
     if (this.tfVisible && this.cylindersCommand && this.tfData && this.tfData.axes && this.tfData.axes.length > 0) {
@@ -492,21 +431,7 @@ export class SceneManager {
     this.worldviewContext.onUnmount(this.pointsInstance)
     
     // 地图不再通过 draw calls 系统，已移除相关代码
-    // 清除批量渲染实例（如果有）
-    // 批量实例的 displayName 以 "Batch" 开头
-    // 性能优化：直接遍历Map，避免Array.from创建新数组
-    const drawCalls = this.worldviewContext._drawCalls
-    if (drawCalls) {
-      for (const drawCall of drawCalls.values()) {
-        if (drawCall?.instance?._isBatch || 
-            drawCall?.instance?.displayName?.startsWith('BatchMaps-') ||
-            drawCall?.instance?.displayName?.startsWith('BatchLaserScans') ||
-            drawCall?.instance?.displayName?.startsWith('BatchPointClouds') ||
-            drawCall?.instance?.displayName?.startsWith('BatchPointCloud2s')) {
-          this.worldviewContext.onUnmount(drawCall.instance)
-        }
-      }
-    }
+    // 清除批量渲染实例的逻辑已移除，现在使用单个实例渲染
     
     // 清除 LaserScan、PointCloud、PointCloud2 实例
     this.laserScanInstances.forEach((instance) => {
@@ -2061,7 +1986,6 @@ export class SceneManager {
     this.laserScanRequestIds.clear()
     this.pointCloud2RequestIds.clear()
     this.gridCommand = null
-    this.pointsCommand = null
     this.linesCommand = null
     this.cylindersCommand = null
     this.axesData = null

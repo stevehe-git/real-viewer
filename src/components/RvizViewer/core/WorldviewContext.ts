@@ -664,10 +664,6 @@ export class WorldviewContext {
           cmd(hitmapProps, true)
         }
       } else if (!isHitmap) {
-        // 调试日志
-        // if (instance?.displayName === 'BatchLaserScans' || instance?.displayName?.includes('LaserScan')) {
-        //   console.log(`WorldviewContext: Rendering ${instance.displayName}, children type:`, Array.isArray(children) ? 'array' : typeof children, 'length:', Array.isArray(children) ? children.length : 'N/A')
-        // }
         try {
           cmd(children, false)
         } catch (error: any) {
