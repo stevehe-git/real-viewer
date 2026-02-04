@@ -5,6 +5,7 @@
 export * from './debugManager'
 export * from './tfDebug'
 export * from './renderDebug'
+export * from './panelDebug'
 export { default as globalDebugAPI } from './globalDebug'
 
 // 便捷导出
@@ -25,3 +26,8 @@ export {
   renderDebugger,
   logRender
 } from './renderDebug'
+
+export {
+  panelDebugger,
+  logPanel
+} from './panelDebug'
