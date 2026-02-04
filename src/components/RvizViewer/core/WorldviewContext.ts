@@ -359,31 +359,20 @@ export class WorldviewContext {
     }
     
     // 严格遵守最小帧间隔，无论交互模式还是正常模式
-    // 关键修复：requestAnimationFrame 会按照浏览器刷新率（通常 60Hz）调用，
-    // 这会导致 FPS 超过目标值。我们需要在回调中再次检查时间间隔。
+    // 关键修复：完全使用 setTimeout 控制帧率，避免 requestAnimationFrame 的干扰
+    // requestAnimationFrame 会按照浏览器刷新率（通常 60Hz）调用，导致 FPS 超过目标值
     if (timeSinceLastPaint >= minInterval) {
-      // 已达到最小帧间隔，使用 requestAnimationFrame 安排渲染
-      // 但在回调中再次检查时间间隔，确保帧率限制生效
-      this._frame = requestAnimationFrame(() => {
-        const now = performance.now()
-        const elapsed = now - this._lastPaintTime
-        if (elapsed >= minInterval) {
-          // 时间间隔足够，执行渲染
-          this.paint()
-        } else {
-          // 时间间隔不够，延迟渲染
-          const remainingDelay = minInterval - elapsed
-          this._frame = window.setTimeout(() => {
-            this.paint()
-          }, Math.max(0, remainingDelay)) as any
-        }
-      })
+      // 已达到最小帧间隔，立即安排渲染
+      // 使用 setTimeout 而不是 requestAnimationFrame，确保帧率限制生效
+      this._frame = window.setTimeout(() => {
+        this.paint()
+      }, 0) as any
     } else {
       // 未达到最小帧间隔，必须延迟渲染以确保帧率限制生效
       const delay = minInterval - timeSinceLastPaint
-      // 使用 setTimeout 确保延迟渲染，即使延迟很小也要遵守帧率限制
+      // 使用 setTimeout 确保延迟渲染，严格遵守帧率限制
       this._frame = window.setTimeout(() => {
-        this._frame = requestAnimationFrame(() => this.paint())
+        this.paint()
       }, Math.max(0, delay)) as any
     }
   }

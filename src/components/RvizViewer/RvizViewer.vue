@@ -332,7 +332,7 @@ function setGridVisible(visible: boolean): void {
   gridVisible.value = visible
   sceneManager.value?.setGridVisible(visible)
   worldview.value?.markDirty()
-  worldview.value?.paint()
+  // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
 }
 
 // 设置坐标轴可见性
@@ -340,7 +340,7 @@ function setAxesVisible(visible: boolean): void {
   axesVisible.value = visible
   sceneManager.value?.setAxesVisible(visible)
   worldview.value?.markDirty()
-  worldview.value?.paint()
+  // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
 }
 
 // 设置背景颜色
