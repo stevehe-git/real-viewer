@@ -167,33 +167,39 @@ watch(
               setGridVisible: (visible: boolean) => {
                 sceneManager.setGridVisible(visible)
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               setAxesVisible: (visible: boolean) => {
                 sceneManager.setAxesVisible(visible)
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               setAxesOptions: (options: { length?: number; radius?: number; alpha?: number }) => {
                 sceneManager.setAxesOptions(options)
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               updateMap: async (message: any, componentId: string) => {
                 // 异步处理地图数据（在 Web Worker 中），不阻塞主线程
                 await sceneManager.updateMap(message, componentId)
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               removeMap: (componentId: string) => {
                 sceneManager.removeMap(componentId)
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               clearAllMaps: () => {
                 sceneManager.clearAllMaps()
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               setMapOptions: (options: { 
                 alpha?: number
@@ -202,67 +208,80 @@ watch(
               }, componentId: string) => {
                 sceneManager.setMapOptions(options, componentId)
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               clearPaths: () => {
                 sceneManager.clearPaths()
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               finalPaint: () => {
                 // 最终渲染，清理后只渲染一次
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               updateLaserScan: async (message: any, componentId: string) => {
                 await sceneManager.updateLaserScan(message, componentId)
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               removeLaserScan: (componentId: string) => {
                 sceneManager.removeLaserScan(componentId)
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               clearAllLaserScans: () => {
                 sceneManager.clearAllLaserScans()
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               setLaserScanOptions: (options: LaserScanOptions, componentId: string) => {
                 sceneManager.setLaserScanOptions(options, componentId)
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               updatePointCloud: async (data: any, componentId: string) => {
                 await sceneManager.updatePointCloud(data, componentId)
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               removePointCloud: (componentId: string) => {
                 sceneManager.removePointCloud(componentId)
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               clearAllPointClouds: () => {
                 sceneManager.clearAllPointClouds()
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               updatePointCloud2: async (message: any, componentId: string) => {
                 await sceneManager.updatePointCloud2(message, componentId)
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               removePointCloud2: (componentId: string) => {
                 sceneManager.removePointCloud2(componentId)
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               clearAllPointCloud2s: () => {
                 sceneManager.clearAllPointCloud2s()
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               setPointCloud2Options: (options: { 
                 size?: number
@@ -274,7 +293,8 @@ watch(
               }, componentId: string) => {
                 sceneManager.setPointCloud2Options(options, componentId)
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               setGridOptions: (options: { 
                 planeCellCount?: number
@@ -289,37 +309,44 @@ watch(
               }) => {
                 sceneManager.setGridOptions(options)
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               destroyGrid: () => {
                 sceneManager.destroyGrid()
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               destroyAxes: () => {
                 sceneManager.destroyAxes()
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               createGrid: () => {
                 sceneManager.createGrid()
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               createAxes: () => {
                 sceneManager.createAxes()
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               setTFVisible: (visible: boolean) => {
                 sceneManager.setTFVisible(visible)
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
               setTFOptions: (options: TFOptions) => {
                 sceneManager.setTFOptions(options)
                 worldview.markDirty()
-                worldview.paint()
+                // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
+                // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               }
             }
           })

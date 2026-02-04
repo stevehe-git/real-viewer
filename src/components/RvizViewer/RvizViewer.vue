@@ -113,8 +113,8 @@ onMounted(async () => {
   await nextTick()
   setupResizeObserver()
 
-  // 初始渲染
-  worldview.value.paint()
+  // 初始渲染（通过 markDirty 触发，遵守帧率限制）
+  worldview.value.markDirty()
 })
 
 // 设置事件监听（基于 regl-worldview 的实现）
@@ -272,7 +272,7 @@ function updateDimensions(): void {
     
     // 触发重新渲染（仅在尺寸真正改变时）
     worldview.value!.markDirty()
-    worldview.value!.paint()
+    // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
     
     resizeTimeout = null
   })
@@ -308,7 +308,7 @@ function resetCamera(): void {
   if (!worldview.value) return
   worldview.value.setCameraState(DEFAULT_CAMERA_STATE)
   worldview.value.markDirty()
-  worldview.value.paint()
+  // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
 }
 
 // 切换网格显示
@@ -316,7 +316,7 @@ function toggleGrid(): void {
   gridVisible.value = !gridVisible.value
   sceneManager.value?.setGridVisible(gridVisible.value)
   worldview.value?.markDirty()
-  worldview.value?.paint()
+  // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
 }
 
 // 切换坐标轴显示
@@ -324,7 +324,7 @@ function toggleAxes(): void {
   axesVisible.value = !axesVisible.value
   sceneManager.value?.setAxesVisible(axesVisible.value)
   worldview.value?.markDirty()
-  worldview.value?.paint()
+  // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
 }
 
 // 设置网格可见性
@@ -355,7 +355,7 @@ function setBackgroundColor(color: string): void {
   }
   worldview.value.setCanvasBackgroundColor(hexToRgba(color))
   worldview.value.markDirty()
-  worldview.value.paint()
+  // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
 }
 
 // 暴露方法供父组件调用
@@ -378,7 +378,7 @@ watch(
       // 使用默认的 componentId 用于向后兼容
       sceneManager.value.updatePointCloud(newData, 'default-pointcloud')
       worldview.value?.markDirty()
-      worldview.value?.paint()
+      // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
     }
   },
   { deep: true }
@@ -393,7 +393,7 @@ watch(
         sceneManager.value?.addPath(path)
       })
       worldview.value?.markDirty()
-      worldview.value?.paint()
+      // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
     }
   },
   { deep: true }
@@ -425,7 +425,7 @@ watch(
     if (newColor && worldview.value) {
       worldview.value.setCanvasBackgroundColor(newColor)
       worldview.value.markDirty()
-      worldview.value.paint()
+      // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
     }
   }
 )

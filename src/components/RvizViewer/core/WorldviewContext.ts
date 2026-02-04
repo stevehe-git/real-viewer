@@ -75,12 +75,12 @@ export class WorldviewContext {
   
   // 性能优化：帧率限制和交互模式检测
   private _lastPaintTime = 0
-  private _targetFPS = 60 // 正常模式目标帧率
-  private _interactionFPS = 60 // 交互模式目标帧率（提高以获得流畅体验）
-  private _largeMapInteractionFPS = 45 // 大地图交互模式目标帧率（适度降低以平衡性能）
-  private _minFrameInterval = 1000 / this._targetFPS // 最小帧间隔（ms）
-  private _interactionFrameInterval = 1000 / this._interactionFPS // 交互模式最小帧间隔（ms）
-  private _largeMapInteractionFrameInterval = 1000 / this._largeMapInteractionFPS // 大地图交互模式最小帧间隔（ms）
+  private _targetFPS = 30 // 正常模式目标帧率（稳定在 30 以节省 CPU）
+  private _interactionFPS = 30 // 交互模式目标帧率（稳定在 30 以节省 CPU）
+  private _largeMapInteractionFPS = 30 // 大地图交互模式目标帧率（稳定在 30 以节省 CPU）
+  private _minFrameInterval = 1000 / this._targetFPS // 最小帧间隔（ms），约 33.33ms
+  private _interactionFrameInterval = 1000 / this._interactionFPS // 交互模式最小帧间隔（ms），约 33.33ms
+  private _largeMapInteractionFrameInterval = 1000 / this._largeMapInteractionFPS // 大地图交互模式最小帧间隔（ms），约 33.33ms
   
   /**
    * 更新帧率设置
@@ -347,38 +347,44 @@ export class WorldviewContext {
     const timeSinceLastPaint = now - this._lastPaintTime
     
     // 根据交互状态和地图大小选择帧率
+    // 关键修复：统一使用帧率限制，移除所有快速路径，确保 FPS 不会超过目标值
     let minInterval: number
     if (this._isInteracting) {
       // 交互模式下，如果有大地图，使用更低的帧率
       minInterval = this._hasLargeMap 
         ? this._largeMapInteractionFrameInterval 
         : this._interactionFrameInterval
-      
-      // 交互模式下，如果距离上次渲染时间很短，直接使用 requestAnimationFrame
-      // 这样可以获得更流畅的体验，避免 setTimeout 带来的延迟
-      if (timeSinceLastPaint < minInterval && timeSinceLastPaint < 8) {
-        // 如果距离上次渲染不到8ms，直接安排下一帧渲染（约120fps上限）
-        this._frame = requestAnimationFrame(() => this.paint())
-        return
-      }
     } else {
       minInterval = this._minFrameInterval
     }
     
+    // 严格遵守最小帧间隔，无论交互模式还是正常模式
+    // 关键修复：requestAnimationFrame 会按照浏览器刷新率（通常 60Hz）调用，
+    // 这会导致 FPS 超过目标值。我们需要在回调中再次检查时间间隔。
     if (timeSinceLastPaint >= minInterval) {
-      // 已达到最小帧间隔，立即安排渲染
-      this._frame = requestAnimationFrame(() => this.paint())
+      // 已达到最小帧间隔，使用 requestAnimationFrame 安排渲染
+      // 但在回调中再次检查时间间隔，确保帧率限制生效
+      this._frame = requestAnimationFrame(() => {
+        const now = performance.now()
+        const elapsed = now - this._lastPaintTime
+        if (elapsed >= minInterval) {
+          // 时间间隔足够，执行渲染
+          this.paint()
+        } else {
+          // 时间间隔不够，延迟渲染
+          const remainingDelay = minInterval - elapsed
+          this._frame = window.setTimeout(() => {
+            this.paint()
+          }, Math.max(0, remainingDelay)) as any
+        }
+      })
     } else {
-      // 未达到最小帧间隔，延迟渲染（仅在非交互模式或延迟较大时）
+      // 未达到最小帧间隔，必须延迟渲染以确保帧率限制生效
       const delay = minInterval - timeSinceLastPaint
-      // 如果延迟很小（< 2ms），直接使用 requestAnimationFrame 避免 setTimeout 的开销
-      if (delay < 2) {
+      // 使用 setTimeout 确保延迟渲染，即使延迟很小也要遵守帧率限制
+      this._frame = window.setTimeout(() => {
         this._frame = requestAnimationFrame(() => this.paint())
-      } else {
-        this._frame = window.setTimeout(() => {
-          this._frame = requestAnimationFrame(() => this.paint())
-        }, delay) as any
-      }
+      }, Math.max(0, delay)) as any
     }
   }
   
@@ -433,22 +439,9 @@ export class WorldviewContext {
     this._needsPaint = true
     
     // 如果没有待处理的渲染请求，安排下一次渲染
+    // 关键修复：统一使用 _scheduleNextPaint()，确保帧率限制始终生效
+    // 移除所有快速路径，避免 FPS 超过目标值
     if (this._frame === null) {
-      // 交互模式下，如果距离上次渲染时间很短，直接使用 requestAnimationFrame
-      // 这样可以获得更低的延迟
-      if (this._isInteracting) {
-        const now = performance.now()
-        const timeSinceLastPaint = now - this._lastPaintTime
-        const minInterval = this._hasLargeMap 
-          ? this._largeMapInteractionFrameInterval 
-          : this._interactionFrameInterval
-        
-        // 如果距离上次渲染时间很短（< 4ms），直接安排下一帧渲染
-        if (timeSinceLastPaint < 4) {
-          this._frame = requestAnimationFrame(() => this.paint())
-          return
-        }
-      }
       this._scheduleNextPaint()
     }
   }
