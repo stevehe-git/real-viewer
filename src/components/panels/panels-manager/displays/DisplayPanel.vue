@@ -156,7 +156,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, reactive, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRvizStore } from '@/stores/rviz'
 import { useDisplayStore } from '@/stores/display'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -695,10 +695,64 @@ function handleRemove() {
       cancelButtonText: '取消',
       type: 'warning'
     }
-  ).then(() => {
-    rvizStore.removeComponent(selectedComponentId.value!)
-    expandedComponents.value.delete(selectedComponentId.value!)
-    selectedComponentId.value = null
+  ).then(async () => {
+    const componentIdToRemove = selectedComponentId.value!
+    const currentIndex = displayComponents.value.findIndex(c => c.id === componentIdToRemove)
+    
+    // 删除组件
+    rvizStore.removeComponent(componentIdToRemove)
+    expandedComponents.value.delete(componentIdToRemove)
+    
+    // 等待 DOM 更新完成
+    await nextTick()
+    
+    // 自动选中下一个组件（如果有的话），保持按钮显示
+    const remainingComponents = displayComponents.value
+    if (remainingComponents.length > 0) {
+      // 优先选中同位置的组件，如果没有则选中最后一个
+      const nextIndex = currentIndex < remainingComponents.length ? currentIndex : remainingComponents.length - 1
+      const nextComponent = remainingComponents[nextIndex]
+      if (nextComponent) {
+        selectedComponentId.value = nextComponent.id
+        expandedComponents.value.add(nextComponent.id)
+      }
+    } else {
+      // 如果没有组件了，清除选中状态
+      selectedComponentId.value = null
+    }
+    
+    // 等待 DOM 更新完成后再设置焦点
+    await nextTick()
+    
+    // 找到下一个 FloatingPanel 的标题并设置焦点
+    // 通过查找包含 "显示配置" 标题的 panel 来定位当前 panel
+    const allPanels = Array.from(document.querySelectorAll('.floating-panel'))
+    let currentPanelIndex = -1
+    
+    // 找到当前 panel（包含 "显示配置" 的 panel）
+    for (let i = 0; i < allPanels.length; i++) {
+      const panel = allPanels[i] as HTMLElement
+      const titleElement = panel.querySelector('.floating-panel-header .panel-title')
+      if (titleElement && titleElement.textContent?.includes('显示配置')) {
+        currentPanelIndex = i
+        break
+      }
+    }
+    
+    // 找到下一个 panel 的标题并设置焦点
+    if (currentPanelIndex >= 0 && currentPanelIndex < allPanels.length - 1) {
+      const nextPanel = allPanels[currentPanelIndex + 1] as HTMLElement
+      const nextPanelTitle = nextPanel.querySelector('.floating-panel-header .panel-title') as HTMLElement
+      if (nextPanelTitle) {
+        // 设置 tabindex 以便可以聚焦
+        nextPanelTitle.setAttribute('tabindex', '-1')
+        // 使用 setTimeout 确保在下一个事件循环中设置焦点
+        setTimeout(() => {
+          nextPanelTitle.focus()
+        }, 0)
+      }
+    }
+    
     ElMessage.success('已删除')
   }).catch(() => {
     // 用户取消
