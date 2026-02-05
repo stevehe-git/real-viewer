@@ -649,6 +649,7 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
 
   // 生成地图消息的快速哈希（用于初步变化检测）
   // 这个哈希用于在 useDisplaySync 层面快速过滤，详细检测在 SceneManager.updateMap 中进行
+  // 改进：增加采样点数量，检查前100个、中间100个、后100个数据点，提高检测准确性
   const generateQuickMessageHash = (message: any): string => {
     if (!message || !message.info || !message.data || !Array.isArray(message.data)) {
       return ''
@@ -661,17 +662,25 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     const originY = info.origin?.position?.y || 0
     const dataLength = message.data.length
     
-    // 快速哈希：元数据 + 数据长度 + 前几个和后几个数据点
+    // 基础哈希：元数据 + 数据长度
     let hash = `${width}_${height}_${resolution}_${originX}_${originY}_${dataLength}`
     
-    // 采样检查：只检查前10个和后10个数据点（快速检测）
+    // 改进：采样检查前100个、中间100个、后100个数据点（与 SceneManager.generateMapMessageHash 保持一致）
+    // 这样可以更准确地检测地图数据的变化，特别是建图过程中中间部分的变化
+    const sampleSize = Math.min(100, Math.floor(dataLength / 3))
     if (dataLength > 0) {
-      const sampleSize = Math.min(10, dataLength)
-      // 前10个点
+      // 前100个点
       for (let i = 0; i < sampleSize && i < dataLength; i++) {
         hash += `_${message.data[i]}`
       }
-      // 后10个点
+      // 中间100个点
+      if (dataLength > sampleSize * 2) {
+        const midStart = Math.floor(dataLength / 2) - Math.floor(sampleSize / 2)
+        for (let i = midStart; i < midStart + sampleSize && i < dataLength; i++) {
+          hash += `_${message.data[i]}`
+        }
+      }
+      // 后100个点
       if (dataLength > sampleSize) {
         const endStart = Math.max(0, dataLength - sampleSize)
         for (let i = endStart; i < dataLength; i++) {
@@ -692,37 +701,99 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
       const mapComponents = rvizStore.displayComponents.filter(c => c.type === 'map')
       // 访问状态更新触发器以确保响应式追踪
       const trigger = topicSubscriptionManager.getStatusUpdateTrigger()
-      trigger.value
+      const triggerValue = trigger.value
       
-      // 返回所有地图组件的消息映射（包含消息哈希用于精确去重）
-      // 只处理enabled为true的组件，enabled为false时不处理数据更新
-      const messages: Record<string, { message: any; messageHash: string }> = {}
+      // 调试日志：记录 watch 被调用
+      if (mapComponents.length > 0) {
+        console.log(`[Map Debug] Watch source function called, trigger value: ${triggerValue}`)
+      }
+      
+      // 关键修复：返回一个包含 messageCount 的字符串键，确保每次新消息时返回值都不同
+      // 这样可以确保 watch 能够正确触发，即使对象引用相同
+      const keys: string[] = []
+      mapComponents.forEach(mapComponent => {
+        if (mapComponent.enabled) {
+          const message = topicSubscriptionManager.getLatestMessage(mapComponent.id)
+          if (message) {
+            // 获取消息的时间戳和计数（从状态中获取，确保每次新消息都有不同的值）
+            const status = topicSubscriptionManager.getStatus(mapComponent.id)
+            const timestamp = status?.lastMessageTime || Date.now()
+            const messageCount = status?.messageCount || 0
+            // 关键：使用 messageCount 和 timestamp 生成唯一键，确保每次新消息时返回值都不同
+            const key = `${mapComponent.id}:${messageCount}:${timestamp}`
+            keys.push(key)
+            
+            // 调试日志：记录每个组件的状态
+            console.log(`[Map Debug] Component ${mapComponent.id} status:`, {
+              messageCount,
+              timestamp,
+              hasMessage: !!message,
+              key
+            })
+          } else {
+            console.log(`[Map Debug] Component ${mapComponent.id} has no message`)
+          }
+        }
+        // enabled为false时，不处理数据更新，也不添加到messages中
+      })
+      const result = keys.sort().join('|')
+      // 调试日志：记录返回值
+      if (mapComponents.length > 0) {
+        console.log(`[Map Debug] Watch source returning keys: "${result}"`)
+      }
+      // 返回排序后的键字符串，确保顺序一致
+      return result
+    },
+    (keysString, oldKeysString) => {
+      // 调试日志：记录 watch 回调被触发
+      console.log(`[Map Debug] Watch callback triggered:`, {
+        oldKeys: oldKeysString,
+        newKeys: keysString,
+        changed: oldKeysString !== keysString
+      })
+      
+      // 解析键字符串，获取所有需要更新的组件
+      const mapComponents = rvizStore.displayComponents.filter(c => c.type === 'map')
+      
+      // 更新所有 enabled 的地图组件
       mapComponents.forEach(mapComponent => {
         if (mapComponent.enabled) {
           const message = topicSubscriptionManager.getLatestMessage(mapComponent.id)
           if (message) {
             // 生成消息哈希用于变化检测
             const messageHash = generateQuickMessageHash(message)
-            messages[mapComponent.id] = { message, messageHash }
-          }
-        }
-        // enabled为false时，不处理数据更新，也不添加到messages中
-      })
-      return messages
-    },
-    (mapMessages) => {
-      // 更新所有地图（只处理真正变化的消息）
-      Object.entries(mapMessages).forEach(([componentId, { message, messageHash }]) => {
-        if (message) {
-          // 检查消息是否真的变化了（通过消息哈希比较）
-          // 这比时间戳更准确，因为即使时间戳不同，如果数据相同也不会触发更新
-          const lastHash = lastProcessedMessageHashes.get(componentId)
-          if (lastHash === undefined || lastHash !== messageHash) {
-            // 消息已变化，更新地图
-            // 关键修复：数据更新前，确保配置已同步到 SceneManager
-            // 这样 updateMap 调用 registerDrawCalls 时，能读取到最新配置
-            const mapComponent = rvizStore.displayComponents.find(c => c.id === componentId && c.type === 'map')
-            if (mapComponent && mapComponent.enabled) {
+            // 检查消息是否真的变化了（通过消息哈希比较）
+            // 这比时间戳更准确，因为即使时间戳不同，如果数据相同也不会触发更新
+            const lastHash = lastProcessedMessageHashes.get(mapComponent.id)
+            
+            // 获取消息的时间戳，用于辅助判断（建图过程中，即使哈希相同，时间戳变化也应该更新）
+            const status = topicSubscriptionManager.getStatus(mapComponent.id)
+            const currentTimestamp = status?.lastMessageTime || Date.now()
+            const lastProcessedTimestamp = lastProcessedMessageHashes.get(`${mapComponent.id}_timestamp`) || 0
+            
+            // 调试日志：记录哈希比较（完整哈希值）
+            console.log(`[Map Debug] Component ${mapComponent.id} hash check:`, {
+              lastHash: lastHash || '(none)',
+              newHash: messageHash || '(none)',
+              hashChanged: lastHash !== messageHash,
+              lastTimestamp: lastProcessedTimestamp,
+              currentTimestamp: currentTimestamp,
+              timestampChanged: currentTimestamp !== lastProcessedTimestamp,
+              willUpdate: lastHash === undefined || lastHash !== messageHash || currentTimestamp !== lastProcessedTimestamp,
+              hashLength: {
+                last: lastHash?.length || 0,
+                new: messageHash?.length || 0
+              }
+            })
+            
+            // 关键修复：对于建图场景，即使哈希相同，如果时间戳变化，也应该更新
+            // 因为建图过程中，地图数据可能只在非采样区域变化，哈希检测可能漏检
+            if (lastHash === undefined || lastHash !== messageHash || currentTimestamp !== lastProcessedTimestamp) {
+              // 消息已变化，更新地图
+              console.log(`[Map Debug] Updating map for ${mapComponent.id}`)
+              
+              // 关键修复：数据更新前，确保配置已同步到 SceneManager
+              // 这样 updateMap 调用 registerDrawCalls 时，能读取到最新配置
               const options = mapComponent.options || {}
               // 确保配置已同步（如果还没有同步），包括 topic
               context.setMapOptions({
@@ -730,30 +801,40 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
                 colorScheme: options.colorScheme,
                 drawBehind: options.drawBehind,
                 topic: options.topic
-              }, componentId)
+              }, mapComponent.id)
+              
+              // 保存消息哈希和时间戳
+              lastProcessedMessageHashes.set(mapComponent.id, messageHash)
+              lastProcessedMessageHashes.set(`${mapComponent.id}_timestamp`, currentTimestamp)
+              // 调用 updateMap，它内部会进行更详细的检查
+              console.log(`[Map Debug] Calling context.updateMap for ${mapComponent.id}`)
+              context.updateMap(message, mapComponent.id)
+            } else {
+              // 调试日志：记录哈希相同的情况
+              console.log(`[Map Debug] Component ${mapComponent.id} hash unchanged, skipping update`)
             }
-            
-            // 保存消息哈希
-            lastProcessedMessageHashes.set(componentId, messageHash)
-            // 调用 updateMap，它内部会进行更详细的检查
-            context.updateMap(message, componentId)
+            // 如果哈希相同，说明是同一个消息，跳过处理（去重）
+          } else {
+            console.log(`[Map Debug] Component ${mapComponent.id} has no message in callback`)
           }
-          // 如果哈希相同，说明是同一个消息，跳过处理（去重）
         }
       })
       
       // 移除已禁用或已删除的地图
       // 注意：enabled为false的组件已经在syncMapDisplay中通过hideMap处理，这里只处理真正删除的组件
-      const currentMapIds = new Set(Object.keys(mapMessages))
-      rvizStore.displayComponents
-        .filter(c => c.type === 'map')
-        .forEach(mapComponent => {
-          // 只处理真正删除的组件（不在currentMapIds中），enabled为false的组件不在这里处理
-          if (!currentMapIds.has(mapComponent.id)) {
-            lastProcessedMessageHashes.delete(mapComponent.id) // 清理缓存
-            context.removeMap(mapComponent.id)
-          }
-        })
+      const currentMapIds = new Set(
+        mapComponents
+          .filter(c => c.enabled)
+          .map(c => c.id)
+      )
+      mapComponents.forEach(mapComponent => {
+        // 只处理真正删除的组件（不在currentMapIds中），enabled为false的组件不在这里处理
+        if (!currentMapIds.has(mapComponent.id)) {
+          lastProcessedMessageHashes.delete(mapComponent.id) // 清理缓存
+          lastProcessedMessageHashes.delete(`${mapComponent.id}_timestamp`) // 清理时间戳缓存
+          context.removeMap(mapComponent.id)
+        }
+      })
     },
     { immediate: true, deep: false } // 改为 deep: false，因为我们已经在 watch 函数中手动检查变化
   )

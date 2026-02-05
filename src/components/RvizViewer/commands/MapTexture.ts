@@ -15,6 +15,8 @@ interface CachedMapTexture {
   width: number
   height: number
   dataHash: string
+  _destroyed?: boolean // 标记纹理是否已被销毁，避免重复销毁
+  textureData?: any // 保存 textureData 引用，用于检查数据是否变化
 }
 
 const textureCache = new Map<string, CachedMapTexture>()
@@ -51,9 +53,16 @@ export function clearMapTextureCache(componentId: string, dataHash?: string): vo
     textureCache.forEach((cached, key) => {
       if (key.endsWith(`_${dataHash}`) || cached.dataHash === dataHash) {
         keysToDelete.push(key)
-        // 销毁纹理资源
-        if (cached.texture && cached.texture.destroy) {
-          cached.texture.destroy()
+        // 销毁纹理资源（避免重复销毁）
+        if (cached.texture && cached.texture.destroy && !cached._destroyed) {
+          try {
+            cached.texture.destroy()
+            cached._destroyed = true
+          } catch (error) {
+            // 如果销毁失败（可能已经被销毁），忽略错误
+            console.warn(`[MapTexture] Failed to destroy texture for ${componentId}:`, error)
+            cached._destroyed = true
+          }
         }
       }
     })
@@ -66,8 +75,16 @@ export function clearMapTextureCache(componentId: string, dataHash?: string): vo
  */
 export function clearAllMapTextureCache(): void {
   textureCache.forEach((cached) => {
-    if (cached.texture && cached.texture.destroy) {
-      cached.texture.destroy()
+    // 避免重复销毁纹理
+    if (cached.texture && cached.texture.destroy && !cached._destroyed) {
+      try {
+        cached.texture.destroy()
+        cached._destroyed = true
+      } catch (error) {
+        // 如果销毁失败（可能已经被销毁），忽略错误
+        console.warn(`[MapTexture] Failed to destroy texture in clearAllMapTextureCache:`, error)
+        cached._destroyed = true
+      }
     }
   })
   textureCache.clear()
@@ -287,8 +304,20 @@ const mapTextureCommand = (regl: Regl) => {
     },
     uniforms: {
       mapTexture: (_context: any, props: any) => {
-        // 使用缓存的纹理
-        if (props._cachedTexture?.texture) {
+        // 关键修复：检查 textureData 引用是否变化
+        // 即使 dataHash 相同，如果 textureData 引用变化，也需要重新创建纹理
+        const currentTextureData = props.textureData
+        const cachedTextureData = props._cachedTextureData
+        
+        // 如果 textureData 引用变化，清除缓存
+        if (props._cachedTexture?.texture && currentTextureData !== cachedTextureData) {
+          console.log(`[MapTexture] Texture data reference changed, clearing cache`)
+          props._cachedTexture = null
+          props._cachedTextureData = null
+        }
+        
+        // 使用缓存的纹理（如果 textureData 引用未变化）
+        if (props._cachedTexture?.texture && currentTextureData === cachedTextureData) {
           return props._cachedTexture.texture
         }
         
@@ -302,9 +331,27 @@ const mapTextureCommand = (regl: Regl) => {
           
           // 使用闭包捕获的 regl 实例
           const cached = getCachedMapTexture(regl, cacheKey)
-          if (cached) {
+          
+          // 关键修复：即使缓存存在，如果 textureData 引用变化，也要重新创建纹理
+          if (cached && cached.textureData === currentTextureData) {
             props._cachedTexture = cached
+            props._cachedTextureData = currentTextureData
             return cached.texture
+          }
+          
+          // 如果缓存存在但 textureData 引用变化，先清理旧缓存
+          if (cached) {
+            console.log(`[MapTexture] Texture data reference changed, clearing old cache for key: ${cacheKey}`)
+            // 清理旧纹理缓存
+            if (cached.texture && cached.texture.destroy && !cached._destroyed) {
+              try {
+                cached.texture.destroy()
+                cached._destroyed = true
+              } catch (error) {
+                console.warn(`[MapTexture] Failed to destroy old texture:`, error)
+              }
+            }
+            textureCache.delete(cacheKey)
           }
           
           // 创建新纹理
@@ -316,7 +363,10 @@ const mapTextureCommand = (regl: Regl) => {
             props.height,
             cacheKey
           )
+          // 保存 textureData 引用，用于下次检查
+          newCached.textureData = currentTextureData
           props._cachedTexture = newCached
+          props._cachedTextureData = currentTextureData
           return newCached.texture
         }
         

@@ -122,7 +122,9 @@ export class TopicSubscriptionManager {
   private triggerStatusUpdateThrottled(immediate: boolean = false) {
     if (immediate) {
       // 立即更新（用于订阅状态变化等关键更新）
+      const oldValue = this.statusUpdateTrigger.value
       this.statusUpdateTrigger.value++
+      console.log(`[Map Debug] triggerStatusUpdateThrottled: Immediate update, trigger value: ${oldValue} -> ${this.statusUpdateTrigger.value}`)
       this.pendingStatusUpdate = false
       if (this.statusUpdateThrottleTimer !== null) {
         clearTimeout(this.statusUpdateThrottleTimer)
@@ -137,13 +139,18 @@ export class TopicSubscriptionManager {
       // 对于高频消息类型（如图像），使用更长的节流间隔（200ms）
       // 对于其他类型，使用较短的间隔（100ms）以保持响应性
       const throttleInterval = 200 // 统一使用 200ms，减少更新频率
+      console.log(`[Map Debug] triggerStatusUpdateThrottled: Scheduling throttled update in ${throttleInterval}ms`)
       this.statusUpdateThrottleTimer = window.setTimeout(() => {
         if (this.pendingStatusUpdate) {
+          const oldValue = this.statusUpdateTrigger.value
           this.statusUpdateTrigger.value++
+          console.log(`[Map Debug] triggerStatusUpdateThrottled: Throttled update executed, trigger value: ${oldValue} -> ${this.statusUpdateTrigger.value}`)
           this.pendingStatusUpdate = false
         }
         this.statusUpdateThrottleTimer = null
       }, throttleInterval)
+    } else {
+      console.log(`[Map Debug] triggerStatusUpdateThrottled: Throttle timer already exists, pending update`)
     }
   }
 
@@ -326,6 +333,18 @@ export class TopicSubscriptionManager {
       subscriber.subscribe((message: any) => {
         const timestamp = Date.now()
 
+        // 调试日志：记录消息到达
+        if (componentType === 'map') {
+          console.log(`[Map Debug] Message received for ${componentId}:`, {
+            timestamp,
+            hasInfo: !!message?.info,
+            hasData: !!message?.data,
+            dataLength: message?.data?.length || 0,
+            width: message?.info?.width || 0,
+            height: message?.info?.height || 0
+          })
+        }
+
         // 检查数据是否有效
         const hasData = this.isValidData(message, componentType)
 
@@ -376,8 +395,19 @@ export class TopicSubscriptionManager {
               lastMessageTime: timestamp
             })
             
-            // 对于高频消息（如图像），使用更激进的节流（每200ms更新一次）
-            if (componentType === 'image' || componentType === 'camera') {
+            // 对于 map 类型，即使状态未变化，也应该立即触发更新（因为地图数据可能已经变化）
+            // 建图过程中，地图数据会频繁更新，需要及时响应
+            if (componentType === 'map') {
+              // 调试日志：记录状态更新触发
+              console.log(`[Map Debug] Triggering immediate status update for ${componentId}:`, {
+                messageCount: newMessageCount,
+                timestamp,
+                hasData,
+                statusChanged
+              })
+              this.triggerStatusUpdateThrottled(true) // 立即更新，确保地图能及时更新
+            } else if (componentType === 'image' || componentType === 'camera') {
+              // 对于高频消息（如图像），使用更激进的节流（每200ms更新一次）
               this.triggerStatusUpdateThrottled() // 使用节流更新
             } else {
               // 对于其他类型，也使用节流更新，但频率更低（确保时间戳能更新）

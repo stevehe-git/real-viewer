@@ -1069,12 +1069,37 @@ export class SceneManager {
     const messageHash = this.generateMapMessageHash(message)
     const lastMessageHash = this.mapMessageHashMap.get(componentId)
 
-    // 如果消息哈希相同，说明数据完全没有变化，直接返回
-    // 这样可以避免不必要的 Worker 处理和渲染更新
-    if (lastMessageHash === messageHash && this.mapTextureDataMap.has(componentId)) {
-      // 数据未变化，取消请求但不清除现有数据，也不触发渲染
-      return
+    // 调试日志：记录哈希检测（完整哈希值）
+    console.log(`[Map Debug] SceneManager.updateMap called for ${componentId}:`, {
+      hasLastHash: !!lastMessageHash,
+      lastHash: lastMessageHash || '(none)',
+      newHash: messageHash || '(none)',
+      hashChanged: lastMessageHash !== messageHash,
+      hasTextureData: this.mapTextureDataMap.has(componentId),
+      willSkip: lastMessageHash === messageHash && this.mapTextureDataMap.has(componentId),
+      hashLength: {
+        last: lastMessageHash?.length || 0,
+        new: messageHash?.length || 0
+      }
+    })
+
+    // 关键修复：对于建图场景，即使哈希相同，也应该允许更新
+    // 因为采样检测可能漏检局部变化，特别是建图过程中，地图数据可能只在非采样区域变化
+    // 如果消息哈希相同，说明采样区域数据没有变化，但非采样区域可能已经变化
+    // 对于建图场景，我们应该更宽松：如果哈希相同但这是第一次处理，或者距离上次处理时间较长，也应该更新
+    const shouldSkip = lastMessageHash === messageHash && this.mapTextureDataMap.has(componentId)
+    
+    if (shouldSkip) {
+      // 关键修复：对于建图场景，即使哈希相同，也允许更新（信任 useDisplaySync 的时间戳判断）
+      // useDisplaySync 已经通过时间戳判断需要更新，说明确实有新消息到达
+      // 即使哈希相同，也可能是采样检测的漏检，应该允许更新
+      console.log(`[Map Debug] SceneManager.updateMap: Hash unchanged, but allowing update for ${componentId} (trusting useDisplaySync timestamp check)`)
+      console.log(`[Map Debug] SceneManager.updateMap: WARNING - Hash-based detection may have false negatives for mapping scenarios`)
+      console.log(`[Map Debug] SceneManager.updateMap: Map data may have changed outside sampled areas (sampling only checks first/middle/last 100 points)`)
+      // 不返回，继续处理更新，因为 useDisplaySync 已经判断需要更新
     }
+    
+    console.log(`[Map Debug] SceneManager.updateMap: Processing update for ${componentId}`)
 
     // 生成新的请求 ID（用于取消过时的请求）
     this.mapRequestIdCounter++
@@ -1148,6 +1173,26 @@ export class SceneManager {
         // 生成元数据哈希（用于纹理缓存）
         const dataHash = `${width}_${height}_${resolution}_${message.info?.origin?.position?.x || 0}_${message.info?.origin?.position?.y || 0}`
         
+        // 检查纹理数据是否真的变化了（即使哈希相同，数据可能已经变化）
+        const oldTextureData = this.mapTextureDataMap.get(componentId)
+        const textureDataChanged = !oldTextureData || 
+          oldTextureData.textureData !== result.textureData ||
+          oldTextureData.width !== result.width ||
+          oldTextureData.height !== result.height ||
+          oldTextureData.dataHash !== (result.dataHash || dataHash)
+        
+        console.log(`[Map Debug] SceneManager.updateMap: Texture data changed: ${textureDataChanged}`, {
+          hasOldData: !!oldTextureData,
+          oldDataHash: oldTextureData?.dataHash,
+          newDataHash: result.dataHash || dataHash,
+          oldTextureDataLength: oldTextureData?.textureData?.length,
+          newTextureDataLength: result.textureData?.length,
+          oldWidth: oldTextureData?.width,
+          newWidth: result.width,
+          oldHeight: oldTextureData?.height,
+          newHeight: result.height
+        })
+        
         this.mapTextureDataMap.set(componentId, {
           textureData: result.textureData,
           width: result.width,
@@ -1218,7 +1263,12 @@ export class SceneManager {
       
       // 参照 RViz：每个地图独立更新，只有数据变化的地图才更新 draw call
       // 静态地图保持现有 draw call，不重复注册
+      console.log(`[Map Debug] SceneManager.updateMap: Calling updateMapDrawCall for ${componentId}`)
       this.updateMapDrawCall(componentId)
+      // 关键修复：数据更新后必须触发渲染更新，确保地图能及时显示
+      console.log(`[Map Debug] SceneManager.updateMap: Calling onDirty for ${componentId}`)
+      this.worldviewContext.onDirty()
+      console.log(`[Map Debug] SceneManager.updateMap: Update completed for ${componentId}`)
     } catch (error: any) {
       // 检查请求是否已被取消
       const currentRequestId = this.mapRequestIds.get(componentId)
@@ -1295,10 +1345,28 @@ export class SceneManager {
     }
 
     // 创建或更新 mapProps
+    // 关键修复：即使 dataHash 相同，也要检查 textureData 引用是否变化
+    // 因为建图过程中，数据可能变化但 dataHash 相同（只基于元数据）
     let mapProps = this._mapPropsCache.get(componentId)
+    const textureDataChanged = !mapProps || mapProps.textureData !== textureData.textureData
+    
+    console.log(`[Map Debug] updateMapDrawCall: Checking mapProps cache for ${componentId}:`, {
+      hasCachedProps: !!mapProps,
+      dataHashMatch: mapProps?.dataHash === textureData.dataHash,
+      textureDataChanged: textureDataChanged,
+      alphaChanged: mapProps?.alpha !== alpha,
+      colorSchemeChanged: mapProps?.colorScheme !== colorScheme,
+      zOffsetChanged: mapProps?.zOffset !== zOffset,
+      willRecreate: !mapProps || mapProps.dataHash !== textureData.dataHash || 
+        mapProps.alpha !== alpha || mapProps.colorScheme !== colorScheme || 
+        mapProps.zOffset !== zOffset || textureDataChanged
+    })
+    
     if (!mapProps || mapProps.dataHash !== textureData.dataHash || 
         mapProps.alpha !== alpha || mapProps.colorScheme !== colorScheme || 
-        mapProps.zOffset !== zOffset) {
+        mapProps.zOffset !== zOffset || textureDataChanged) {
+      // 关键修复：即使 dataHash 相同，如果 textureData 引用变化，也要重新创建 mapProps
+      // 这确保了建图过程中的动态更新
       mapProps = {
         textureData: textureData.textureData,
         width: textureData.width,
@@ -1311,10 +1379,12 @@ export class SceneManager {
         dataHash: textureData.dataHash
       }
       this._mapPropsCache.set(componentId, mapProps)
+      console.log(`[Map Debug] updateMapDrawCall: Recreated mapProps for ${componentId}`)
     } else {
       mapProps.alpha = alpha
       mapProps.colorScheme = colorScheme
       mapProps.zOffset = zOffset
+      console.log(`[Map Debug] updateMapDrawCall: Updated mapProps properties for ${componentId} (textureData unchanged)`)
     }
 
     // 保存地图的渲染 props
@@ -1322,7 +1392,9 @@ export class SceneManager {
     
     // 参照 RViz：所有地图共享一次 camera.draw 调用，在回调内部依次渲染所有地图
     // 关键优化：N 个地图只调用 1 次 camera.draw，而不是 N 次，大幅降低 CPU 使用率
+    console.log(`[Map Debug] updateMapDrawCall: Calling updateMapRenderCallback, total maps: ${this.mapPropsMap.size}`)
     this.updateMapRenderCallback()
+    console.log(`[Map Debug] updateMapDrawCall: Completed for ${componentId}`)
   }
 
   /**
@@ -1331,14 +1403,18 @@ export class SceneManager {
   private updateMapRenderCallback(): void {
     // 移除旧的回调
     if (this.mapRenderCallback) {
+      console.log(`[Map Debug] updateMapRenderCallback: Unregistering old callback`)
       this.worldviewContext.unregisterPaintCallback(this.mapRenderCallback)
       this.mapRenderCallback = null
     }
     
     // 如果没有地图，不需要注册回调
     if (this.mapPropsMap.size === 0) {
+      console.log(`[Map Debug] updateMapRenderCallback: No maps, skipping callback registration`)
       return
     }
+    
+    console.log(`[Map Debug] updateMapRenderCallback: Registering callback for ${this.mapPropsMap.size} maps`)
     
     // 创建统一的地图渲染回调：所有地图共享一次 camera.draw 调用
     this.mapRenderCallback = () => {
@@ -1371,7 +1447,9 @@ export class SceneManager {
     }
     
     // 注册统一的地图渲染回调
+    console.log(`[Map Debug] updateMapRenderCallback: Registering paint callback`)
     this.worldviewContext.registerPaintCallback(this.mapRenderCallback)
+    console.log(`[Map Debug] updateMapRenderCallback: Callback registered successfully`)
   }
   
   /**
