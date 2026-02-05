@@ -961,6 +961,96 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     { immediate: true, deep: false }
   )
 
+  // 监听所有 Path 组件的配置选项变化（颜色、透明度、线宽、线型、缓冲区长度等）
+  watch(
+    () => {
+      return rvizStore.displayComponents
+        .filter(c => c.type === 'path')
+        .map(pathComponent => ({
+          id: pathComponent.id,
+          enabled: pathComponent.enabled,
+          color: pathComponent.options?.color,
+          alpha: pathComponent.options?.alpha,
+          lineWidth: pathComponent.options?.lineWidth,
+          lineStyle: pathComponent.options?.lineStyle,
+          bufferLength: pathComponent.options?.bufferLength,
+          offsetX: pathComponent.options?.offsetX,
+          offsetY: pathComponent.options?.offsetY,
+          offsetZ: pathComponent.options?.offsetZ,
+          poseStyle: pathComponent.options?.poseStyle
+        }))
+    },
+    (pathConfigs) => {
+      pathConfigs.forEach((pathConfig) => {
+        if (pathConfig && pathConfig.enabled) {
+          if (context.setPathOptions) {
+            context.setPathOptions({
+              color: pathConfig.color,
+              alpha: pathConfig.alpha,
+              lineWidth: pathConfig.lineWidth,
+              lineStyle: pathConfig.lineStyle,
+              bufferLength: pathConfig.bufferLength,
+              offsetX: pathConfig.offsetX,
+              offsetY: pathConfig.offsetY,
+              offsetZ: pathConfig.offsetZ,
+              poseStyle: pathConfig.poseStyle
+            }, pathConfig.id)
+          }
+        }
+      })
+      // 配置变化后，重新同步 Path 数据以应用新配置
+      syncPathDisplay()
+    },
+    { deep: true }
+  )
+
+  // 监听所有 Path 组件的数据变化（从 topicSubscriptionManager）
+  watch(
+    () => {
+      const pathComponents = rvizStore.displayComponents.filter(c => c.type === 'path')
+      const trigger = topicSubscriptionManager.getStatusUpdateTrigger()
+      trigger.value
+      
+      // 只处理enabled为true的组件，enabled为false时不处理数据更新
+      const messages: Record<string, { message: any; timestamp: number }> = {}
+      pathComponents.forEach(pathComponent => {
+        if (pathComponent.enabled) {
+          const message = topicSubscriptionManager.getLatestMessage(pathComponent.id)
+          if (message) {
+            const timestamp = message.header?.stamp?.sec 
+              ? message.header.stamp.sec * 1000 + (message.header.stamp.nsec || 0) / 1000000
+              : Date.now()
+            messages[pathComponent.id] = { message, timestamp }
+          }
+        }
+        // enabled为false时，不处理数据更新，也不添加到messages中
+      })
+      return messages
+    },
+    (pathMessages) => {
+      Object.entries(pathMessages).forEach(([componentId, { message }]) => {
+        if (message && context.updatePath) {
+          context.updatePath(message, componentId)
+        }
+      })
+      
+      // 移除已删除的 Path
+      // 注意：enabled为false的组件已经在syncPathDisplay中通过removePath处理，这里只处理真正删除的组件
+      const currentPathIds = new Set(Object.keys(pathMessages))
+      rvizStore.displayComponents
+        .filter(c => c.type === 'path')
+        .forEach(pathComponent => {
+          // 只处理真正删除的组件（不在currentPathIds中），enabled为false的组件不在这里处理
+          if (!currentPathIds.has(pathComponent.id)) {
+            if (context.removePath) {
+              context.removePath(pathComponent.id)
+            }
+          }
+        })
+    },
+    { immediate: true, deep: false }
+  )
+
   // 监听连接状态，断开连接时清理所有数据
   watch(
     () => rvizStore.communicationState.isConnected,

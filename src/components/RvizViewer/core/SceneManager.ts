@@ -378,11 +378,14 @@ export class SceneManager {
         }
         const instance = this.pathInstancesMap.get(componentId)
         this.worldviewContext.onMount(instance, lines)
+        // 确保 pathData 被包装成数组格式（lines 命令可以接受单个对象或数组）
+        // 但为了确保兼容性，我们将其包装成数组
+        const children = Array.isArray(pathData) ? pathData : [pathData]
         this.worldviewContext.registerDrawCall({
           instance: instance,
           reglCommand: lines,
-          children: pathData,
-          layerIndex: 3
+          children: children,
+          layerIndex: 6
         })
       }
     })
@@ -394,10 +397,12 @@ export class SceneManager {
           this.pathInstances[index] = { displayName: `Path-legacy-${index}` }
         }
         this.worldviewContext.onMount(this.pathInstances[index], lines)
+        // 确保 pathData 被包装成数组格式
+        const children = Array.isArray(pathData) ? pathData : [pathData]
         this.worldviewContext.registerDrawCall({
           instance: this.pathInstances[index],
           reglCommand: lines,
-          children: pathData,
+          children: children,
           layerIndex: 3 + index
         })
       }
@@ -653,6 +658,8 @@ export class SceneManager {
       }
     }
 
+    // 修复：使用与 updatePath 相同的默认线宽（0.05米）
+    const lineWidth = data.lineWidth ?? 0.05
     const pathData = {
       pose: {
         position: { x: 0, y: 0, z: 0 },
@@ -660,7 +667,7 @@ export class SceneManager {
       },
       points,
       color: defaultColor,
-      scale: { x: data.lineWidth || 1, y: data.lineWidth || 1, z: data.lineWidth || 1 },
+      scale: { x: lineWidth, y: lineWidth, z: lineWidth },
       primitive: 'line strip' as const
     }
 
@@ -707,7 +714,8 @@ export class SceneManager {
     const config = this.pathConfigMap.get(componentId) || {}
     const colorHex = config.color || '#19ff00'
     const alpha = config.alpha ?? 1.0
-    const lineWidth = config.lineWidth || 0.1
+    // 修复：使用更合理的默认线宽（0.05米，约5厘米），确保路径可见
+    const lineWidth = config.lineWidth ?? 0.05
 
     // 转换颜色
     let color: { r: number; g: number; b: number; a: number }
@@ -721,12 +729,16 @@ export class SceneManager {
     }
 
     // 转换 ROS Path 消息为 PathData
+    // 关键修复：给 Path 的 Z 坐标添加偏移（0.01），确保 Path 在所有正常地图（Z >= 0）之上
+    // 这样即使地图在 Path 之后渲染（paint callback 在 draw calls 之后），Path 也能显示在地图上面
+    const PATH_Z_OFFSET = 0.01 // 比所有正常地图的最大 Z 偏移（0.001 * N）都大
     const waypoints = message.poses.map((pose: any) => {
       const position = pose.pose?.position || pose.position || {}
+      const baseZ = position.z || 0
       return {
         x: position.x || 0,
         y: position.y || 0,
-        z: position.z || 0
+        z: baseZ + PATH_Z_OFFSET // 添加 Z 偏移，确保 Path 在地图之上
       }
     })
 
