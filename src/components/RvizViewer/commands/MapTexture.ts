@@ -311,7 +311,7 @@ const mapTextureCommand = (regl: Regl) => {
         
         // 如果 textureData 引用变化，清除缓存
         if (props._cachedTexture?.texture && currentTextureData !== cachedTextureData) {
-          console.log(`[MapTexture] Texture data reference changed, clearing cache`)
+          // console.log(`[MapTexture] Texture data reference changed, clearing cache`)
           props._cachedTexture = null
           props._cachedTextureData = null
         }
@@ -341,14 +341,14 @@ const mapTextureCommand = (regl: Regl) => {
           
           // 如果缓存存在但 textureData 引用变化，先清理旧缓存
           if (cached) {
-            console.log(`[MapTexture] Texture data reference changed, clearing old cache for key: ${cacheKey}`)
+            // console.log(`[MapTexture] Texture data reference changed, clearing old cache for key: ${cacheKey}`)
             // 清理旧纹理缓存
             if (cached.texture && cached.texture.destroy && !cached._destroyed) {
               try {
                 cached.texture.destroy()
                 cached._destroyed = true
               } catch (error) {
-                console.warn(`[MapTexture] Failed to destroy old texture:`, error)
+                // console.warn(`[MapTexture] Failed to destroy old texture:`, error)
               }
             }
             textureCache.delete(cacheKey)
