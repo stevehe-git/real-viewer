@@ -1221,7 +1221,7 @@ export class SceneManager {
     }
     
     if (!costmapComponentId) {
-      console.warn(`updateCostmapIncremental: No costmap found for updates componentId: ${updatesComponentId}`)
+      // console.warn(`updateCostmapIncremental: No costmap found for updates componentId: ${updatesComponentId}`)
       return
     }
     
@@ -1235,15 +1235,15 @@ export class SceneManager {
     const metadata = this.mapMetadataMap.get(costmapComponentId)
     
     if (!costmapData || !metadata) {
-      console.warn(`updateCostmapIncremental: No costmap data found for componentId: ${costmapComponentId}`)
+      // console.warn(`updateCostmapIncremental: No costmap data found for componentId: ${costmapComponentId}`)
       return
     }
     
     // 验证更新消息
-    console.log('updateCostmapIncremental: updateMessage', updateMessage)
+    // console.log('updateCostmapIncremental: updateMessage', updateMessage)
     const { x, y, width, height, data: updateData } = updateMessage
     if (x === undefined || y === undefined || width === undefined || height === undefined) {
-      console.warn('updateCostmapIncremental: Invalid update message format - missing coordinates')
+      // console.warn('updateCostmapIncremental: Invalid update message format - missing coordinates')
       return
     }
     
@@ -1255,24 +1255,24 @@ export class SceneManager {
         : []
     
     if (!Array.isArray(data) || data.length === 0) {
-      console.warn('updateCostmapIncremental: Invalid update message format - data is not an array')
+      // console.warn('updateCostmapIncremental: Invalid update message format - data is not an array')
       return
     }
     
     // 验证更新区域是否在 costmap 范围内
     if (x < 0 || y < 0 || x + width > metadata.width || y + height > metadata.height) {
-      console.warn(`updateCostmapIncremental: Update region out of bounds. x: ${x}, y: ${y}, width: ${width}, height: ${height}, map size: ${metadata.width}x${metadata.height}`)
+      // console.warn(`updateCostmapIncremental: Update region out of bounds. x: ${x}, y: ${y}, width: ${width}, height: ${height}, map size: ${metadata.width}x${metadata.height}`)
       return
     }
     
     // 验证数据长度
     const expectedLength = width * height
     if (data.length !== expectedLength) {
-      console.warn(`updateCostmapIncremental: Data length mismatch. Expected: ${expectedLength}, Got: ${data.length}`)
+      // console.warn(`updateCostmapIncremental: Data length mismatch. Expected: ${expectedLength}, Got: ${data.length}`)
       return
     }
     
-    console.log(`updateCostmapIncremental: Merging ${expectedLength} cells at (${x}, ${y}) into map ${metadata.width}x${metadata.height}`)
+    // console.log(`updateCostmapIncremental: Merging ${expectedLength} cells at (${x}, ${y}) into map ${metadata.width}x${metadata.height}`)
     
     // 合并数据：将 updates 数据覆盖到 costmap 数据中
     let hasChanges = false
@@ -1295,11 +1295,11 @@ export class SceneManager {
     
     // 如果没有实际变化，跳过更新
     if (!hasChanges) {
-      console.log('updateCostmapIncremental: No data changes detected, skipping update')
+      // console.log('updateCostmapIncremental: No data changes detected, skipping update')
       return
     }
     
-    console.log(`updateCostmapIncremental: Changed ${changedCells} cells, updating map texture...`)
+    // console.log(`updateCostmapIncremental: Changed ${changedCells} cells, updating map texture...`)
     
     // 清除消息哈希，强制 updateMap 重新处理
     this.mapMessageHashMap.delete(costmapComponentId)
@@ -1322,7 +1322,7 @@ export class SceneManager {
     const oldTextureData = this.mapTextureDataMap.get(costmapComponentId)
     if (oldTextureData?.dataHash) {
       clearMapTextureCache(costmapComponentId, oldTextureData.dataHash)
-      console.log('updateCostmapIncremental: Cleared texture cache for dataHash:', oldTextureData.dataHash)
+      // console.log('updateCostmapIncremental: Cleared texture cache for dataHash:', oldTextureData.dataHash)
     }
     
     // 使用现有的 updateMap 方法重新处理（会重新生成纹理）
@@ -1331,11 +1331,11 @@ export class SceneManager {
     // 检查纹理数据是否已更新
     const textureData = this.mapTextureDataMap.get(costmapComponentId)
     if (!textureData || !textureData.textureData) {
-      console.warn('updateCostmapIncremental: Texture data not found after updateMap')
+      // console.warn('updateCostmapIncremental: Texture data not found after updateMap')
       return
     }
     
-    console.log('updateCostmapIncremental: Texture data updated, textureData size:', textureData.textureData.length)
+    // console.log('updateCostmapIncremental: Texture data updated, textureData size:', textureData.textureData.length)
     
     // 强制更新 mapProps，清除缓存的纹理引用，强制重新创建纹理
     const mapProps = this.mapPropsMap.get(costmapComponentId)
@@ -1343,14 +1343,14 @@ export class SceneManager {
       // 清除缓存的纹理引用，强制 regl 命令重新创建纹理
       if ((mapProps as any)._cachedTexture) {
         delete (mapProps as any)._cachedTexture
-        console.log('updateCostmapIncremental: Cleared _cachedTexture in mapProps')
+        // console.log('updateCostmapIncremental: Cleared _cachedTexture in mapProps')
       }
       // 更新纹理数据引用
       mapProps.textureData = textureData.textureData
-      console.log('updateCostmapIncremental: Updated textureData reference in mapProps')
+      // console.log('updateCostmapIncremental: Updated textureData reference in mapProps')
     } else {
       // 如果没有 mapProps，重新调用 updateMapDrawCall 创建
-      console.log('updateCostmapIncremental: No mapProps found, calling updateMapDrawCall')
+      // console.log('updateCostmapIncremental: No mapProps found, calling updateMapDrawCall')
       this._mapPropsCache.delete(costmapComponentId)
       this.updateMapDrawCall(costmapComponentId)
     }
@@ -1358,7 +1358,7 @@ export class SceneManager {
     // 触发渲染更新
     this.worldviewContext.onDirty()
     
-    console.log('updateCostmapIncremental: Map update completed')
+    // console.log('updateCostmapIncremental: Map update completed')
   }
 
   removeMap(componentId: string): void {
