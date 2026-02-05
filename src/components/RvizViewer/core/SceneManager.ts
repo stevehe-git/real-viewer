@@ -41,6 +41,10 @@ export class SceneManager {
   private mapRawMessageMap = new Map<string, any>() // 保存每个地图的原始消息
   private mapDataHashMap = new Map<string, string>() // 地图数据哈希，用于检测数据是否变化
   private mapMessageHashMap = new Map<string, string>() // 地图消息完整哈希（包含数据内容），用于精确检测变化
+  // Costmap 增量更新相关
+  private mapRawDataMap = new Map<string, Int8Array>() // 保存完整的 costmap 原始数据（用于增量更新），key 为 componentId
+  private mapMetadataMap = new Map<string, { width: number; height: number; resolution: number; origin: any }>() // 保存 costmap 的元信息
+  private costmapUpdatesMap = new Map<string, string>() // key: updates componentId, value: costmap componentId
   private laserScanDataMap = new Map<string, any>() // 支持多个 LaserScan，key 为 componentId
   private laserScanConfigMap = new Map<string, { 
     style?: string
@@ -956,6 +960,28 @@ export class SceneManager {
         this.mapDataHashMap.set(componentId, dataHash)
         // 保存完整的消息哈希，用于下次变化检测
         this.mapMessageHashMap.set(componentId, messageHash)
+        
+        // 如果是 costmap topic，保存完整数据用于增量更新
+        const topic = this.mapTopicMap.get(componentId) || ''
+        if (topic.endsWith('/costmap')) {
+          // 保存完整的原始数据
+          const dataArray = Array.isArray(message.data) 
+            ? new Int8Array(message.data)
+            : (message.data instanceof Int8Array 
+              ? message.data 
+              : (message.data instanceof Uint8Array
+                ? new Int8Array(message.data)
+                : new Int8Array(Array.from(message.data || []))))
+          this.mapRawDataMap.set(componentId, dataArray)
+          
+          // 保存元信息
+          this.mapMetadataMap.set(componentId, {
+            width,
+            height,
+            resolution,
+            origin: message.info?.origin || {}
+          })
+        }
       }
       
       // 性能优化：检测是否有大地图，用于调整渲染帧率
@@ -1178,6 +1204,163 @@ export class SceneManager {
    * 移除地图数据
    * @param componentId 组件ID
    */
+  /**
+   * 处理 Costmap 增量更新
+   * @param updateMessage costmap_updates 消息
+   * @param updatesComponentId updates 订阅的 componentId
+   */
+  async updateCostmapIncremental(updateMessage: any, updatesComponentId: string): Promise<void> {
+    // 找到对应的 costmap componentId
+    // 优先从映射表中查找，如果没有则从 updatesComponentId 推导（去掉 _updates 后缀）
+    let costmapComponentId = this.costmapUpdatesMap.get(updatesComponentId)
+    if (!costmapComponentId) {
+      // 尝试从 updatesComponentId 推导：去掉 _updates 后缀
+      if (updatesComponentId.endsWith('_updates')) {
+        costmapComponentId = updatesComponentId.slice(0, -8) // 去掉 '_updates' (8个字符)
+      }
+    }
+    
+    if (!costmapComponentId) {
+      console.warn(`updateCostmapIncremental: No costmap found for updates componentId: ${updatesComponentId}`)
+      return
+    }
+    
+    // 如果映射关系不存在，自动注册（用于后续使用）
+    if (!this.costmapUpdatesMap.has(updatesComponentId)) {
+      this.costmapUpdatesMap.set(updatesComponentId, costmapComponentId)
+    }
+    
+    // 获取完整的 costmap 数据和元信息
+    const costmapData = this.mapRawDataMap.get(costmapComponentId)
+    const metadata = this.mapMetadataMap.get(costmapComponentId)
+    
+    if (!costmapData || !metadata) {
+      console.warn(`updateCostmapIncremental: No costmap data found for componentId: ${costmapComponentId}`)
+      return
+    }
+    
+    // 验证更新消息
+    console.log('updateCostmapIncremental: updateMessage', updateMessage)
+    const { x, y, width, height, data: updateData } = updateMessage
+    if (x === undefined || y === undefined || width === undefined || height === undefined) {
+      console.warn('updateCostmapIncremental: Invalid update message format - missing coordinates')
+      return
+    }
+    
+    // 转换数据为数组（可能是 TypedArray）
+    const data = Array.isArray(updateData) 
+      ? updateData 
+      : (updateData instanceof Int8Array || updateData instanceof Uint8Array)
+        ? Array.from(updateData)
+        : []
+    
+    if (!Array.isArray(data) || data.length === 0) {
+      console.warn('updateCostmapIncremental: Invalid update message format - data is not an array')
+      return
+    }
+    
+    // 验证更新区域是否在 costmap 范围内
+    if (x < 0 || y < 0 || x + width > metadata.width || y + height > metadata.height) {
+      console.warn(`updateCostmapIncremental: Update region out of bounds. x: ${x}, y: ${y}, width: ${width}, height: ${height}, map size: ${metadata.width}x${metadata.height}`)
+      return
+    }
+    
+    // 验证数据长度
+    const expectedLength = width * height
+    if (data.length !== expectedLength) {
+      console.warn(`updateCostmapIncremental: Data length mismatch. Expected: ${expectedLength}, Got: ${data.length}`)
+      return
+    }
+    
+    console.log(`updateCostmapIncremental: Merging ${expectedLength} cells at (${x}, ${y}) into map ${metadata.width}x${metadata.height}`)
+    
+    // 合并数据：将 updates 数据覆盖到 costmap 数据中
+    let hasChanges = false
+    let changedCells = 0
+    for (let dy = 0; dy < height; dy++) {
+      for (let dx = 0; dx < width; dx++) {
+        const updateIndex = dy * width + dx
+        const costmapIndex = (y + dy) * metadata.width + (x + dx)
+        if (costmapIndex >= 0 && costmapIndex < costmapData.length) {
+          const oldValue = costmapData[costmapIndex]
+          const newValue = data[updateIndex]
+          if (oldValue !== newValue) {
+            costmapData[costmapIndex] = newValue
+            hasChanges = true
+            changedCells++
+          }
+        }
+      }
+    }
+    
+    // 如果没有实际变化，跳过更新
+    if (!hasChanges) {
+      console.log('updateCostmapIncremental: No data changes detected, skipping update')
+      return
+    }
+    
+    console.log(`updateCostmapIncremental: Changed ${changedCells} cells, updating map texture...`)
+    
+    // 清除消息哈希，强制 updateMap 重新处理
+    this.mapMessageHashMap.delete(costmapComponentId)
+    
+    // 重新生成完整的消息用于更新
+    const updatedMessage = {
+      info: {
+        width: metadata.width,
+        height: metadata.height,
+        resolution: metadata.resolution,
+        origin: metadata.origin
+      },
+      data: Array.from(costmapData)
+    }
+    
+    // 清除消息哈希，强制 updateMap 重新处理（即使数据看起来相同）
+    this.mapMessageHashMap.delete(costmapComponentId)
+    
+    // 清除纹理缓存，强制重新创建纹理（因为 dataHash 相同但数据已改变）
+    const oldTextureData = this.mapTextureDataMap.get(costmapComponentId)
+    if (oldTextureData?.dataHash) {
+      clearMapTextureCache(costmapComponentId, oldTextureData.dataHash)
+      console.log('updateCostmapIncremental: Cleared texture cache for dataHash:', oldTextureData.dataHash)
+    }
+    
+    // 使用现有的 updateMap 方法重新处理（会重新生成纹理）
+    await this.updateMap(updatedMessage, costmapComponentId)
+    
+    // 检查纹理数据是否已更新
+    const textureData = this.mapTextureDataMap.get(costmapComponentId)
+    if (!textureData || !textureData.textureData) {
+      console.warn('updateCostmapIncremental: Texture data not found after updateMap')
+      return
+    }
+    
+    console.log('updateCostmapIncremental: Texture data updated, textureData size:', textureData.textureData.length)
+    
+    // 强制更新 mapProps，清除缓存的纹理引用，强制重新创建纹理
+    const mapProps = this.mapPropsMap.get(costmapComponentId)
+    if (mapProps) {
+      // 清除缓存的纹理引用，强制 regl 命令重新创建纹理
+      if ((mapProps as any)._cachedTexture) {
+        delete (mapProps as any)._cachedTexture
+        console.log('updateCostmapIncremental: Cleared _cachedTexture in mapProps')
+      }
+      // 更新纹理数据引用
+      mapProps.textureData = textureData.textureData
+      console.log('updateCostmapIncremental: Updated textureData reference in mapProps')
+    } else {
+      // 如果没有 mapProps，重新调用 updateMapDrawCall 创建
+      console.log('updateCostmapIncremental: No mapProps found, calling updateMapDrawCall')
+      this._mapPropsCache.delete(costmapComponentId)
+      this.updateMapDrawCall(costmapComponentId)
+    }
+    
+    // 触发渲染更新
+    this.worldviewContext.onDirty()
+    
+    console.log('updateCostmapIncremental: Map update completed')
+  }
+
   removeMap(componentId: string): void {
     // 移除渲染数据
     this.removeMapRenderData(componentId)
@@ -1207,6 +1390,17 @@ export class SceneManager {
     this.mapTopicMap.delete(componentId)
     this._mapPropsCache.delete(componentId)
     
+    // 清理 costmap 增量更新相关数据
+    this.mapRawDataMap.delete(componentId)
+    this.mapMetadataMap.delete(componentId)
+    // 清理 updates 映射（反向查找）
+    for (const [updatesId, costmapId] of this.costmapUpdatesMap.entries()) {
+      if (costmapId === componentId) {
+        this.costmapUpdatesMap.delete(updatesId)
+        break
+      }
+    }
+    
     // 触发渲染更新
     this.worldviewContext.onDirty()
   }
@@ -1227,6 +1421,11 @@ export class SceneManager {
     this.mapRequestIds.clear() // 清理所有请求 ID
     this.mapTopicMap.clear() // 清理所有话题映射
     this._mapPropsCache.clear() // 性能优化：清理所有mapProps缓存
+    
+    // 清理 costmap 增量更新相关数据
+    this.mapRawDataMap.clear()
+    this.mapMetadataMap.clear()
+    this.costmapUpdatesMap.clear()
     
     // 移除统一的地图渲染回调
     if (this.mapRenderCallback) {
@@ -1327,6 +1526,15 @@ export class SceneManager {
     topic?: string // 添加 topic 选项，用于排序
   }, componentId: string): void {
     this.updateMapOptions(options, componentId)
+  }
+
+  /**
+   * 注册 costmap 到 updates 的映射关系
+   * @param costmapComponentId costmap 组件的 componentId
+   * @param updatesComponentId updates 订阅的 componentId
+   */
+  registerCostmapUpdatesMapping(costmapComponentId: string, updatesComponentId: string): void {
+    this.costmapUpdatesMap.set(updatesComponentId, costmapComponentId)
   }
 
   /**

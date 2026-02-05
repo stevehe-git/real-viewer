@@ -40,6 +40,7 @@ export class TopicSubscriptionManager {
   // 组件类型到消息类型的映射
   private readonly COMPONENT_MESSAGE_TYPES: Record<string, string> = {
     map: 'nav_msgs/OccupancyGrid',
+    map_updates: 'map_msgs/OccupancyGridUpdate', // costmap_updates 消息类型
     path: 'nav_msgs/Path',
     laserscan: 'sensor_msgs/LaserScan',
     pointcloud2: 'sensor_msgs/PointCloud2',

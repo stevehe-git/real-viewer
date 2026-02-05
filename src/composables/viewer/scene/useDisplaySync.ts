@@ -23,6 +23,7 @@ export interface DisplaySyncContext {
   }) => void
   setAxesOptions: (options: { length?: number; radius?: number; alpha?: number }) => void
   updateMap: (message: any, componentId: string) => void | Promise<void>
+  updateCostmapIncremental?: (updateMessage: any, updatesComponentId: string) => void | Promise<void>
   removeMap: (componentId: string) => void
   clearAllMaps?: () => void
   setMapOptions: (options: { 
@@ -164,6 +165,9 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
       previousMapIds.forEach(componentId => {
         if (!currentMapIds.has(componentId)) {
           context.removeMap(componentId)
+          // 清理对应的 costmap_updates 订阅
+          const updatesComponentId = `${componentId}_updates`
+          rvizStore.unsubscribeComponentTopic(updatesComponentId)
         }
       })
     }
@@ -172,6 +176,28 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     mapComponents.forEach((mapComponent) => {
       if (mapComponent.enabled) {
         const options = mapComponent.options || {}
+        const topic = options.topic || ''
+        
+        // 检测是否为 costmap topic，如果是则自动订阅 costmap_updates
+        if (topic.endsWith('/costmap')) {
+          const updatesTopic = topic.replace('/costmap', '/costmap_updates')
+          const updatesComponentId = `${mapComponent.id}_updates`
+          
+          // 自动订阅 costmap_updates（如果已连接）
+          if (rvizStore.communicationState.isConnected) {
+            rvizStore.subscribeComponentTopic(
+              updatesComponentId,
+              'map_updates', // 使用特殊的组件类型
+              updatesTopic,
+              options.queueSize || 10
+            )
+            
+            // 在 SceneManager 中注册映射关系
+            if (context.registerCostmapUpdatesMapping) {
+              context.registerCostmapUpdatesMapping(mapComponent.id, updatesComponentId)
+            }
+          }
+        }
         
         // 传递 topic 到 setMapOptions，用于检测 topic 改变并清理旧数据
         context.setMapOptions({
@@ -191,6 +217,9 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
       } else {
         // Map 组件被禁用，移除地图数据
         context.removeMap(mapComponent.id)
+        // 取消订阅 costmap_updates
+        const updatesComponentId = `${mapComponent.id}_updates`
+        rvizStore.unsubscribeComponentTopic(updatesComponentId)
       }
     })
     
@@ -627,6 +656,41 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
         })
     },
     { immediate: true, deep: false } // 改为 deep: false，因为我们已经在 watch 函数中手动检查变化
+  )
+
+  // 监听 costmap_updates 消息（增量更新）
+  watch(
+    () => {
+      const mapComponents = rvizStore.displayComponents.filter(c => c.type === 'map')
+      const trigger = topicSubscriptionManager.getStatusUpdateTrigger()
+      trigger.value
+      
+      // 返回所有 costmap_updates 组件的消息
+      const updatesMessages: Record<string, { message: any; costmapComponentId: string }> = {}
+      mapComponents.forEach(mapComponent => {
+        const topic = mapComponent.options?.topic || ''
+        if (topic.endsWith('/costmap') && mapComponent.enabled) {
+          const updatesComponentId = `${mapComponent.id}_updates`
+          const updateMessage = topicSubscriptionManager.getLatestMessage(updatesComponentId)
+          if (updateMessage) {
+            updatesMessages[updatesComponentId] = {
+              message: updateMessage,
+              costmapComponentId: mapComponent.id
+            }
+          }
+        }
+      })
+      return updatesMessages
+    },
+    (updatesMessages) => {
+      // 处理每个 costmap_updates 消息
+      Object.entries(updatesMessages).forEach(([updatesComponentId, { message }]) => {
+        if (message && context.updateCostmapIncremental) {
+          context.updateCostmapIncremental(message, updatesComponentId)
+        }
+      })
+    },
+    { immediate: true, deep: false }
   )
 
   // 监听所有 LaserScan 组件的配置选项变化（样式、大小、透明度、颜色转换器等）

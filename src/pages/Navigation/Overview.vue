@@ -189,6 +189,11 @@ watch(
                 // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
                 // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
+              updateCostmapIncremental: async (updateMessage: any, updatesComponentId: string) => {
+                // 处理 costmap 增量更新
+                await sceneManager.updateCostmapIncremental(updateMessage, updatesComponentId)
+                worldview.markDirty()
+              },
               removeMap: (componentId: string) => {
                 sceneManager.removeMap(componentId)
                 worldview.markDirty()
@@ -205,11 +210,15 @@ watch(
                 alpha?: number
                 colorScheme?: string
                 drawBehind?: boolean
+                topic?: string
               }, componentId: string) => {
                 sceneManager.setMapOptions(options, componentId)
                 worldview.markDirty()
                 // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
                 // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
+              },
+              registerCostmapUpdatesMapping: (costmapComponentId: string, updatesComponentId: string) => {
+                sceneManager.registerCostmapUpdatesMapping(costmapComponentId, updatesComponentId)
               },
               clearPaths: () => {
                 sceneManager.clearPaths()
