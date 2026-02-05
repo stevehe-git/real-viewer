@@ -65,8 +65,16 @@ export function getDefaultOptions(type: string): Record<string, any> {
     },
     path: {
       topic: '/path',
-      color: '#ff0000',
-      bufferLength: 1
+      unreliable: false,
+      queueSize: 10,
+      lineStyle: 'Lines',
+      color: '#19ff00',
+      alpha: 1,
+      bufferLength: 1,
+      offsetX: 0,
+      offsetY: 0,
+      offsetZ: 0,
+      poseStyle: 'None'
     },
     marker: {
       topic: '/marker',

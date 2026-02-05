@@ -34,7 +34,20 @@ export class SceneManager {
     minColor?: { r: number; g: number; b: number }
     maxColor?: { r: number; g: number; b: number }
   }>() // 每个 PointCloud2 的配置
-  private pathsData: any[] = []
+  private pathsData: any[] = [] // 保留向后兼容
+  private pathDataMap = new Map<string, any>() // 支持多个 Path，key 为 componentId
+  private pathConfigMap = new Map<string, { 
+    color?: string
+    alpha?: number
+    lineWidth?: number
+    lineStyle?: string
+    bufferLength?: number
+    offsetX?: number
+    offsetY?: number
+    offsetZ?: number
+    poseStyle?: string
+  }>() // 每个 Path 的配置
+  private pathInstancesMap = new Map<string, any>() // 支持多个 Path 实例，key 为 componentId
   private mapTextureDataMap = new Map<string, any>() // 地图纹理数据，key 为 componentId
   private mapConfigMap = new Map<string, { alpha?: number; colorScheme?: string; drawBehind?: boolean }>() // 每个地图的配置
   private mapTopicMap = new Map<string, string>() // 每个地图的话题名称，key 为 componentId，用于排序
@@ -357,11 +370,28 @@ export class SceneManager {
       }
     })
 
-    // 注册路径
+    // 注册路径（支持按 componentId 存储的路径）
+    this.pathDataMap.forEach((pathData, componentId) => {
+      if (this.linesCommand && pathData) {
+        if (!this.pathInstancesMap.has(componentId)) {
+          this.pathInstancesMap.set(componentId, { displayName: `Path-${componentId}` })
+        }
+        const instance = this.pathInstancesMap.get(componentId)
+        this.worldviewContext.onMount(instance, lines)
+        this.worldviewContext.registerDrawCall({
+          instance: instance,
+          reglCommand: lines,
+          children: pathData,
+          layerIndex: 3
+        })
+      }
+    })
+    
+    // 保留向后兼容：注册旧的 pathsData 数组中的路径
     this.pathsData.forEach((pathData, index) => {
       if (this.linesCommand && pathData) {
         if (!this.pathInstances[index]) {
-          this.pathInstances[index] = { displayName: `Path-${index}` }
+          this.pathInstances[index] = { displayName: `Path-legacy-${index}` }
         }
         this.worldviewContext.onMount(this.pathInstances[index], lines)
         this.worldviewContext.registerDrawCall({
@@ -645,10 +675,167 @@ export class SceneManager {
    */
   clearPaths(): void {
     this.pathsData = []
+    this.pathDataMap.clear()
+    this.pathConfigMap.clear()
     // 只有在 WorldviewContext 已初始化时才重新注册绘制调用
     if (this.worldviewContext.initializedData) {
       this.registerDrawCalls()
       // 不调用 onDirty，由调用者统一处理最终渲染
+    }
+  }
+
+  /**
+   * 更新 Path 数据（从 ROS nav_msgs/Path 消息）
+   * @param message ROS Path 消息
+   * @param componentId 组件ID
+   */
+  async updatePath(message: any, componentId: string): Promise<void> {
+    if (!componentId) {
+      console.warn('updatePath: componentId is required')
+      return
+    }
+
+    if (!message || !message.poses || !Array.isArray(message.poses) || message.poses.length < 2) {
+      // 消息无效，清除数据
+      this.pathDataMap.delete(componentId)
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
+      return
+    }
+
+    // 获取配置
+    const config = this.pathConfigMap.get(componentId) || {}
+    const colorHex = config.color || '#19ff00'
+    const alpha = config.alpha ?? 1.0
+    const lineWidth = config.lineWidth || 0.1
+
+    // 转换颜色
+    let color: { r: number; g: number; b: number; a: number }
+    if (colorHex && colorHex.indexOf('#') === 0) {
+      const r = parseInt(colorHex.slice(1, 3), 16) / 255
+      const g = parseInt(colorHex.slice(3, 5), 16) / 255
+      const b = parseInt(colorHex.slice(5, 7), 16) / 255
+      color = { r, g, b, a: alpha }
+    } else {
+      color = { r: 0.098, g: 1.0, b: 0, a: alpha } // 默认绿色 #19ff00
+    }
+
+    // 转换 ROS Path 消息为 PathData
+    const waypoints = message.poses.map((pose: any) => {
+      const position = pose.pose?.position || pose.position || {}
+      return {
+        x: position.x || 0,
+        y: position.y || 0,
+        z: position.z || 0
+      }
+    })
+
+    if (waypoints.length < 2) {
+      this.pathDataMap.delete(componentId)
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
+      return
+    }
+
+    // 创建 PathData
+    const pathData: PathData = {
+      waypoints,
+      color,
+      lineWidth
+    }
+
+    try {
+      // 使用 Web Worker 处理路径数据
+      const { getDataProcessorWorker } = await import('@/workers/dataProcessorWorker')
+      const worker = getDataProcessorWorker()
+      
+      const serializedData = {
+        waypoints: pathData.waypoints,
+        color: pathData.color,
+        lineWidth: pathData.lineWidth || lineWidth
+      }
+      
+      const result = await worker.processPath({
+        type: 'processPath',
+        data: serializedData
+      })
+
+      if (result.error || !result.pathData) {
+        console.error('Failed to process path:', result.error)
+        return
+      }
+
+      // 保存处理后的数据
+      this.pathDataMap.set(componentId, result.pathData)
+      
+      // 更新绘制调用
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
+    } catch (error) {
+      console.error('Failed to process path in worker:', error)
+      // Worker 失败时回退到同步处理
+      const pathDataResult = this.addPathSync(pathData)
+      if (pathDataResult >= 0) {
+        // 从 pathsData 中获取最后添加的数据
+        const processedData = this.pathsData[this.pathsData.length - 1]
+        if (processedData) {
+          this.pathDataMap.set(componentId, processedData)
+          // 从 pathsData 中移除（因为我们已经按 componentId 存储了）
+          this.pathsData.pop()
+        }
+      }
+    }
+  }
+
+  /**
+   * 移除 Path 数据
+   * @param componentId 组件ID
+   */
+  removePath(componentId: string): void {
+    this.pathDataMap.delete(componentId)
+    this.pathConfigMap.delete(componentId)
+    const instance = this.pathInstancesMap.get(componentId)
+    if (instance) {
+      this.worldviewContext.onUnmount(instance)
+      this.pathInstancesMap.delete(componentId)
+    }
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
+  }
+
+  /**
+   * 设置 Path 配置选项
+   * @param options 配置选项
+   * @param componentId 组件ID
+   */
+  setPathOptions(options: {
+    color?: string
+    alpha?: number
+    lineWidth?: number
+    lineStyle?: string
+    bufferLength?: number
+    offsetX?: number
+    offsetY?: number
+    offsetZ?: number
+    poseStyle?: string
+  }, componentId: string): void {
+    if (!componentId) {
+      console.warn('setPathOptions: componentId is required')
+      return
+    }
+
+    // 更新配置
+    const currentConfig = this.pathConfigMap.get(componentId) || {}
+    this.pathConfigMap.set(componentId, {
+      ...currentConfig,
+      ...options
+    })
+
+    // 如果有数据，需要重新处理以应用新配置
+    // 这里只更新绘制调用，让外部调用者负责重新获取消息
+    if (this.pathDataMap.has(componentId)) {
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
     }
   }
 

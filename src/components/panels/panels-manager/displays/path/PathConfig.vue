@@ -2,12 +2,42 @@
   <div class="config-content">
     <div class="config-row">
       <span class="config-label">Topic</span>
-      <el-input
+      <TopicSelector
         :model-value="options.topic"
         @update:model-value="update('topic', $event)"
-        size="small"
+        :component-type="componentType"
         class="config-value"
       />
+    </div>
+    <div class="config-row">
+      <span class="config-label">Unreliable</span>
+      <el-checkbox
+        :model-value="options.unreliable"
+        @update:model-value="update('unreliable', $event)"
+        class="config-value"
+      />
+    </div>
+    <div class="config-row">
+      <span class="config-label">Queue Size</span>
+      <el-input-number
+        :model-value="options.queueSize"
+        @update:model-value="update('queueSize', $event)"
+        size="small"
+        :min="1"
+        :max="100"
+        class="config-value"
+      />
+    </div>
+    <div class="config-row">
+      <span class="config-label">Line Style</span>
+      <el-select
+        :model-value="options.lineStyle"
+        @update:model-value="update('lineStyle', $event)"
+        size="small"
+        class="config-value"
+      >
+        <el-option label="Lines" value="Lines" />
+      </el-select>
     </div>
     <div class="config-row">
       <span class="config-label">Color</span>
@@ -21,6 +51,19 @@
       </div>
     </div>
     <div class="config-row">
+      <span class="config-label">Alpha</span>
+      <el-input-number
+        :model-value="options.alpha"
+        @update:model-value="update('alpha', $event)"
+        size="small"
+        :min="0"
+        :max="1"
+        :step="0.1"
+        :precision="1"
+        class="config-value"
+      />
+    </div>
+    <div class="config-row">
       <span class="config-label">Buffer Length</span>
       <el-input-number
         :model-value="options.bufferLength"
@@ -31,19 +74,78 @@
         class="config-value"
       />
     </div>
+    <div class="display-sub-item">
+      <div class="sub-item-header" @click="toggleOffset">
+        <el-icon class="expand-icon" :class="{ expanded: offsetExpanded }">
+          <ArrowRight />
+        </el-icon>
+        <span class="sub-item-name">Offset</span>
+        <span class="config-value-text">{{ `${options.offsetX || 0}; ${options.offsetY || 0}; ${options.offsetZ || 0}` }}</span>
+      </div>
+      <div v-show="offsetExpanded" class="sub-item-content">
+        <div class="config-row">
+          <span class="config-label">X</span>
+          <el-input-number
+            :model-value="options.offsetX"
+            @update:model-value="update('offsetX', $event)"
+            size="small"
+            class="config-value"
+          />
+        </div>
+        <div class="config-row">
+          <span class="config-label">Y</span>
+          <el-input-number
+            :model-value="options.offsetY"
+            @update:model-value="update('offsetY', $event)"
+            size="small"
+            class="config-value"
+          />
+        </div>
+        <div class="config-row">
+          <span class="config-label">Z</span>
+          <el-input-number
+            :model-value="options.offsetZ"
+            @update:model-value="update('offsetZ', $event)"
+            size="small"
+            class="config-value"
+          />
+        </div>
+      </div>
+    </div>
+    <div class="config-row">
+      <span class="config-label">Pose Style</span>
+      <el-select
+        :model-value="options.poseStyle"
+        @update:model-value="update('poseStyle', $event)"
+        size="small"
+        class="config-value"
+      >
+        <el-option label="None" value="None" />
+        <el-option label="Axes" value="Axes" />
+        <el-option label="Arrows" value="Arrows" />
+      </el-select>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
+import { ArrowRight } from '@element-plus/icons-vue'
 import { useRvizStore } from '@/stores/rviz'
+import TopicSelector from '../common/TopicSelector.vue'
 
 interface Props {
   componentId: string
+  componentType?: string
   options: Record<string, any>
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  componentType: 'path'
+})
+
 const rvizStore = useRvizStore()
+const offsetExpanded = ref(false)
 
 const formatColor = (color: string): string => {
   if (color && color.indexOf('#') === 0) {
@@ -52,7 +154,11 @@ const formatColor = (color: string): string => {
     const b = parseInt(color.slice(5, 7), 16)
     return `${r}; ${g}; ${b}`
   }
-  return color
+  return color || '0; 0; 0'
+}
+
+const toggleOffset = () => {
+  offsetExpanded.value = !offsetExpanded.value
 }
 
 const update = (key: string, value: any) => {
@@ -94,5 +200,51 @@ const update = (key: string, value: any) => {
   font-size: 11px;
   color: #909399;
   font-family: monospace;
+}
+
+.display-sub-item {
+  border-top: 1px solid #ebeef5;
+  margin-top: 2px;
+}
+
+.sub-item-header {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px 4px 16px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #606266;
+  gap: 6px;
+}
+
+.sub-item-header:hover {
+  background: #f0f2f5;
+}
+
+.expand-icon {
+  font-size: 12px;
+  color: #909399;
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+
+.expand-icon.expanded {
+  transform: rotate(90deg);
+}
+
+.sub-item-name {
+  flex: 1;
+}
+
+.config-value-text {
+  font-size: 11px;
+  color: #909399;
+  font-family: monospace;
+  margin-left: auto;
+}
+
+.sub-item-content {
+  padding-left: 32px;
+  background: #f5f7fa;
 }
 </style>

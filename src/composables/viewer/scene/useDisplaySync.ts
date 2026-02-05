@@ -71,6 +71,19 @@ export interface DisplaySyncContext {
   createGrid: () => void
   createAxes: () => void
   clearPaths?: () => void
+  updatePath?: (message: any, componentId: string) => void | Promise<void>
+  removePath?: (componentId: string) => void
+  setPathOptions?: (options: {
+    color?: string
+    alpha?: number
+    lineWidth?: number
+    lineStyle?: string
+    bufferLength?: number
+    offsetX?: number
+    offsetY?: number
+    offsetZ?: number
+    poseStyle?: string
+  }, componentId: string) => void
   finalPaint?: () => void
   setTFVisible?: (visible: boolean) => void
   setTFOptions?: (options: {
@@ -384,6 +397,60 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
    * 同步所有显示组件
    */
   /**
+   * 同步 Path 显示状态（支持多个 Path）
+   */
+  function syncPathDisplay(previousPathIds?: Set<string>): Set<string> {
+    const pathComponents = rvizStore.displayComponents.filter(c => c.type === 'path')
+    const currentPathIds = new Set(pathComponents.map(c => c.id))
+    
+    // 清理已删除的 Path 组件数据
+    if (previousPathIds) {
+      previousPathIds.forEach(componentId => {
+        if (!currentPathIds.has(componentId)) {
+          if (context.removePath) {
+            context.removePath(componentId)
+          }
+        }
+      })
+    }
+    
+    // 处理每个 Path 组件
+    pathComponents.forEach((pathComponent) => {
+      if (pathComponent.enabled) {
+        const options = pathComponent.options || {}
+        
+        // 更新 Path 配置选项
+        if (context.setPathOptions) {
+          context.setPathOptions({
+            color: options.color,
+            alpha: options.alpha,
+            lineWidth: options.lineWidth,
+            lineStyle: options.lineStyle,
+            bufferLength: options.bufferLength,
+            offsetX: options.offsetX,
+            offsetY: options.offsetY,
+            offsetZ: options.offsetZ,
+            poseStyle: options.poseStyle
+          }, pathComponent.id)
+        }
+
+        // 获取 Path 数据并更新
+        const pathMessage = topicSubscriptionManager.getLatestMessage(pathComponent.id)
+        if (pathMessage && context.updatePath) {
+          context.updatePath(pathMessage, pathComponent.id)
+        }
+      } else {
+        // Path 组件被禁用，移除数据
+        if (context.removePath) {
+          context.removePath(pathComponent.id)
+        }
+      }
+    })
+    
+    return currentPathIds
+  }
+
+  /**
    * 同步 TF 显示状态
    */
   function syncTFDisplay(): void {
@@ -434,11 +501,13 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     laserScanIds?: Set<string>
     pointCloudIds?: Set<string>
     pointCloud2Ids?: Set<string>
+    pathIds?: Set<string>
   }): {
     mapIds: Set<string>
     laserScanIds: Set<string>
     pointCloudIds: Set<string>
     pointCloud2Ids: Set<string>
+    pathIds: Set<string>
   } {
     syncGridDisplay()
     syncAxesDisplay()
@@ -446,13 +515,15 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     const currentLaserScanIds = syncLaserScanDisplay(previousComponentIds?.laserScanIds)
     const currentPointCloudIds = syncPointCloudDisplay(previousComponentIds?.pointCloudIds)
     const currentPointCloud2Ids = syncPointCloud2Display(previousComponentIds?.pointCloud2Ids)
+    const currentPathIds = syncPathDisplay(previousComponentIds?.pathIds)
     syncTFDisplay()
     
     return {
       mapIds: currentMapIds,
       laserScanIds: currentLaserScanIds,
       pointCloudIds: currentPointCloudIds,
-      pointCloud2Ids: currentPointCloud2Ids
+      pointCloud2Ids: currentPointCloud2Ids,
+      pathIds: currentPathIds
     }
   }
 

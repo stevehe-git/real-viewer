@@ -236,6 +236,28 @@ watch(
                 // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
                 // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
+              updatePath: async (message: any, componentId: string) => {
+                await sceneManager.updatePath(message, componentId)
+                worldview.markDirty()
+              },
+              removePath: (componentId: string) => {
+                sceneManager.removePath(componentId)
+                worldview.markDirty()
+              },
+              setPathOptions: (options: {
+                color?: string
+                alpha?: number
+                lineWidth?: number
+                lineStyle?: string
+                bufferLength?: number
+                offsetX?: number
+                offsetY?: number
+                offsetZ?: number
+                poseStyle?: string
+              }, componentId: string) => {
+                sceneManager.setPathOptions(options, componentId)
+                worldview.markDirty()
+              },
               finalPaint: () => {
                 // 最终渲染，清理后只渲染一次
                 worldview.markDirty()
