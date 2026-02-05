@@ -178,7 +178,9 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
         const options = mapComponent.options || {}
         const topic = options.topic || ''
         
-        // 检测是否为 costmap topic，如果是则自动订阅 costmap_updates
+        // 检测是否为 costmap topic（支持 global_costmap 和 local_costmap），如果是则自动订阅 costmap_updates
+        // 例如：/move_base/global_costmap/costmap -> /move_base/global_costmap/costmap_updates
+        //      /move_base/local_costmap/costmap -> /move_base/local_costmap/costmap_updates
         if (topic.endsWith('/costmap')) {
           const updatesTopic = topic.replace('/costmap', '/costmap_updates')
           const updatesComponentId = `${mapComponent.id}_updates`

@@ -961,7 +961,8 @@ export class SceneManager {
         // 保存完整的消息哈希，用于下次变化检测
         this.mapMessageHashMap.set(componentId, messageHash)
         
-        // 如果是 costmap topic，保存完整数据用于增量更新
+        // 如果是 costmap topic（支持 global_costmap 和 local_costmap），保存完整数据用于增量更新
+        // 例如：/move_base/global_costmap/costmap 或 /move_base/local_costmap/costmap
         const topic = this.mapTopicMap.get(componentId) || ''
         if (topic.endsWith('/costmap')) {
           // 保存完整的原始数据
