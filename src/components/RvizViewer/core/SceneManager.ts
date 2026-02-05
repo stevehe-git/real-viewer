@@ -1319,14 +1319,7 @@ export class SceneManager {
     // 清除消息哈希，强制 updateMap 重新处理（即使数据看起来相同）
     this.mapMessageHashMap.delete(costmapComponentId)
     
-    // 清除纹理缓存，强制重新创建纹理（因为 dataHash 相同但数据已改变）
-    const oldTextureData = this.mapTextureDataMap.get(costmapComponentId)
-    if (oldTextureData?.dataHash) {
-      clearMapTextureCache(costmapComponentId, oldTextureData.dataHash)
-      // console.log('updateCostmapIncremental: Cleared texture cache for dataHash:', oldTextureData.dataHash)
-    }
-    
-    // 使用现有的 updateMap 方法重新处理（会重新生成纹理）
+    // 使用现有的 updateMap 方法重新处理（会重新生成纹理数据）
     await this.updateMap(updatedMessage, costmapComponentId)
     
     // 检查纹理数据是否已更新
@@ -1336,22 +1329,45 @@ export class SceneManager {
       return
     }
     
-    // console.log('updateCostmapIncremental: Texture data updated, textureData size:', textureData.textureData.length)
-    
-    // 强制更新 mapProps，清除缓存的纹理引用，强制重新创建纹理
+    // 更新 mapProps 中的纹理数据引用，并直接更新现有纹理（避免销毁重建导致的闪烁）
     const mapProps = this.mapPropsMap.get(costmapComponentId)
     if (mapProps) {
-      // 清除缓存的纹理引用，强制 regl 命令重新创建纹理
-      if ((mapProps as any)._cachedTexture) {
-        delete (mapProps as any)._cachedTexture
-        // console.log('updateCostmapIncremental: Cleared _cachedTexture in mapProps')
-      }
       // 更新纹理数据引用
       mapProps.textureData = textureData.textureData
-      // console.log('updateCostmapIncremental: Updated textureData reference in mapProps')
+      
+      // 如果存在缓存的纹理，直接更新纹理数据而不是销毁重建（避免闪烁）
+      const cachedTexture = (mapProps as any)._cachedTexture
+      if (cachedTexture?.texture) {
+        try {
+          // 直接更新纹理数据，避免销毁重建
+          // regl 纹理对象支持通过调用自身并传入新配置来更新
+          const rgbaData = new Uint8Array(textureData.textureData)
+          cachedTexture.texture({
+            data: rgbaData,
+            width: textureData.width,
+            height: textureData.height,
+            format: 'rgba',
+            type: 'uint8',
+            min: 'linear',
+            mag: 'linear',
+            wrap: 'clamp'
+          })
+          // 更新缓存中的纹理数据引用
+          cachedTexture.width = textureData.width
+          cachedTexture.height = textureData.height
+        } catch (error) {
+          // 如果更新失败（例如尺寸不匹配），清除缓存并重新创建
+          delete (mapProps as any)._cachedTexture
+          this._mapPropsCache.delete(costmapComponentId)
+          this.updateMapDrawCall(costmapComponentId)
+        }
+      } else {
+        // 如果没有缓存的纹理，清除缓存并重新创建
+        this._mapPropsCache.delete(costmapComponentId)
+        this.updateMapDrawCall(costmapComponentId)
+      }
     } else {
       // 如果没有 mapProps，重新调用 updateMapDrawCall 创建
-      // console.log('updateCostmapIncremental: No mapProps found, calling updateMapDrawCall')
       this._mapPropsCache.delete(costmapComponentId)
       this.updateMapDrawCall(costmapComponentId)
     }
