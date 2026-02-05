@@ -330,9 +330,21 @@ watch(
       } else if (enabledChanged) {
         // 只有启用状态变化，不重新订阅，只更新订阅状态
         if (newComponent.enabled && newComponent.topic && rvizStore.communicationState.isConnected) {
-          instance.subscribe()
+          // 尝试恢复订阅（如果订阅者存在，不会重新创建）
+          if (instance.resume) {
+            instance.resume()
+          } else {
+            // 如果没有 resume 方法，回退到 subscribe
+            instance.subscribe()
+          }
         } else {
-          instance.unsubscribe()
+          // 暂停订阅（保留订阅者，不清除）
+          if (instance.pause) {
+            instance.pause()
+          } else {
+            // 如果没有 pause 方法，回退到 unsubscribe
+            instance.unsubscribe()
+          }
         }
       }
       // 其他配置（alpha、colorScheme、drawBehind等）改变时，不触发任何订阅相关逻辑

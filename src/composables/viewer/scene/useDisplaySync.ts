@@ -24,7 +24,10 @@ export interface DisplaySyncContext {
   setAxesOptions: (options: { length?: number; radius?: number; alpha?: number }) => void
   updateMap: (message: any, componentId: string) => void | Promise<void>
   updateCostmapIncremental?: (updateMessage: any, updatesComponentId: string) => void | Promise<void>
+  registerCostmapUpdatesMapping?: (costmapComponentId: string, updatesComponentId: string) => void
   removeMap: (componentId: string) => void
+  hideMap?: (componentId: string) => void // 隐藏地图（只清除渲染，保留缓存）
+  showMap?: (componentId: string) => void // 显示地图（恢复渲染，使用缓存数据）
   clearAllMaps?: () => void
   setMapOptions: (options: { 
     alpha?: number
@@ -34,6 +37,7 @@ export interface DisplaySyncContext {
   }, componentId: string) => void
   updateLaserScan: (message: any, componentId: string) => void | Promise<void>
   removeLaserScan: (componentId: string) => void
+  hideLaserScan?: (componentId: string) => void // 隐藏 LaserScan（只清除渲染，保留缓存）
   clearAllLaserScans?: () => void
   setLaserScanOptions: (options: { 
     style?: string
@@ -52,6 +56,7 @@ export interface DisplaySyncContext {
   clearAllPointClouds?: () => void
   updatePointCloud2: (message: any, componentId: string) => void | Promise<void>
   removePointCloud2: (componentId: string) => void
+  hidePointCloud2?: (componentId: string) => void // 隐藏 PointCloud2（只清除渲染，保留缓存）
   clearAllPointCloud2s?: () => void
   setPointCloud2Options: (options: { 
     size?: number
@@ -209,6 +214,11 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
           topic: options.topic
         }, mapComponent.id)
 
+        // 尝试恢复渲染（如果有缓存数据）
+        if (context.showMap) {
+          context.showMap(mapComponent.id)
+        }
+
         // 获取地图数据并更新
         // 注意：数据更新不会覆盖配置，因为配置存储在 SceneManager.mapConfigMap 中
         // 数据更新时，registerDrawCalls 会从 mapConfigMap 读取最新配置
@@ -217,11 +227,14 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
           context.updateMap(mapMessage, mapComponent.id)
         }
       } else {
-        // Map 组件被禁用，移除地图数据
-        context.removeMap(mapComponent.id)
-        // 取消订阅 costmap_updates
-        const updatesComponentId = `${mapComponent.id}_updates`
-        rvizStore.unsubscribeComponentTopic(updatesComponentId)
+        // Map 组件被禁用，只清除画布渲染，保留缓存数据
+        if (context.hideMap) {
+          context.hideMap(mapComponent.id)
+        } else {
+          // 如果没有hideMap方法，回退到removeMap（兼容旧代码）
+          context.removeMap(mapComponent.id)
+        }
+        // 注意：不取消订阅 costmap_updates，保持订阅状态以便重新启用时快速恢复
       }
     })
     
@@ -267,8 +280,13 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
           context.updateLaserScan(laserScanMessage, laserScanComponent.id)
         }
       } else {
-        // LaserScan 组件被禁用，移除数据
-        context.removeLaserScan(laserScanComponent.id)
+        // LaserScan 组件被禁用，只清除画布渲染，保留缓存数据
+        if (context.hideLaserScan) {
+          context.hideLaserScan(laserScanComponent.id)
+        } else {
+          // 如果没有hideLaserScan方法，回退到removeLaserScan（兼容旧代码）
+          context.removeLaserScan(laserScanComponent.id)
+        }
       }
     })
     
@@ -349,8 +367,13 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
           context.updatePointCloud2(pointCloud2Message, pointCloud2Component.id)
         }
       } else {
-        // PointCloud2 组件被禁用，移除数据
-        context.removePointCloud2(pointCloud2Component.id)
+        // PointCloud2 组件被禁用，只清除画布渲染，保留缓存数据
+        if (context.hidePointCloud2) {
+          context.hidePointCloud2(pointCloud2Component.id)
+        } else {
+          // 如果没有hidePointCloud2方法，回退到removePointCloud2（兼容旧代码）
+          context.removePointCloud2(pointCloud2Component.id)
+        }
       }
     })
     
@@ -601,6 +624,7 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
       trigger.value
       
       // 返回所有地图组件的消息映射（包含消息哈希用于精确去重）
+      // 只处理enabled为true的组件，enabled为false时不处理数据更新
       const messages: Record<string, { message: any; messageHash: string }> = {}
       mapComponents.forEach(mapComponent => {
         if (mapComponent.enabled) {
@@ -611,6 +635,7 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
             messages[mapComponent.id] = { message, messageHash }
           }
         }
+        // enabled为false时，不处理数据更新，也不添加到messages中
       })
       return messages
     },
@@ -647,11 +672,13 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
       })
       
       // 移除已禁用或已删除的地图
+      // 注意：enabled为false的组件已经在syncMapDisplay中通过hideMap处理，这里只处理真正删除的组件
       const currentMapIds = new Set(Object.keys(mapMessages))
       rvizStore.displayComponents
         .filter(c => c.type === 'map')
         .forEach(mapComponent => {
-          if (!mapComponent.enabled || !currentMapIds.has(mapComponent.id)) {
+          // 只处理真正删除的组件（不在currentMapIds中），enabled为false的组件不在这里处理
+          if (!currentMapIds.has(mapComponent.id)) {
             lastProcessedMessageHashes.delete(mapComponent.id) // 清理缓存
             context.removeMap(mapComponent.id)
           }
@@ -745,6 +772,7 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
       const trigger = topicSubscriptionManager.getStatusUpdateTrigger()
       trigger.value
       
+      // 只处理enabled为true的组件，enabled为false时不处理数据更新
       const messages: Record<string, { message: any; timestamp: number }> = {}
       laserScanComponents.forEach(laserScanComponent => {
         if (laserScanComponent.enabled) {
@@ -756,6 +784,7 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
             messages[laserScanComponent.id] = { message, timestamp }
           }
         }
+        // enabled为false时，不处理数据更新，也不添加到messages中
       })
       return messages
     },
@@ -766,12 +795,14 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
         }
       })
       
-      // 移除已禁用或已删除的 LaserScan
+      // 移除已删除的 LaserScan
+      // 注意：enabled为false的组件已经在syncLaserScanDisplay中通过hideLaserScan处理，这里只处理真正删除的组件
       const currentLaserScanIds = new Set(Object.keys(laserScanMessages))
       rvizStore.displayComponents
         .filter(c => c.type === 'laserscan')
         .forEach(laserScanComponent => {
-          if (!laserScanComponent.enabled || !currentLaserScanIds.has(laserScanComponent.id)) {
+          // 只处理真正删除的组件（不在currentLaserScanIds中），enabled为false的组件不在这里处理
+          if (!currentLaserScanIds.has(laserScanComponent.id)) {
             context.removeLaserScan(laserScanComponent.id)
           }
         })
@@ -821,6 +852,7 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
       const trigger = topicSubscriptionManager.getStatusUpdateTrigger()
       trigger.value
       
+      // 只处理enabled为true的组件，enabled为false时不处理数据更新
       const messages: Record<string, { message: any; timestamp: number }> = {}
       pointCloud2Components.forEach(pointCloud2Component => {
         if (pointCloud2Component.enabled) {
@@ -832,6 +864,7 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
             messages[pointCloud2Component.id] = { message, timestamp }
           }
         }
+        // enabled为false时，不处理数据更新，也不添加到messages中
       })
       return messages
     },
@@ -842,12 +875,14 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
         }
       })
       
-      // 移除已禁用或已删除的 PointCloud2
+      // 移除已删除的 PointCloud2
+      // 注意：enabled为false的组件已经在syncPointCloud2Display中通过hidePointCloud2处理，这里只处理真正删除的组件
       const currentPointCloud2Ids = new Set(Object.keys(pointCloud2Messages))
       rvizStore.displayComponents
         .filter(c => c.type === 'pointcloud2')
         .forEach(pointCloud2Component => {
-          if (!pointCloud2Component.enabled || !currentPointCloud2Ids.has(pointCloud2Component.id)) {
+          // 只处理真正删除的组件（不在currentPointCloud2Ids中），enabled为false的组件不在这里处理
+          if (!currentPointCloud2Ids.has(pointCloud2Component.id)) {
             context.removePointCloud2(pointCloud2Component.id)
           }
         })

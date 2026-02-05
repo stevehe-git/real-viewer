@@ -200,6 +200,16 @@ watch(
                 // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
                 // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
+              hideMap: (componentId: string) => {
+                sceneManager.hideMap(componentId)
+                worldview.markDirty()
+                // 只清除画布渲染，保留缓存数据
+              },
+              showMap: (componentId: string) => {
+                sceneManager.showMap(componentId)
+                worldview.markDirty()
+                // 恢复渲染，使用缓存数据
+              },
               clearAllMaps: () => {
                 sceneManager.clearAllMaps()
                 worldview.markDirty()
@@ -244,6 +254,11 @@ watch(
                 // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
                 // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
               },
+              hideLaserScan: (componentId: string) => {
+                sceneManager.hideLaserScan(componentId)
+                worldview.markDirty()
+                // 只清除画布渲染，保留缓存数据
+              },
               clearAllLaserScans: () => {
                 sceneManager.clearAllLaserScans()
                 worldview.markDirty()
@@ -285,6 +300,11 @@ watch(
                 worldview.markDirty()
                 // 移除直接调用 paint()，让 markDirty() 通过帧率限制机制安排渲染
                 // 关键修复：多个 LaserScan 更新时，只调用 markDirty()，帧率限制会确保 FPS 不超过 30
+              },
+              hidePointCloud2: (componentId: string) => {
+                sceneManager.hidePointCloud2(componentId)
+                worldview.markDirty()
+                // 只清除画布渲染，保留缓存数据
               },
               clearAllPointCloud2s: () => {
                 sceneManager.clearAllPointCloud2s()

@@ -1202,6 +1202,63 @@ export class SceneManager {
   }
 
   /**
+   * 隐藏地图（只清除渲染数据，保留缓存数据）
+   * 用于当组件enabled变为false时，不清空缓存，只清除画布渲染
+   */
+  hideMap(componentId: string): void {
+    this.removeMapRenderData(componentId)
+    // 触发渲染更新，清除画布上的地图
+    this.worldviewContext.onDirty()
+  }
+
+  /**
+   * 显示地图（恢复渲染，使用缓存数据）
+   * 用于当组件enabled从false变为true时，恢复渲染而不需要新消息
+   */
+  showMap(componentId: string): void {
+    // 检查是否有缓存数据
+    const textureData = this.mapTextureDataMap.get(componentId)
+    if (textureData && textureData.textureData) {
+      // 有缓存数据，恢复渲染
+      this.updateMapDrawCall(componentId)
+      this.worldviewContext.onDirty()
+    }
+    // 如果没有缓存数据，等待新消息到来时自动恢复
+  }
+
+  /**
+   * 隐藏 LaserScan（只清除渲染数据，保留缓存数据）
+   * 用于当组件enabled变为false时，不清空缓存，只清除画布渲染
+   */
+  hideLaserScan(componentId: string): void {
+    const instance = this.laserScanInstances.get(componentId)
+    if (instance) {
+      this.worldviewContext.onUnmount(instance)
+      this.laserScanInstances.delete(componentId)
+      requestAnimationFrame(() => {
+        this.registerDrawCalls()
+        this.worldviewContext.onDirty()
+      })
+    }
+  }
+
+  /**
+   * 隐藏 PointCloud2（只清除渲染数据，保留缓存数据）
+   * 用于当组件enabled变为false时，不清空缓存，只清除画布渲染
+   */
+  hidePointCloud2(componentId: string): void {
+    const instance = this.pointCloud2Instances.get(componentId)
+    if (instance) {
+      this.worldviewContext.onUnmount(instance)
+      this.pointCloud2Instances.delete(componentId)
+      requestAnimationFrame(() => {
+        this.registerDrawCalls()
+        this.worldviewContext.onDirty()
+      })
+    }
+  }
+
+  /**
    * 移除地图数据
    * @param componentId 组件ID
    */

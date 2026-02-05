@@ -59,6 +59,22 @@ export function useTopicSubscription(
   const unsubscribe = () => {
     rvizStore.unsubscribeComponentTopic(componentId)
   }
+
+  // 暂停订阅（保留订阅者，不清除）
+  const pause = () => {
+    topicSubscriptionManager.pauseSubscription(componentId)
+  }
+
+  // 恢复订阅（如果订阅者存在）
+  const resume = () => {
+    if (topic && topic.trim() !== '' && rvizStore.communicationState.isConnected) {
+      // 先尝试恢复订阅（如果订阅者存在）
+      if (!topicSubscriptionManager.resumeSubscription(componentId)) {
+        // 如果恢复失败，重新订阅
+        subscribe()
+      }
+    }
+  }
   
   // 获取最新消息（从统一管理器获取，使用响应式追踪）
   const getLatestMessage = computed(() => {
@@ -147,6 +163,8 @@ export function useTopicSubscription(
     messageQueue,
     subscribe,
     unsubscribe,
+    pause,
+    resume,
     getLatestMessage: () => getLatestMessage.value, // 返回函数以保持API兼容
     getAllMessages,
     clearCache,

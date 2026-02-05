@@ -177,9 +177,24 @@ export class TopicSubscriptionManager {
     // 如果都没有改变，且已经订阅，则不需要重新订阅
     const currentParams = this.subscriptionParams.get(componentId)
     const currentStatus = this.statuses.get(componentId)
-    if (currentParams && currentStatus?.subscribed) {
+    const existingSubscriber = this.subscribers.get(componentId)
+    
+    // 如果 topic 和 queueSize 都没有改变，且订阅者存在，则恢复订阅（不重新创建）
+    if (currentParams && existingSubscriber) {
       if (currentParams.topic === topic && currentParams.queueSize === queueSize) {
-        // topic 和 queueSize 都没有改变，且已经订阅，不需要重新订阅
+        // topic 和 queueSize 都没有改变，且订阅者存在，只需要恢复订阅状态
+        if (!currentStatus?.subscribed) {
+          // 之前是暂停状态，现在恢复订阅
+          this.statuses.set(componentId, {
+            subscribed: true,
+            hasData: currentStatus?.hasData || false,
+            messageCount: currentStatus?.messageCount || 0,
+            lastMessageTime: currentStatus?.lastMessageTime || null,
+            error: null
+          })
+          this.triggerStatusUpdateThrottled(true) // 立即更新订阅状态
+          console.log(`Resumed subscription to topic: ${topic} for component: ${componentId} (${componentType})`)
+        }
         return true
       }
     }
@@ -331,32 +346,43 @@ export class TopicSubscriptionManager {
           currentStatus.hasData !== hasData ||
           currentStatus.messageCount === 0 // 第一条消息需要立即更新
 
-        if (statusChanged) {
-          // 更新状态（包括 hasData 变化）
-          this.statuses.set(componentId, {
-            subscribed: true,
-            hasData: hasData,
-            messageCount: newMessageCount,
-            lastMessageTime: timestamp,
-            error: hasData ? null : 'Invalid message format or empty data'
-          })
-          
-          // 只在状态变化时触发响应式更新（立即更新）
-          this.triggerStatusUpdateThrottled(true)
+        // 检查订阅状态：如果已暂停（subscribed: false），只更新缓存，不更新状态
+        // 这样在恢复时可以立即使用缓存的数据
+        const isPaused = !currentStatus?.subscribed
+        
+        if (isPaused) {
+          // 暂停状态：只更新缓存，不更新状态（保持 subscribed: false）
+          // 消息会被缓存，但不会触发状态更新，避免触发渲染
+          // 这样在恢复时可以立即使用缓存的数据
         } else {
-          // 状态未变化，但更新计数和时间戳（确保时间戳总是最新的）
-          this.statuses.set(componentId, {
-            ...currentStatus,
-            messageCount: newMessageCount,
-            lastMessageTime: timestamp
-          })
-          
-          // 对于高频消息（如图像），使用更激进的节流（每200ms更新一次）
-          if (componentType === 'image' || componentType === 'camera') {
-            this.triggerStatusUpdateThrottled() // 使用节流更新
+          // 正常状态：更新状态
+          if (statusChanged) {
+            // 更新状态（包括 hasData 变化）
+            this.statuses.set(componentId, {
+              subscribed: true,
+              hasData: hasData,
+              messageCount: newMessageCount,
+              lastMessageTime: timestamp,
+              error: hasData ? null : 'Invalid message format or empty data'
+            })
+            
+            // 只在状态变化时触发响应式更新（立即更新）
+            this.triggerStatusUpdateThrottled(true)
           } else {
-            // 对于其他类型，也使用节流更新，但频率更低（确保时间戳能更新）
-            this.triggerStatusUpdateThrottled()
+            // 状态未变化，但更新计数和时间戳（确保时间戳总是最新的）
+            this.statuses.set(componentId, {
+              ...currentStatus,
+              messageCount: newMessageCount,
+              lastMessageTime: timestamp
+            })
+            
+            // 对于高频消息（如图像），使用更激进的节流（每200ms更新一次）
+            if (componentType === 'image' || componentType === 'camera') {
+              this.triggerStatusUpdateThrottled() // 使用节流更新
+            } else {
+              // 对于其他类型，也使用节流更新，但频率更低（确保时间戳能更新）
+              this.triggerStatusUpdateThrottled()
+            }
           }
         }
 
@@ -417,7 +443,8 @@ export class TopicSubscriptionManager {
   }
 
   /**
-   * 取消订阅
+   * 取消订阅（完全取消，删除订阅者）
+   * 用于组件删除或 topic 改变时
    */
   unsubscribe(componentId: string): void {
     const subscriber = this.subscribers.get(componentId)
@@ -442,6 +469,50 @@ export class TopicSubscriptionManager {
       })
       this.triggerStatusUpdateThrottled(true) // 立即更新取消订阅状态
     }
+  }
+
+  /**
+   * 暂停订阅（保留订阅者，只标记为未订阅）
+   * 用于组件 enabled 变为 false 时，不清除订阅者，以便快速恢复
+   * 注意：不调用 subscriber.unsubscribe()，保持 ROS 订阅活跃，只是不处理消息
+   */
+  pauseSubscription(componentId: string): void {
+    // 不删除订阅者，不调用 unsubscribe()，只标记为未订阅
+    // 这样订阅者仍然会接收消息（会被缓存），但不会触发渲染更新
+    const currentStatus = this.statuses.get(componentId)
+    if (currentStatus) {
+      this.statuses.set(componentId, {
+        ...currentStatus,
+        subscribed: false
+      })
+      this.triggerStatusUpdateThrottled(true) // 立即更新暂停状态
+    }
+  }
+
+  /**
+   * 恢复订阅（如果订阅者存在且参数未改变）
+   * 用于组件 enabled 从 false 变为 true 时，快速恢复订阅
+   * 注意：如果订阅者存在，只需要恢复状态，不需要重新订阅
+   */
+  resumeSubscription(componentId: string): boolean {
+    const subscriber = this.subscribers.get(componentId)
+    const currentParams = this.subscriptionParams.get(componentId)
+    const currentStatus = this.statuses.get(componentId)
+    
+    // 如果订阅者存在且参数已保存，恢复订阅状态
+    // 订阅者仍然在接收消息，只需要恢复状态即可
+    if (subscriber && currentParams && currentStatus) {
+      this.statuses.set(componentId, {
+        subscribed: true,
+        hasData: currentStatus.hasData,
+        messageCount: currentStatus.messageCount,
+        lastMessageTime: currentStatus.lastMessageTime,
+        error: null
+      })
+      this.triggerStatusUpdateThrottled(true) // 立即更新恢复状态
+      return true
+    }
+    return false
   }
 
   /**
