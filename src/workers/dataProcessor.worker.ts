@@ -1090,22 +1090,22 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
     const intensityOffset = findFieldOffsetVariants(['intensity', 'i', 'I'])
     
     // 调试：输出所有字段信息（仅在开发环境）
-    if (import.meta.env.DEV) {
-      const fieldNames = fields.map((f: any) => f.name).join(', ')
-      console.log(`[PointCloud2 Worker] Fields for ${componentId}:`, fields.map((f: any) => ({
-        name: f.name,
-        offset: f.offset,
-        datatype: f.datatype,
-        count: f.count
-      })))
-      console.log(`[PointCloud2 Worker] Field names: [${fieldNames}]`)
-      console.log(`[PointCloud2 Worker] Field offsets:`, {
-        x: xOffset,
-        y: yOffset,
-        z: zOffset,
-        intensity: intensityOffset
-      })
-    }
+    // if (import.meta.env.DEV) {
+    //   const fieldNames = fields.map((f: any) => f.name).join(', ')
+    //   console.log(`[PointCloud2 Worker] Fields for ${componentId}:`, fields.map((f: any) => ({
+    //     name: f.name,
+    //     offset: f.offset,
+    //     datatype: f.datatype,
+    //     count: f.count
+    //   })))
+    //   console.log(`[PointCloud2 Worker] Field names: [${fieldNames}]`)
+    //   console.log(`[PointCloud2 Worker] Field offsets:`, {
+    //     x: xOffset,
+    //     y: yOffset,
+    //     z: zOffset,
+    //     intensity: intensityOffset
+    //   })
+    // }
 
     if (xOffset < 0 || yOffset < 0 || zOffset < 0) {
       return {

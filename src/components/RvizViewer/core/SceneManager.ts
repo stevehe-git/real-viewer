@@ -426,14 +426,14 @@ export class SceneManager {
         }
         
         // 调试：检查数据格式和配置
-        console.log(`[PointCloud2] Registering draw call for ${componentId}:`, {
-          pointsCount: pointCloud2Data.points.length,
-          colorsCount: pointCloud2Data.colors?.length || 0,
-          hasColor: !!pointCloud2Data.color,
-          scale: renderData.scale,
-          style: renderData.style,
-          hasPose: !!pointCloud2Data.pose
-        })
+        // console.log(`[PointCloud2] Registering draw call for ${componentId}:`, {
+        //   pointsCount: pointCloud2Data.points.length,
+        //   colorsCount: pointCloud2Data.colors?.length || 0,
+        //   hasColor: !!pointCloud2Data.color,
+        //   scale: renderData.scale,
+        //   style: renderData.style,
+        //   hasPose: !!pointCloud2Data.pose
+        // })
         
         // 确保数据格式正确（Points 命令期望单个对象，不是数组）
         this.worldviewContext.registerDrawCall({
@@ -2541,16 +2541,16 @@ export class SceneManager {
     }
 
     // 调试：检查消息格式
-    console.log(`[PointCloud2] updatePointCloud2 called for ${componentId}:`, {
-      hasMessage: !!message,
-      hasData: !!message?.data,
-      dataType: message?.data?.constructor?.name,
-      dataLength: message?.data?.length,
-      width: message?.width,
-      height: message?.height,
-      fields: message?.fields?.length,
-      frameId: message?.header?.frame_id
-    })
+    // console.log(`[PointCloud2] updatePointCloud2 called for ${componentId}:`, {
+    //   hasMessage: !!message,
+    //   hasData: !!message?.data,
+    //   dataType: message?.data?.constructor?.name,
+    //   dataLength: message?.data?.length,
+    //   width: message?.width,
+    //   height: message?.height,
+    //   fields: message?.fields?.length,
+    //   frameId: message?.header?.frame_id
+    // })
 
     // PointCloud2 消息的 data 字段是 Uint8Array 或 Array，需要检查长度
     // Uint8Array 也是数组类型，但 Array.isArray() 可能返回 false
@@ -2656,14 +2656,14 @@ export class SceneManager {
         }
       }
 
-      console.log(`[PointCloud2] Sending to worker for ${componentId}:`, {
-        messageSize: cleanMessage.data?.byteLength || cleanMessage.data?.length,
-        width: cleanMessage.width,
-        height: cleanMessage.height,
-        pointStep: cleanMessage.point_step,
-        fields: cleanMessage.fields?.length,
-        config: workerConfig
-      })
+      // console.log(`[PointCloud2] Sending to worker for ${componentId}:`, {
+      //   messageSize: cleanMessage.data?.byteLength || cleanMessage.data?.length,
+      //   width: cleanMessage.width,
+      //   height: cleanMessage.height,
+      //   pointStep: cleanMessage.point_step,
+      //   fields: cleanMessage.fields?.length,
+      //   config: workerConfig
+      // })
 
       const result = await worker.processPointCloud2({
         type: 'processPointCloud2',
@@ -2694,17 +2694,17 @@ export class SceneManager {
         this.pointCloud2RawMessageMap.set(componentId, message)
         
         // 调试日志
-        console.log(`[PointCloud2] Data processed for ${componentId}:`, {
-          pointsCount: result.data.points?.length || 0,
-          colorsCount: result.data.colors?.length || 0,
-          hasColor: !!result.data.color,
-          scale: result.data.scale,
-          hasPose: !!result.data.pose,
-          colorTransformer: config.colorTransformer,
-          alpha: config.alpha,
-          firstPoint: result.data.points?.[0],
-          firstColor: result.data.colors?.[0] || result.data.color
-        })
+        // console.log(`[PointCloud2] Data processed for ${componentId}:`, {
+        //   pointsCount: result.data.points?.length || 0,
+        //   colorsCount: result.data.colors?.length || 0,
+        //   hasColor: !!result.data.color,
+        //   scale: result.data.scale,
+        //   hasPose: !!result.data.pose,
+        //   colorTransformer: config.colorTransformer,
+        //   alpha: config.alpha,
+        //   firstPoint: result.data.points?.[0],
+        //   firstColor: result.data.colors?.[0] || result.data.color
+        // })
         
         this.pointCloud2DataMap.set(componentId, result.data)
 
