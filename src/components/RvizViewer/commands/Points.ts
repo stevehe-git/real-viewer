@@ -7,13 +7,14 @@ import { getVertexColors, pointToVec3, withPose } from './utils/commandUtils'
 
 type PointsProps = {
   useWorldSpaceSize?: boolean
+  style?: string // 'Points' | 'Squares' | 'Flat Squares' | 'Spheres' | 'Boxes'
 }
 
 type Props = PointsProps & {
   children: ReadonlyArray<PointType>
 }
 
-export const makePointsCommand = ({ useWorldSpaceSize }: PointsProps) => {
+export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: PointsProps = {}) => {
   return (regl: Regl) => {
     if (!regl) {
       throw new Error('Invalid regl instance')
@@ -37,6 +38,7 @@ export const makePointsCommand = ({ useWorldSpaceSize }: PointsProps) => {
     uniform float viewportHeight;
     uniform float minPointSize;
     uniform float maxPointSize;
+    uniform int pointStyle;
 
     attribute vec3 point;
     attribute vec4 color;
@@ -75,8 +77,58 @@ export const makePointsCommand = ({ useWorldSpaceSize }: PointsProps) => {
         frag: `
     precision mediump float;
     varying vec4 fragColor;
+    uniform int pointStyle;
+    
     void main () {
-      gl_FragColor = fragColor;
+      vec2 coord = gl_PointCoord - vec2(0.5);
+      float dist = length(coord);
+      
+      // Style 0: Points (圆形)
+      // Style 1: Squares (圆角方形)
+      // Style 2: Flat Squares (方形，无圆角)
+      // Style 3: Spheres (球形，带光照)
+      // Style 4: Boxes (立方体，需要特殊处理，暂时用方形代替)
+      
+      if (pointStyle == 0) {
+        // Points: 圆形点
+        if (dist > 0.5) discard;
+        float alpha = fragColor.a * (1.0 - smoothstep(0.0, 0.5, dist));
+        gl_FragColor = vec4(fragColor.rgb, alpha);
+      } else if (pointStyle == 1) {
+        // Squares: 圆角方形
+        vec2 absCoord = abs(coord);
+        float maxDist = max(absCoord.x, absCoord.y);
+        if (maxDist > 0.5) discard;
+        float cornerDist = length(absCoord - vec2(0.35));
+        float alpha = fragColor.a;
+        if (cornerDist < 0.15) {
+          // 圆角处理
+          alpha *= smoothstep(0.15, 0.0, cornerDist);
+        }
+        gl_FragColor = vec4(fragColor.rgb, alpha);
+      } else if (pointStyle == 2) {
+        // Flat Squares: 方形，无圆角
+        vec2 absCoord = abs(coord);
+        if (max(absCoord.x, absCoord.y) > 0.5) discard;
+        gl_FragColor = fragColor;
+      } else if (pointStyle == 3) {
+        // Spheres: 球形，带简单光照效果
+        if (dist > 0.5) discard;
+        // 计算法线（从中心指向当前像素）
+        vec3 normal = normalize(vec3(coord, sqrt(1.0 - dist * dist)));
+        // 简单光照（假设光源在相机位置）
+        float light = max(0.3, dot(normal, vec3(0.0, 0.0, 1.0)));
+        float alpha = fragColor.a * (1.0 - smoothstep(0.0, 0.5, dist));
+        gl_FragColor = vec4(fragColor.rgb * light, alpha);
+      } else {
+        // Boxes: 立方体（暂时用方形代替，真正的立方体需要 geometry shader）
+        vec2 absCoord = abs(coord);
+        if (max(absCoord.x, absCoord.y) > 0.5) discard;
+        // 简单的边框效果
+        float edgeDist = min(0.5 - absCoord.x, 0.5 - absCoord.y);
+        float edge = smoothstep(0.0, 0.1, edgeDist);
+        gl_FragColor = vec4(fragColor.rgb * edge, fragColor.a);
+      }
     }
     `,
         attributes: {
@@ -97,7 +149,20 @@ export const makePointsCommand = ({ useWorldSpaceSize }: PointsProps) => {
           viewportWidth: regl.context('viewportWidth'),
           viewportHeight: regl.context('viewportHeight'),
           minPointSize: minLimitPointSize,
-          maxPointSize: maxLimitPointSize
+          maxPointSize: maxLimitPointSize,
+          pointStyle: (_context: any, props: any) => {
+            // 从 props 中获取 style，如果没有则使用默认值
+            const pointStyle = props.style || style || 'Points'
+            // 映射样式名称到数字
+            switch (pointStyle) {
+              case 'Points': return 0
+              case 'Squares': return 1
+              case 'Flat Squares': return 2
+              case 'Spheres': return 3
+              case 'Boxes': return 4
+              default: return 0
+            }
+          }
         },
 
         count: regl.prop('points.length')

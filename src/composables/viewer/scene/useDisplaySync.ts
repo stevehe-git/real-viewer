@@ -65,6 +65,9 @@ export interface DisplaySyncContext {
     useRainbow?: boolean
     minColor?: { r: number; g: number; b: number }
     maxColor?: { r: number; g: number; b: number }
+    minIntensity?: number
+    maxIntensity?: number
+    style?: string
   }, componentId: string) => void
   destroyGrid: () => void
   destroyAxes: () => void
@@ -1044,7 +1047,10 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
           colorTransformer: pointCloud2Component.options?.colorTransformer,
           useRainbow: pointCloud2Component.options?.useRainbow,
           minColor: pointCloud2Component.options?.minColor,
-          maxColor: pointCloud2Component.options?.maxColor
+          maxColor: pointCloud2Component.options?.maxColor,
+          minIntensity: pointCloud2Component.options?.minIntensity,
+          maxIntensity: pointCloud2Component.options?.maxIntensity,
+          style: pointCloud2Component.options?.style
         }))
     },
     (pointCloud2Configs) => {
@@ -1056,7 +1062,10 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
             colorTransformer: pointCloud2Config.colorTransformer,
             useRainbow: pointCloud2Config.useRainbow,
             minColor: pointCloud2Config.minColor,
-            maxColor: pointCloud2Config.maxColor
+            maxColor: pointCloud2Config.maxColor,
+            minIntensity: pointCloud2Config.minIntensity,
+            maxIntensity: pointCloud2Config.maxIntensity,
+            style: pointCloud2Config.style
           }, pointCloud2Config.id)
         }
       })

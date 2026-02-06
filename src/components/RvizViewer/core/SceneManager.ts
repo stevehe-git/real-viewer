@@ -36,6 +36,7 @@ export class SceneManager {
     maxColor?: { r: number; g: number; b: number }
     minIntensity?: number
     maxIntensity?: number
+    style?: string
   }>() // 每个 PointCloud2 的配置
   private pathsData: any[] = [] // 保留向后兼容
   private pathDataMap = new Map<string, any>() // 支持多个 Path，key 为 componentId
@@ -400,6 +401,9 @@ export class SceneManager {
           })
         }
         
+        // 获取配置
+        const config = this.pointCloud2ConfigMap.get(componentId) || {}
+        
         // 获取或创建单个实例
         if (!this.pointCloud2Instances.has(componentId)) {
           this.pointCloud2Instances.set(componentId, { displayName: `PointCloud2-${componentId}` })
@@ -407,22 +411,32 @@ export class SceneManager {
         const instance = this.pointCloud2Instances.get(componentId)
         this.worldviewContext.onMount(instance, this.pointsCommandPixelSize)
         
-        // 调试：检查数据格式
+        // 应用配置到渲染数据（包括 style 和 size）
+        const renderData = {
+          ...pointCloud2Data,
+          scale: {
+            x: config.size ?? pointCloud2Data.scale?.x ?? 3,
+            y: config.size ?? pointCloud2Data.scale?.y ?? 3,
+            z: config.size ?? pointCloud2Data.scale?.z ?? 3
+          },
+          style: config.style || 'Points' // 传递 style 配置
+        }
+        
+        // 调试：检查数据格式和配置
         console.log(`[PointCloud2] Registering draw call for ${componentId}:`, {
           pointsCount: pointCloud2Data.points.length,
           colorsCount: pointCloud2Data.colors?.length || 0,
           hasColor: !!pointCloud2Data.color,
-          scale: pointCloud2Data.scale,
-          hasPose: !!pointCloud2Data.pose,
-          firstPoint: pointCloud2Data.points[0],
-          firstColor: pointCloud2Data.colors?.[0] || pointCloud2Data.color
+          scale: renderData.scale,
+          style: renderData.style,
+          hasPose: !!pointCloud2Data.pose
         })
         
         // 确保数据格式正确（Points 命令期望单个对象，不是数组）
         this.worldviewContext.registerDrawCall({
           instance: instance,
           reglCommand: this.pointsCommandPixelSize,
-          children: pointCloud2Data,
+          children: renderData,
           layerIndex: 2.5
         })
       } else {
@@ -2695,6 +2709,9 @@ export class SceneManager {
     useRainbow?: boolean
     minColor?: { r: number; g: number; b: number }
     maxColor?: { r: number; g: number; b: number }
+    minIntensity?: number
+    maxIntensity?: number
+    style?: string
   }, componentId: string): void {
     if (!componentId) {
       console.warn('updatePointCloud2Options: componentId is required')
@@ -2725,6 +2742,9 @@ export class SceneManager {
     useRainbow?: boolean
     minColor?: { r: number; g: number; b: number }
     maxColor?: { r: number; g: number; b: number }
+    minIntensity?: number
+    maxIntensity?: number
+    style?: string
   }, componentId: string): void {
     this.updatePointCloud2Options(options, componentId)
   }
