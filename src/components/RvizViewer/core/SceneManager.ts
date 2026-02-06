@@ -29,6 +29,7 @@ export class SceneManager {
   private pointCloudConfigMap = new Map<string, { pointSize?: number }>() // 每个 PointCloud 的配置
   private pointCloud2DataMap = new Map<string, any>() // 支持多个 PointCloud2，key 为 componentId
   private pointCloud2RawMessageMap = new Map<string, any>() // 保存原始消息，用于配置变化时重新处理
+  private pointCloud2HistoryMap = new Map<string, Array<{ data: any; timestamp: number }>>() // 每个 PointCloud2 的历史数据队列（用于 Decay Time）
   private pointCloud2ConfigMap = new Map<string, { 
     size?: number
     alpha?: number
@@ -42,6 +43,7 @@ export class SceneManager {
     style?: string
     axisColor?: string // 'X' | 'Y' | 'Z'，用于 Axis 模式
     autocomputeIntensityBounds?: boolean
+    decayTime?: number // Decay Time（秒），保留指定时间内的所有点
   }>() // 每个 PointCloud2 的配置
   private pathsData: any[] = [] // 保留向后兼容
   private pathDataMap = new Map<string, any>() // 支持多个 Path，key 为 componentId
@@ -2544,6 +2546,83 @@ export class SceneManager {
   }
 
   /**
+   * 合并多个点云数据（用于 Decay Time）
+   * @param historyDataArray 历史数据数组，每个元素包含 { data, timestamp }
+   * @returns 合并后的点云数据
+   */
+  private mergePointCloud2Data(historyDataArray: Array<{ data: any; timestamp: number }>): any {
+    if (historyDataArray.length === 0) {
+      return null
+    }
+    
+    if (historyDataArray.length === 1) {
+      return historyDataArray[0].data
+    }
+    
+    // 合并多个点云数据
+    const mergedPoints: number[] = []
+    const mergedColors: number[] = []
+    let mergedPose: any = null
+    let mergedScale: any = null
+    
+    // 使用最新的 pose 和 scale（最后一个数据的）
+    const lastData = historyDataArray[historyDataArray.length - 1].data
+    mergedPose = lastData.pose
+    mergedScale = lastData.scale
+    
+    // 合并所有点
+    historyDataArray.forEach(({ data }) => {
+      if (data && data.points && Array.isArray(data.points)) {
+        mergedPoints.push(...data.points)
+        
+        // 合并颜色数据
+        if (data.colors && Array.isArray(data.colors)) {
+          mergedColors.push(...data.colors)
+        } else if (data.color) {
+          // 如果使用单一颜色，为每个点添加相同颜色
+          const color = data.color
+          const colorArray = Array.isArray(color) ? color : [color.r || 1, color.g || 1, color.b || 1, color.a || 1]
+          for (let i = 0; i < data.points.length / 3; i++) {
+            mergedColors.push(...colorArray)
+          }
+        }
+      }
+    })
+    
+    return {
+      points: mergedPoints,
+      colors: mergedColors.length > 0 ? mergedColors : undefined,
+      color: mergedColors.length === 0 ? lastData.color : undefined,
+      pose: mergedPose,
+      scale: mergedScale
+    }
+  }
+
+  /**
+   * 根据 Decay Time 过滤历史数据
+   * @param historyDataArray 历史数据数组
+   * @param decayTimeSeconds Decay Time（秒）
+   * @param currentTimestamp 当前时间戳（毫秒）
+   * @returns 过滤后的历史数据数组
+   */
+  private filterPointCloud2HistoryByDecayTime(
+    historyDataArray: Array<{ data: any; timestamp: number }>,
+    decayTimeSeconds: number,
+    currentTimestamp: number
+  ): Array<{ data: any; timestamp: number }> {
+    if (decayTimeSeconds <= 0) {
+      // Decay Time 为 0 或负数，只保留最新的数据
+      return historyDataArray.length > 0 ? [historyDataArray[historyDataArray.length - 1]] : []
+    }
+    
+    const decayTimeMs = decayTimeSeconds * 1000
+    const cutoffTime = currentTimestamp - decayTimeMs
+    
+    // 过滤出在时间窗口内的数据
+    return historyDataArray.filter(({ timestamp }) => timestamp >= cutoffTime)
+  }
+
+  /**
    * 更新 PointCloud2 数据（使用 Web Worker 处理，支持多实例）
    */
   async updatePointCloud2(message: any, componentId: string): Promise<void> {
@@ -2731,20 +2810,56 @@ export class SceneManager {
         // 保存原始消息，用于配置变化时重新处理
         this.pointCloud2RawMessageMap.set(componentId, message)
         
+        // 提取时间戳（从消息的 header.stamp 获取）
+        const timestamp = message.header?.stamp?.sec 
+          ? message.header.stamp.sec * 1000 + (message.header.stamp.nsec || 0) / 1000000
+          : Date.now()
+        
+        // 获取 Decay Time 配置
+        const decayTime = config.decayTime ?? 0
+        
+        // 获取历史数据队列
+        let historyDataArray = this.pointCloud2HistoryMap.get(componentId) || []
+        
+        // 将新数据添加到历史队列
+        historyDataArray.push({
+          data: result.data,
+          timestamp
+        })
+        
+        // 根据 Decay Time 过滤历史数据
+        const filteredHistory = this.filterPointCloud2HistoryByDecayTime(
+          historyDataArray,
+          decayTime,
+          timestamp
+        )
+        
+        // 更新历史数据队列
+        this.pointCloud2HistoryMap.set(componentId, filteredHistory)
+        
+        // 合并历史数据（如果 Decay Time > 0）
+        let finalData: any
+        if (decayTime > 0 && filteredHistory.length > 1) {
+          // 需要合并多个时间点的数据
+          finalData = this.mergePointCloud2Data(filteredHistory)
+        } else {
+          // Decay Time 为 0 或只有一条数据，直接使用最新数据
+          finalData = result.data
+        }
+        
         // 调试日志
         // console.log(`[PointCloud2] Data processed for ${componentId}:`, {
-        //   pointsCount: result.data.points?.length || 0,
-        //   colorsCount: result.data.colors?.length || 0,
-        //   hasColor: !!result.data.color,
-        //   scale: result.data.scale,
-        //   hasPose: !!result.data.pose,
-        //   colorTransformer: config.colorTransformer,
-        //   alpha: config.alpha,
-        //   firstPoint: result.data.points?.[0],
-        //   firstColor: result.data.colors?.[0] || result.data.color
+        //   pointsCount: finalData.points?.length || 0,
+        //   colorsCount: finalData.colors?.length || 0,
+        //   hasColor: !!finalData.color,
+        //   scale: finalData.scale,
+        //   hasPose: !!finalData.pose,
+        //   decayTime,
+        //   historyCount: filteredHistory.length,
+        //   timestamp
         // })
         
-        this.pointCloud2DataMap.set(componentId, result.data)
+        this.pointCloud2DataMap.set(componentId, finalData)
 
         // 立即注册绘制调用（不使用 requestAnimationFrame，避免延迟）
         this.registerDrawCalls()
@@ -2785,6 +2900,7 @@ export class SceneManager {
     this.pointCloud2DataMap.delete(componentId)
     this.pointCloud2ConfigMap.delete(componentId)
     this.pointCloud2RawMessageMap.delete(componentId)
+    this.pointCloud2HistoryMap.delete(componentId) // 清除历史数据
     this.pointCloud2Instances.delete(componentId)
     this.pointCloud2RequestIds.delete(componentId)
     
@@ -2800,6 +2916,7 @@ export class SceneManager {
     this.pointCloud2DataMap.clear()
     this.pointCloud2ConfigMap.clear()
     this.pointCloud2RawMessageMap.clear()
+    this.pointCloud2HistoryMap.clear() // 清除所有历史数据
     this.pointCloud2Instances.clear()
     this.pointCloud2RequestIds.clear()
     this.registerDrawCalls()
@@ -2821,6 +2938,7 @@ export class SceneManager {
     axisColor?: string
     flatColor?: { r: number; g: number; b: number }
     autocomputeIntensityBounds?: boolean
+    decayTime?: number
   }, componentId: string): void {
     if (!componentId) {
       console.warn('updatePointCloud2Options: componentId is required')
@@ -2868,6 +2986,8 @@ export class SceneManager {
       currentConfig.maxIntensity !== options.maxIntensity ||
       (currentConfig.axisColor !== options.axisColor) || // axisColor 变化需要重新处理数据
       !deepEqual(currentConfig.flatColor, options.flatColor) // flatColor 变化需要重新处理数据
+    
+    const decayTimeChanged = currentConfig.decayTime !== options.decayTime
 
     // 更新该 PointCloud2 的配置
     this.pointCloud2ConfigMap.set(componentId, {
@@ -2895,6 +3015,38 @@ export class SceneManager {
           this.registerDrawCalls()
           this.worldviewContext.onDirty()
         }
+      } else if (decayTimeChanged) {
+        // Decay Time 变化，需要重新合并历史数据
+        const historyDataArray = this.pointCloud2HistoryMap.get(componentId) || []
+        if (historyDataArray.length > 0) {
+          const currentTimestamp = Date.now()
+          const decayTime = options.decayTime ?? 0
+          
+          // 根据新的 Decay Time 过滤历史数据
+          const filteredHistory = this.filterPointCloud2HistoryByDecayTime(
+            historyDataArray,
+            decayTime,
+            currentTimestamp
+          )
+          
+          // 更新历史数据队列
+          this.pointCloud2HistoryMap.set(componentId, filteredHistory)
+          
+          // 合并历史数据
+          let finalData: any
+          if (decayTime > 0 && filteredHistory.length > 1) {
+            finalData = this.mergePointCloud2Data(filteredHistory)
+          } else {
+            // Decay Time 为 0 或只有一条数据，使用最新数据
+            finalData = filteredHistory.length > 0 ? filteredHistory[filteredHistory.length - 1].data : null
+          }
+          
+          if (finalData) {
+            this.pointCloud2DataMap.set(componentId, finalData)
+            this.registerDrawCalls()
+            this.worldviewContext.onDirty()
+          }
+        }
       } else {
         // 只影响渲染的配置变化（size、style等），只需更新绘制调用
         this.registerDrawCalls()
@@ -2918,6 +3070,7 @@ export class SceneManager {
     style?: string
     axisColor?: string
     autocomputeIntensityBounds?: boolean
+    decayTime?: number
   }, componentId: string): void {
     this.updatePointCloud2Options(options, componentId)
   }
@@ -3190,6 +3343,8 @@ export class SceneManager {
     this.pointCloudConfigMap.clear()
     this.pointCloud2DataMap.clear()
     this.pointCloud2ConfigMap.clear()
+    this.pointCloud2RawMessageMap.clear()
+    this.pointCloud2HistoryMap.clear() // 清除所有历史数据
     this.laserScanDataMap.clear()
     this.laserScanConfigMap.clear()
     this.laserScanRequestIds.clear()

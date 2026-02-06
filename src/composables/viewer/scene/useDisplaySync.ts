@@ -395,7 +395,8 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
           style: options.style,
           axisColor: options.axisColor,
           flatColor: options.flatColor,
-          autocomputeIntensityBounds: options.autocomputeIntensityBounds
+          autocomputeIntensityBounds: options.autocomputeIntensityBounds,
+          decayTime: options.decayTime
         }, pointCloud2Component.id)
 
         // 获取 PointCloud2 数据并更新
