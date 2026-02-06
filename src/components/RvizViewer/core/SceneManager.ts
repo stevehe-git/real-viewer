@@ -368,6 +368,16 @@ export class SceneManager {
     // 注册所有 PointCloud2（单个实例渲染）
     this.pointCloud2DataMap.forEach((pointCloud2Data, componentId) => {
       if (this.pointsCommandWithWorldSpace && pointCloud2Data) {
+        // 检查 Transform 是否有效（如果 Transform 无效，不注册绘制调用）
+        // 从 pointCloud2Data 中获取 frameId（如果保存了的话），或者从配置中获取
+        // 注意：pointCloud2Data 可能不包含 frameId，我们需要从其他地方获取
+        // 为了简化，我们检查 pointCloud2Data.pose 是否存在且有效
+        // 如果 pose 无效（null），说明 Transform 失败，不渲染
+        if (pointCloud2Data.pose === null || pointCloud2Data.pose === undefined) {
+          // Transform 无效，跳过渲染
+          return
+        }
+        
         // 检查数据格式
         if (!pointCloud2Data.points || pointCloud2Data.points.length === 0) {
           console.warn(`[PointCloud2] No points in data for ${componentId}`, pointCloud2Data)
@@ -2508,13 +2518,45 @@ export class SceneManager {
       return
     }
 
-    if (!message || !message.data || !Array.isArray(message.data) || message.data.length === 0) {
+    // 调试：检查消息格式
+    console.log(`[PointCloud2] updatePointCloud2 called for ${componentId}:`, {
+      hasMessage: !!message,
+      hasData: !!message?.data,
+      dataType: message?.data?.constructor?.name,
+      dataLength: message?.data?.length,
+      width: message?.width,
+      height: message?.height,
+      fields: message?.fields?.length,
+      frameId: message?.header?.frame_id
+    })
+
+    // PointCloud2 消息的 data 字段是 Uint8Array 或 Array，需要检查长度
+    // Uint8Array 也是数组类型，但 Array.isArray() 可能返回 false
+    if (!message || !message.data || message.data.length === 0) {
+      console.warn(`[PointCloud2] Invalid message for ${componentId}:`, {
+        hasMessage: !!message,
+        hasData: !!message?.data,
+        dataLength: message?.data?.length,
+        dataType: message?.data?.constructor?.name
+      })
       this.pointCloud2DataMap.delete(componentId)
       this.pointCloud2ConfigMap.delete(componentId)
       this.pointCloud2RequestIds.delete(componentId)
       this.registerDrawCalls()
       this.worldviewContext.onDirty()
       return
+    }
+
+    // 获取 TF 变换信息（传递给 Worker）
+    let frameInfo: { position: { x: number; y: number; z: number } | null; orientation: { x: number; y: number; z: number; w: number } | null } | null = null
+    const frameId = message.header?.frame_id
+    if (frameId) {
+      const fixedFrame = tfManager.getFixedFrame()
+      const tfFrameInfo = tfManager.getFrameInfo(frameId, fixedFrame)
+      frameInfo = {
+        position: tfFrameInfo.position,
+        orientation: tfFrameInfo.orientation
+      }
     }
 
     // 生成新的请求 ID
@@ -2529,32 +2571,49 @@ export class SceneManager {
       const { getDataProcessorWorker } = await import('@/workers/dataProcessorWorker')
       const worker = getDataProcessorWorker()
 
+      // 确保配置有默认值
+      const workerConfig = {
+        size: config.size ?? 3,
+        alpha: config.alpha ?? 1.0,
+        colorTransformer: config.colorTransformer ?? 'RGB',
+        useRainbow: config.useRainbow ?? false,
+        minColor: config.minColor ?? { r: 0, g: 0, b: 0 },
+        maxColor: config.maxColor ?? { r: 255, g: 255, b: 255 }
+      }
+
+      console.log(`[PointCloud2] Sending to worker for ${componentId}:`, {
+        messageSize: message.data?.length,
+        width: message.width,
+        height: message.height,
+        pointStep: message.point_step,
+        fields: message.fields?.length,
+        config: workerConfig
+      })
+
       const result = await worker.processPointCloud2({
         type: 'processPointCloud2',
         componentId,
         message,
-        config: {
-          size: config.size,
-          alpha: config.alpha,
-          colorTransformer: config.colorTransformer,
-          useRainbow: config.useRainbow,
-          minColor: config.minColor,
-          maxColor: config.maxColor
-        }
+        config: workerConfig,
+        frameInfo // 传递 TF 变换信息到 Worker
       })
 
       // 检查请求是否已被取消
       const currentRequestId = this.pointCloud2RequestIds.get(componentId)
       if (currentRequestId !== requestId) {
+        console.log(`[PointCloud2] Request ${requestId} cancelled for ${componentId} (current: ${currentRequestId})`)
         return
       }
 
       if (result.error) {
-        console.error('Failed to process point cloud2:', result.error)
+        console.error(`[PointCloud2] Worker error for ${componentId}:`, result.error)
+        this.pointCloud2DataMap.delete(componentId)
+        this.registerDrawCalls()
+        this.worldviewContext.onDirty()
         return
       }
 
-      // 保存处理后的数据
+      // 保存处理后的数据（TF 变换已在 Worker 中处理）
       if (result.data) {
         // 调试日志
         console.log(`[PointCloud2] Data processed for ${componentId}:`, {
@@ -2562,18 +2621,23 @@ export class SceneManager {
           colorsCount: result.data.colors?.length || 0,
           hasColor: !!result.data.color,
           scale: result.data.scale,
-          hasPose: !!result.data.pose
+          hasPose: !!result.data.pose,
+          firstPoint: result.data.points?.[0],
+          firstColor: result.data.colors?.[0] || result.data.color
         })
         
         this.pointCloud2DataMap.set(componentId, result.data)
 
-        // 延迟注册绘制调用
-        requestAnimationFrame(() => {
-          this.registerDrawCalls()
-          this.worldviewContext.onDirty()
-        })
+        // 立即注册绘制调用（不使用 requestAnimationFrame，避免延迟）
+        this.registerDrawCalls()
+        this.worldviewContext.onDirty()
       } else {
-        console.warn(`[PointCloud2] No data in result for ${componentId}`)
+        // 数据为 null 可能是 Transform 无效或其他错误
+        if (result.error) {
+          console.warn(`[PointCloud2] Error for ${componentId}:`, result.error)
+        } else {
+          console.warn(`[PointCloud2] No data in result for ${componentId}`, result)
+        }
         this.pointCloud2DataMap.delete(componentId)
         this.registerDrawCalls()
         this.worldviewContext.onDirty()

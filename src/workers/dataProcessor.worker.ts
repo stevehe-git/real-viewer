@@ -126,6 +126,11 @@ export interface PointCloud2ProcessRequest {
     minColor?: { r: number; g: number; b: number }
     maxColor?: { r: number; g: number; b: number }
   }
+  // TF 变换信息（从主线程传递，避免 Worker 中访问 tfManager）
+  frameInfo?: {
+    position: { x: number; y: number; z: number } | null
+    orientation: { x: number; y: number; z: number; w: number } | null
+  } | null
 }
 
 export interface PointCloud2ProcessResult {
@@ -1027,7 +1032,9 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       maxColor = { r: 255, g: 255, b: 255 }
     } = config
 
-    if (!message || !message.data || !Array.isArray(message.data) || message.data.length === 0) {
+    // PointCloud2 消息的 data 字段是 Uint8Array 或 Array
+    // 不能只检查 Array.isArray，因为 Uint8Array 也是数组类型
+    if (!message || !message.data || message.data.length === 0) {
       return {
         type: 'pointCloud2Processed',
         componentId,
@@ -1088,17 +1095,35 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
     const defaultColor = { r: 1, g: 1, b: 1, a: alpha }
 
     // 转换数据数组为 Uint8Array（如果需要）
+    // 支持 Uint8Array、Array、字符串（base64编码）
     let dataArray: Uint8Array
     if (data instanceof Uint8Array) {
       dataArray = data
     } else if (Array.isArray(data)) {
       dataArray = new Uint8Array(data)
+    } else if (typeof data === 'string') {
+      // Base64 解码（ROS 消息通过 JSON 序列化时，二进制数据会被编码为 base64 字符串）
+      try {
+        const binaryString = atob(data)
+        const len = binaryString.length
+        dataArray = new Uint8Array(len)
+        for (let i = 0; i < len; i++) {
+          dataArray[i] = binaryString.charCodeAt(i)
+        }
+      } catch (error) {
+        return {
+          type: 'pointCloud2Processed',
+          componentId,
+          data: null,
+          error: `Failed to decode base64 data: ${error}`
+        }
+      }
     } else {
       return {
         type: 'pointCloud2Processed',
         componentId,
         data: null,
-        error: 'Invalid data format'
+        error: `Invalid data format: expected Uint8Array, Array, or string (base64), got ${typeof data}`
       }
     }
 
@@ -1170,14 +1195,44 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
     // 但为了保持兼容性，如果 size > 10，认为是像素值，需要转换
     const worldSize = size > 10 ? size * 0.001 : size
     
+    // 应用 TF 变换（如果有 frameInfo）
+    let pose = {
+      position: { x: 0, y: 0, z: 0 },
+      orientation: { x: 0, y: 0, z: 0, w: 1 }
+    }
+    
+    // 检查 Transform 是否有效
+    const frameInfo = request.frameInfo
+    if (frameInfo && frameInfo.position && frameInfo.orientation) {
+      // Transform 有效，应用 TF 变换
+      pose = {
+        position: {
+          x: frameInfo.position.x,
+          y: frameInfo.position.y,
+          z: frameInfo.position.z
+        },
+        orientation: {
+          x: frameInfo.orientation.x,
+          y: frameInfo.orientation.y,
+          z: frameInfo.orientation.z,
+          w: frameInfo.orientation.w
+        }
+      }
+    } else if (frameInfo === null || (frameInfo && (!frameInfo.position || !frameInfo.orientation))) {
+      // Transform 无效，返回 null 表示不应该渲染
+      return {
+        type: 'pointCloud2Processed',
+        componentId,
+        data: null,
+        error: 'Transform invalid: no valid transform from frame to fixed frame'
+      }
+    }
+    
     return {
       type: 'pointCloud2Processed',
       componentId,
       data: {
-        pose: {
-          position: { x: 0, y: 0, z: 0 },
-          orientation: { x: 0, y: 0, z: 0, w: 1 }
-        },
+        pose,
         points,
         colors: colors.length > 0 ? colors : undefined,
         color: colors.length === 0 ? defaultColor : undefined,
