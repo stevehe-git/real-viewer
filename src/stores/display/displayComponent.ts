@@ -135,7 +135,8 @@ export function getDefaultOptions(type: string): Record<string, any> {
       autocomputeIntensityBounds: true,
       minIntensity: 0,
       maxIntensity: 0,
-      axisColor: 'Z' // 默认 Z 轴
+      axisColor: 'Z', // 默认 Z 轴
+      flatColor: { r: 255, g: 255, b: 0 } // 默认黄色（参照 RViz）
     },
     tf: {
       showNames: true,

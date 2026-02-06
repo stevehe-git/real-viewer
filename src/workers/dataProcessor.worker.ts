@@ -128,6 +128,7 @@ export interface PointCloud2ProcessRequest {
     minIntensity?: number
     maxIntensity?: number
     axisColor?: string // 'X' | 'Y' | 'Z'，用于 Axis 模式
+    flatColor?: { r: number; g: number; b: number } // 用于 Flat 模式的颜色
     autocomputeIntensityBounds?: boolean
   }
   // TF 变换信息（从主线程传递，避免 Worker 中访问 tfManager）
@@ -1037,6 +1038,7 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       minIntensity = 0,
       maxIntensity = 1,
       axisColor: rawAxisColor = 'Z', // 默认使用 Z 轴
+      flatColor = { r: 255, g: 255, b: 0 }, // 默认黄色（参照 RViz）
       autocomputeIntensityBounds = true
     } = config
     
@@ -1136,7 +1138,15 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
 
     const points: any[] = []
     const colors: any[] = []
-    const defaultColor = { r: 1, g: 1, b: 1, a: alpha }
+    // Flat 模式使用配置的颜色，其他情况使用默认白色
+    const defaultColor = colorTransformer === 'Flat' 
+      ? { 
+          r: (flatColor.r ?? 255) / 255, 
+          g: (flatColor.g ?? 255) / 255, 
+          b: (flatColor.b ?? 255) / 255, 
+          a: alpha 
+        }
+      : { r: 1, g: 1, b: 1, a: alpha }
 
     // 转换数据数组为 Uint8Array（如果需要）
     // 支持 Uint8Array、Array、字符串（base64编码）

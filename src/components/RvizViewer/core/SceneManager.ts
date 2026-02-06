@@ -31,6 +31,7 @@ export class SceneManager {
   private pointCloud2ConfigMap = new Map<string, { 
     size?: number
     alpha?: number
+    flatColor?: { r: number; g: number; b: number }
     colorTransformer?: string
     useRainbow?: boolean
     minColor?: { r: number; g: number; b: number }
@@ -2570,14 +2571,25 @@ export class SceneManager {
     }
 
     // 获取 TF 变换信息（传递给 Worker）
+    // 确保 frameInfo 是可序列化的纯对象（避免 DataCloneError）
     let frameInfo: { position: { x: number; y: number; z: number } | null; orientation: { x: number; y: number; z: number; w: number } | null } | null = null
     const frameId = message.header?.frame_id
     if (frameId) {
       const fixedFrame = tfManager.getFixedFrame()
       const tfFrameInfo = tfManager.getFrameInfo(frameId, fixedFrame)
+      // 创建可序列化的纯对象
       frameInfo = {
-        position: tfFrameInfo.position,
-        orientation: tfFrameInfo.orientation
+        position: tfFrameInfo.position ? {
+          x: typeof tfFrameInfo.position.x === 'number' ? tfFrameInfo.position.x : 0,
+          y: typeof tfFrameInfo.position.y === 'number' ? tfFrameInfo.position.y : 0,
+          z: typeof tfFrameInfo.position.z === 'number' ? tfFrameInfo.position.z : 0
+        } : null,
+        orientation: tfFrameInfo.orientation ? {
+          x: typeof tfFrameInfo.orientation.x === 'number' ? tfFrameInfo.orientation.x : 0,
+          y: typeof tfFrameInfo.orientation.y === 'number' ? tfFrameInfo.orientation.y : 0,
+          z: typeof tfFrameInfo.orientation.z === 'number' ? tfFrameInfo.orientation.z : 0,
+          w: typeof tfFrameInfo.orientation.w === 'number' ? tfFrameInfo.orientation.w : 1
+        } : null
       }
     }
 
@@ -2598,16 +2610,30 @@ export class SceneManager {
       const isAxisMode = config.colorTransformer === 'Axis'
       const defaultUseRainbow = isAxisMode ? true : (config.useRainbow ?? false)
       
+      // 确保颜色对象是可序列化的纯对象（避免 DataCloneError）
+      const ensureSerializableColor = (color: any, defaultColor: { r: number; g: number; b: number }): { r: number; g: number; b: number } => {
+        if (!color || typeof color !== 'object') {
+          return { ...defaultColor }
+        }
+        // 创建新的纯对象，只包含 r, g, b 属性
+        return {
+          r: typeof color.r === 'number' ? color.r : defaultColor.r,
+          g: typeof color.g === 'number' ? color.g : defaultColor.g,
+          b: typeof color.b === 'number' ? color.b : defaultColor.b
+        }
+      }
+      
       const workerConfig = {
         size: config.size ?? 3,
         alpha: config.alpha ?? 1.0,
         colorTransformer: config.colorTransformer ?? 'Intensity',
         useRainbow: defaultUseRainbow, // Axis 模式始终为 true
-        minColor: config.minColor ?? { r: 0, g: 0, b: 0 },
-        maxColor: config.maxColor ?? { r: 255, g: 255, b: 255 },
+        minColor: ensureSerializableColor(config.minColor, { r: 0, g: 0, b: 0 }),
+        maxColor: ensureSerializableColor(config.maxColor, { r: 255, g: 255, b: 255 }),
         minIntensity: config.minIntensity ?? 0,
         maxIntensity: config.maxIntensity ?? 1,
         axisColor: config.axisColor ?? 'Z', // 默认 Z 轴
+        flatColor: ensureSerializableColor(config.flatColor, { r: 255, g: 255, b: 0 }), // 默认黄色（参照 RViz）
         autocomputeIntensityBounds: config.autocomputeIntensityBounds !== false
       }
 
@@ -2774,6 +2800,7 @@ export class SceneManager {
     maxIntensity?: number
     style?: string
     axisColor?: string
+    flatColor?: { r: number; g: number; b: number }
     autocomputeIntensityBounds?: boolean
   }, componentId: string): void {
     if (!componentId) {
@@ -2820,7 +2847,8 @@ export class SceneManager {
       !deepEqual(currentConfig.maxColor, options.maxColor) ||
       currentConfig.minIntensity !== options.minIntensity ||
       currentConfig.maxIntensity !== options.maxIntensity ||
-      (currentConfig.axisColor !== options.axisColor) // axisColor 变化需要重新处理数据
+      (currentConfig.axisColor !== options.axisColor) || // axisColor 变化需要重新处理数据
+      !deepEqual(currentConfig.flatColor, options.flatColor) // flatColor 变化需要重新处理数据
 
     // 更新该 PointCloud2 的配置
     this.pointCloud2ConfigMap.set(componentId, {

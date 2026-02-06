@@ -208,6 +208,17 @@
         <el-option label="Z" value="Z" />
       </el-select>
     </div>
+    <div class="config-row" v-if="options.colorTransformer === 'Flat'">
+      <span class="config-label">Color</span>
+      <div class="config-value color-config">
+        <el-color-picker
+          :model-value="getColorString(options.flatColor || { r: 255, g: 255, b: 0 })"
+          @update:model-value="updateColor('flatColor', $event)"
+          size="small"
+        />
+        <span class="color-text">{{ formatColor(getColorString(options.flatColor || { r: 255, g: 255, b: 0 })) }}</span>
+      </div>
+    </div>
     <div class="config-row" v-if="options.colorTransformer === 'Intensity'">
       <span class="config-label">Channel Name</span>
       <el-input
