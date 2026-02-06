@@ -388,7 +388,12 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
           colorTransformer: options.colorTransformer,
           useRainbow: options.useRainbow,
           minColor: options.minColor,
-          maxColor: options.maxColor
+          maxColor: options.maxColor,
+          minIntensity: options.minIntensity,
+          maxIntensity: options.maxIntensity,
+          style: options.style,
+          axisColor: options.axisColor,
+          autocomputeIntensityBounds: options.autocomputeIntensityBounds
         }, pointCloud2Component.id)
 
         // 获取 PointCloud2 数据并更新
@@ -1052,7 +1057,9 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
           maxColor: pointCloud2Component.options?.maxColor,
           minIntensity: pointCloud2Component.options?.minIntensity,
           maxIntensity: pointCloud2Component.options?.maxIntensity,
-          style: pointCloud2Component.options?.style
+          style: pointCloud2Component.options?.style,
+          axisColor: pointCloud2Component.options?.axisColor,
+          autocomputeIntensityBounds: pointCloud2Component.options?.autocomputeIntensityBounds
         }))
     },
     (pointCloud2Configs) => {

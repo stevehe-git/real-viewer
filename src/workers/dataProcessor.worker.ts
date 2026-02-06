@@ -1036,9 +1036,21 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       maxColor = { r: 255, g: 255, b: 255 },
       minIntensity = 0,
       maxIntensity = 1,
-      axisColor = 'Z', // 默认使用 Z 轴
+      axisColor: rawAxisColor = 'Z', // 默认使用 Z 轴
       autocomputeIntensityBounds = true
     } = config
+    
+    // 确保 axisColor 是大写的 'X'、'Y' 或 'Z'
+    const axisColor = (rawAxisColor?.toString().toUpperCase() || 'Z') as 'X' | 'Y' | 'Z'
+    
+    // 调试：检查 axisColor 值（仅在开发环境）
+    // if (import.meta.env.DEV && colorTransformer === 'Axis') {
+    //   console.log(`[PointCloud2 Worker] axisColor for ${componentId}:`, {
+    //     raw: rawAxisColor,
+    //     normalized: axisColor,
+    //     colorTransformer
+    //   })
+    // }
 
     // PointCloud2 消息的 data 字段是 Uint8Array 或 Array
     // 不能只检查 Array.isArray，因为 Uint8Array 也是数组类型
@@ -1181,13 +1193,15 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       if (isFinite(x) && isFinite(y) && isFinite(z)) {
         if (colorTransformer === 'Axis') {
           // 根据 axisColor 选择对应的坐标值
+          let selectedValue: number
           if (axisColor === 'X') {
-            axisValues.push(x)
+            selectedValue = x
           } else if (axisColor === 'Y') {
-            axisValues.push(y)
+            selectedValue = y
           } else {
-            axisValues.push(z) // 默认 Z
+            selectedValue = z // 默认 Z
           }
+          axisValues.push(selectedValue)
         } else if (colorTransformer === 'Intensity' && intensityOffset >= 0 && autocomputeIntensityBounds) {
           const intensity = readFloat32(dataArray, pointOffset + intensityOffset)
           if (isFinite(intensity)) {
@@ -1279,7 +1293,9 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
           axisValue = z // 默认 Z
         }
         
-        const normalizedAxis = (axisValue - axisMin) / (axisMax - axisMin)
+        // 计算归一化值（避免除零）
+        const axisRange = axisMax - axisMin
+        const normalizedAxis = axisRange > 0 ? (axisValue - axisMin) / axisRange : 0
         const clampedAxis = Math.max(0, Math.min(1, normalizedAxis))
         
         // 始终使用 Rainbow 模式：使用 HSV 颜色空间（参照 RViz：红色→黄色→绿色）

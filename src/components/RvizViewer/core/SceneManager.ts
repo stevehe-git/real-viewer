@@ -2785,15 +2785,42 @@ export class SceneManager {
     const currentConfig = this.pointCloud2ConfigMap.get(componentId) || {}
     
     // 检查是否需要重新处理数据（alpha、colorTransformer、axisColor 等变化需要重新处理）
+    // 使用深比较或字符串比较来检测对象变化
+    const deepEqual = (a: any, b: any): boolean => {
+      if (a === b) return true
+      if (a == null || b == null) return false
+      if (typeof a !== 'object' || typeof b !== 'object') return false
+      const keysA = Object.keys(a)
+      const keysB = Object.keys(b)
+      if (keysA.length !== keysB.length) return false
+      for (const key of keysA) {
+        if (!keysB.includes(key)) return false
+        if (typeof a[key] === 'object' && typeof b[key] === 'object') {
+          if (!deepEqual(a[key], b[key])) return false
+        } else if (a[key] !== b[key]) {
+          return false
+        }
+      }
+      return true
+    }
+    
+    // 调试：检查 axisColor 变化（仅在开发环境）
+    if (import.meta.env.DEV && currentConfig.axisColor !== options.axisColor && options.axisColor !== undefined) {
+      console.log(`[PointCloud2] axisColor changed for ${componentId}:`, {
+        from: currentConfig.axisColor,
+        to: options.axisColor
+      })
+    }
+    
     const needsReprocessing = 
       currentConfig.alpha !== options.alpha ||
       currentConfig.colorTransformer !== options.colorTransformer ||
       currentConfig.useRainbow !== options.useRainbow ||
-      currentConfig.minColor !== options.minColor ||
-      currentConfig.maxColor !== options.maxColor ||
+      !deepEqual(currentConfig.minColor, options.minColor) ||
+      !deepEqual(currentConfig.maxColor, options.maxColor) ||
       currentConfig.minIntensity !== options.minIntensity ||
       currentConfig.maxIntensity !== options.maxIntensity ||
-      currentConfig.axisColor !== options.axisColor // axisColor 变化需要重新处理数据
+      (currentConfig.axisColor !== options.axisColor) // axisColor 变化需要重新处理数据
 
     // 更新该 PointCloud2 的配置
     this.pointCloud2ConfigMap.set(componentId, {
@@ -2807,10 +2834,11 @@ export class SceneManager {
         // 需要重新处理数据（alpha、colorTransformer 等变化）
         const rawMessage = this.pointCloud2RawMessageMap.get(componentId)
         if (rawMessage) {
-          console.log(`[PointCloud2] Re-processing data for ${componentId} due to config change:`, {
-            alpha: options.alpha,
-            colorTransformer: options.colorTransformer
-          })
+          // console.log(`[PointCloud2] Re-processing data for ${componentId} due to config change:`, {
+          //   alpha: options.alpha,
+          //   colorTransformer: options.colorTransformer,
+          //   axisColor: options.axisColor
+          // })
           // 异步重新处理数据
           this.updatePointCloud2(rawMessage, componentId).catch((error) => {
             console.error(`[PointCloud2] Failed to re-process data for ${componentId}:`, error)
