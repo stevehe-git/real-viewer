@@ -9,7 +9,7 @@ import { quat } from 'gl-matrix'
 import { tfManager } from '@/services/tfManager'
 import { getDataProcessorWorker } from '@/workers/dataProcessorWorker'
 import type { TFProcessRequest } from '@/workers/dataProcessor.worker'
-import { tfDebugger } from '@/utils/debug'
+import { tfDebugger, pointCloud2Debugger } from '@/utils/debug'
 import { getDefaultOptions } from '@/stores/display/displayComponent'
 
 export class SceneManager {
@@ -2556,7 +2556,8 @@ export class SceneManager {
     }
     
     if (historyDataArray.length === 1) {
-      return historyDataArray[0].data
+      const firstItem = historyDataArray[0]
+      return firstItem ? firstItem.data : null
     }
     
     // 合并多个点云数据
@@ -2566,7 +2567,9 @@ export class SceneManager {
     let mergedScale: any = null
     
     // 使用最新的 pose 和 scale（最后一个数据的）
-    const lastData = historyDataArray[historyDataArray.length - 1].data
+    const lastItem = historyDataArray[historyDataArray.length - 1]
+    if (!lastItem) return null
+    const lastData = lastItem.data
     mergedPose = lastData.pose
     mergedScale = lastData.scale
     
@@ -2612,7 +2615,8 @@ export class SceneManager {
   ): Array<{ data: any; timestamp: number }> {
     if (decayTimeSeconds <= 0) {
       // Decay Time 为 0 或负数，只保留最新的数据
-      return historyDataArray.length > 0 ? [historyDataArray[historyDataArray.length - 1]] : []
+      const lastItem = historyDataArray.length > 0 ? historyDataArray[historyDataArray.length - 1] : undefined
+      return lastItem ? [lastItem] : []
     }
     
     const decayTimeMs = decayTimeSeconds * 1000
@@ -2690,6 +2694,12 @@ export class SceneManager {
 
     // 获取该 PointCloud2 的配置
     const config = this.pointCloud2ConfigMap.get(componentId) || {}
+
+    // 记录消息接收
+    pointCloud2Debugger.recordMessage()
+    
+    // 记录 Worker 处理开始
+    const workerProcessStartTime = pointCloud2Debugger.recordWorkerProcessStart()
 
     try {
       const { getDataProcessorWorker } = await import('@/workers/dataProcessorWorker')
@@ -2789,6 +2799,12 @@ export class SceneManager {
         config: workerConfig,
         frameInfo // 传递 TF 变换信息到 Worker
       })
+
+      // 记录 Worker 处理结束
+      const pointsCount = result.data?.points?.length ? result.data.points.length / 3 : 0
+      if (workerProcessStartTime > 0) {
+        pointCloud2Debugger.recordWorkerProcessEnd(workerProcessStartTime, pointsCount)
+      }
 
       // 检查请求是否已被取消
       const currentRequestId = this.pointCloud2RequestIds.get(componentId)
@@ -3038,7 +3054,8 @@ export class SceneManager {
             finalData = this.mergePointCloud2Data(filteredHistory)
           } else {
             // Decay Time 为 0 或只有一条数据，使用最新数据
-            finalData = filteredHistory.length > 0 ? filteredHistory[filteredHistory.length - 1].data : null
+            const lastItem = filteredHistory.length > 0 ? filteredHistory[filteredHistory.length - 1] : undefined
+            finalData = lastItem ? lastItem.data : null
           }
           
           if (finalData) {

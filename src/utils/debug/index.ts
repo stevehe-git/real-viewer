@@ -6,6 +6,7 @@ export * from './debugManager'
 export * from './tfDebug'
 export * from './renderDebug'
 export * from './panelDebug'
+export * from './pointCloud2Debug'
 export { default as globalDebugAPI } from './globalDebug'
 
 // 便捷导出
@@ -31,3 +32,8 @@ export {
   panelDebugger,
   logPanel
 } from './panelDebug'
+
+export {
+  pointCloud2Debugger,
+  logPointCloud2
+} from './pointCloud2Debug'

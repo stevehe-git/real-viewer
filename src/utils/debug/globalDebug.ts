@@ -7,6 +7,7 @@ import { debugManager, enableDebug, setDebugLogLevel, enableModuleDebug } from '
 import { tfDebugger } from './tfDebug'
 import { renderDebugger } from './renderDebug'
 import { panelDebugger } from './panelDebug'
+import { pointCloud2Debugger } from './pointCloud2Debug'
 
 // 全局调试接口
 const globalDebugAPI = {
@@ -116,12 +117,30 @@ const globalDebugAPI = {
     }
   },
 
+  // PointCloud2 调试
+  pointcloud2: {
+    // 显示统计信息
+    stats: () => {
+      pointCloud2Debugger.logStats()
+    },
+    // 获取统计信息
+    getStats: () => {
+      return pointCloud2Debugger.getStats()
+    },
+    // 重置统计信息
+    reset: () => {
+      pointCloud2Debugger.resetStats()
+      console.log('PointCloud2 stats reset')
+    }
+  },
+
   // 快速启用所有调试
   enableAll: () => {
     enableDebug(true)
     enableModuleDebug('tf', true)
     enableModuleDebug('render', true)
     enableModuleDebug('panel', true)
+    enableModuleDebug('pointcloud2', true)
     setDebugLogLevel('debug')
     console.log('All debug modules enabled')
   },
@@ -148,6 +167,7 @@ Debug API Usage:
   debug.enableModule('tf', true)      // 启用 TF 调试
   debug.enableModule('render', true)  // 启用渲染调试
   debug.enableModule('panel', true)   // 启用 Panel 调试
+  debug.enableModule('pointcloud2', true) // 启用 PointCloud2 调试
 
   // 快速启用所有调试
   debug.enableAll()
@@ -179,6 +199,11 @@ Debug API Usage:
   debug.panel.reset()           // 重置所有 Panel 统计信息
   debug.panel.reset('componentId') // 重置指定组件的统计信息
 
+  // PointCloud2 调试
+  debug.pointcloud2.stats()     // 显示 PointCloud2 统计信息
+  debug.pointcloud2.getStats()   // 获取 PointCloud2 统计信息对象
+  debug.pointcloud2.reset()      // 重置 PointCloud2 统计信息
+
   // 获取配置
   debug.getConfig()            // 获取当前调试配置
 
@@ -192,6 +217,7 @@ Examples:
   debug.panel.stats()          // 查看所有 Panel 统计
   debug.panel.stats('LaserScan') // 查看 LaserScan 类型的统计
   debug.panel.warnings()       // 查看性能警告
+  debug.pointcloud2.stats()    // 查看 PointCloud2 统计
 `)
   }
 }
