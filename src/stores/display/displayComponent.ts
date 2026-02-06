@@ -70,6 +70,7 @@ export function getDefaultOptions(type: string): Record<string, any> {
       lineStyle: 'Lines',
       color: '#19ff00',
       alpha: 1,
+      lineWidth: 0.05, // 与 SceneManager.ts 中的默认值一致
       bufferLength: 1,
       offsetX: 0,
       offsetY: 0,

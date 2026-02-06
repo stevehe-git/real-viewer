@@ -10,6 +10,7 @@ import { tfManager } from '@/services/tfManager'
 import { getDataProcessorWorker } from '@/workers/dataProcessorWorker'
 import type { TFProcessRequest } from '@/workers/dataProcessor.worker'
 import { tfDebugger } from '@/utils/debug'
+import { getDefaultOptions } from '@/stores/display/displayComponent'
 
 export class SceneManager {
   private reglContext: Regl
@@ -183,14 +184,15 @@ export class SceneManager {
     offsetY?: number
     offsetZ?: number
   }): void {
-    // 从配置选项或默认值获取参数
-    const planeCellCount = options?.planeCellCount ?? this.options.gridDivisions
-    const cellSize = options?.cellSize ?? 1.0
-    const alpha = options?.alpha ?? 1.0
-    const plane = options?.plane || 'XY'
-    const offsetX = options?.offsetX ?? 0
-    const offsetY = options?.offsetY ?? 0
-    const offsetZ = options?.offsetZ ?? 0
+    // 从配置选项或默认值获取参数（从 getDefaultOptions 获取默认值）
+    const defaultOptions = getDefaultOptions('grid')
+    const planeCellCount = options?.planeCellCount ?? defaultOptions.planeCellCount ?? 10
+    const cellSize = options?.cellSize ?? defaultOptions.cellSize ?? 1.0
+    const alpha = options?.alpha ?? defaultOptions.alpha ?? 0.5
+    const plane = options?.plane || defaultOptions.plane || 'XY'
+    const offsetX = options?.offsetX ?? defaultOptions.offsetX ?? 0
+    const offsetY = options?.offsetY ?? defaultOptions.offsetY ?? 0
+    const offsetZ = options?.offsetZ ?? defaultOptions.offsetZ ?? 0
     
     // 处理颜色：如果是 hex 字符串，转换为 rgba 数组
     let gridColor: [number, number, number, number] = this.options.gridColor
@@ -250,10 +252,11 @@ export class SceneManager {
   }
 
   private updateAxesData(options?: { length?: number; radius?: number; alpha?: number }): void {
-    // 根据配置选项动态生成坐标轴数据
-    const length = options?.length ?? 1.0
-    const radius = options?.radius ?? 0.02
-    const alpha = options?.alpha ?? 1.0
+    // 根据配置选项动态生成坐标轴数据（从 getDefaultOptions 获取默认值）
+    const defaultOptions = getDefaultOptions('axes')
+    const length = options?.length ?? defaultOptions.length ?? 1.0
+    const radius = options?.radius ?? defaultOptions.radius ?? 0.1
+    const alpha = options?.alpha ?? defaultOptions.alpha ?? 1.0
 
     // 创建旋转四元数
     const createRotationQuaternion = (axis: 'x' | 'y' | 'z', angle: number) => {
@@ -827,12 +830,12 @@ export class SceneManager {
       return
     }
 
-    // 获取配置
+    // 获取配置（从 getDefaultOptions 获取默认值）
+    const defaultOptions = getDefaultOptions('path')
     const config = this.pathConfigMap.get(componentId) || {}
-    const colorHex = config.color || '#19ff00'
-    const alpha = config.alpha ?? 1.0
-    // 修复：使用更合理的默认线宽（0.05米，约5厘米），确保路径可见
-    const lineWidth = config.lineWidth ?? 0.05
+    const colorHex = config.color || defaultOptions.color || '#19ff00'
+    const alpha = config.alpha ?? defaultOptions.alpha ?? 1.0
+    const lineWidth = config.lineWidth ?? defaultOptions.lineWidth ?? 0.05
 
     // 转换颜色
     let color: { r: number; g: number; b: number; a: number }
@@ -992,15 +995,16 @@ export class SceneManager {
       this.cylindersCommand = cylinders(this.reglContext)
     }
 
-    // 获取配置
+    // 获取配置（从 getDefaultOptions 获取默认值）
+    const defaultOptions = getDefaultOptions('odometry')
     const config = this.odometryConfigMap.get(componentId) || {}
-    const shape = config.shape || 'Axes'
-    const axesLength = config.axesLength ?? 1.0
-    const axesRadius = config.axesRadius ?? 0.1
-    const alpha = config.alpha ?? 1.0
-    const keep = config.keep ?? 1
-    const positionTolerance = config.positionTolerance ?? 0.1
-    const angleTolerance = config.angleTolerance ?? 0.1
+    const shape = config.shape || defaultOptions.shape || 'Axes'
+    const axesLength = config.axesLength ?? defaultOptions.axesLength ?? 1.0
+    const axesRadius = config.axesRadius ?? defaultOptions.axesRadius ?? 0.1
+    const alpha = config.alpha ?? defaultOptions.alpha ?? 1.0
+    const keep = config.keep ?? defaultOptions.keep ?? 1
+    const positionTolerance = config.positionTolerance ?? defaultOptions.positionTolerance ?? 0.1
+    const angleTolerance = config.angleTolerance ?? defaultOptions.angleTolerance ?? 0.1
 
     // 获取位姿
     const pose = message.pose.pose
@@ -1512,9 +1516,11 @@ export class SceneManager {
     // 关键修复：不在 updateMap 中缓存配置，而是在 registerDrawCalls 时从 mapConfigMap 读取最新配置
     // 这样可以确保即使配置在数据更新之后才更新，也能正确应用
     // 注意：Worker 处理时仍然需要配置，但这里只用于 Worker 处理，不影响最终渲染
+    // 从 getDefaultOptions 获取默认值
+    const defaultOptions = getDefaultOptions('map')
     const mapConfig = this.mapConfigMap.get(componentId) || {}
-    const alpha = mapConfig.alpha ?? 0.7
-    const colorScheme = mapConfig.colorScheme || 'map'
+    const alpha = mapConfig.alpha ?? defaultOptions.alpha ?? 1.0
+    const colorScheme = mapConfig.colorScheme || defaultOptions.colorScheme || 'map'
 
     try {
       // 使用 Web Worker 处理地图数据（异步，不阻塞主线程）
@@ -1707,11 +1713,12 @@ export class SceneManager {
       this.mapCommands.set(componentId, mapCommand)
     }
 
-    // 从 mapConfigMap 读取最新配置
+    // 从 mapConfigMap 读取最新配置（从 getDefaultOptions 获取默认值）
+    const defaultOptions = getDefaultOptions('map')
     const currentConfig = this.mapConfigMap.get(componentId) || {}
-    const colorScheme = currentConfig.colorScheme || 'map'
-    const alpha = currentConfig.alpha ?? 1.0
-    const drawBehind = currentConfig.drawBehind || false
+    const colorScheme = currentConfig.colorScheme || defaultOptions.colorScheme || 'map'
+    const alpha = currentConfig.alpha ?? defaultOptions.alpha ?? 1.0
+    const drawBehind = currentConfig.drawBehind ?? defaultOptions.drawBehind ?? false
 
     // 参照 RViz：为每个地图分配唯一的 Z 偏移，避免深度冲突和渲染不完全
     // 策略：
@@ -2321,22 +2328,26 @@ export class SceneManager {
       const { getDataProcessorWorker } = await import('@/workers/dataProcessorWorker')
       const worker = getDataProcessorWorker()
 
+      // 从 getDefaultOptions 获取默认值
+      const defaultOptions = getDefaultOptions('laserscan')
+      const workerConfig = {
+        style: config.style || defaultOptions.style || 'Flat Squares',
+        size: config.size ?? defaultOptions.size ?? 0.01,
+        alpha: config.alpha ?? defaultOptions.alpha ?? 1.0,
+        colorTransformer: config.colorTransformer || defaultOptions.colorTransformer || 'Intensity',
+        useRainbow: config.useRainbow ?? defaultOptions.useRainbow ?? true,
+        minColor: config.minColor || defaultOptions.minColor || { r: 0, g: 0, b: 0 },
+        maxColor: config.maxColor || defaultOptions.maxColor || { r: 255, g: 255, b: 255 },
+        autocomputeIntensityBounds: config.autocomputeIntensityBounds !== false,
+        minIntensity: config.minIntensity ?? defaultOptions.minIntensity ?? 0,
+        maxIntensity: config.maxIntensity ?? defaultOptions.maxIntensity ?? 0 // 0 表示自动计算
+      }
+      
       const result = await worker.processLaserScan({
         type: 'processLaserScan',
         componentId,
         message,
-        config: {
-          style: config.style,
-          size: config.size,
-          alpha: config.alpha,
-          colorTransformer: config.colorTransformer,
-          useRainbow: config.useRainbow,
-          minColor: config.minColor,
-          maxColor: config.maxColor,
-          autocomputeIntensityBounds: config.autocomputeIntensityBounds,
-          minIntensity: config.minIntensity,
-          maxIntensity: config.maxIntensity
-        }
+        config: workerConfig
       })
 
       // 检查请求是否已被取消
@@ -2605,10 +2616,11 @@ export class SceneManager {
       const { getDataProcessorWorker } = await import('@/workers/dataProcessorWorker')
       const worker = getDataProcessorWorker()
 
-      // 确保配置有默认值（参照 RViz 实现）
+      // 从 getDefaultOptions 获取默认值
+      const defaultOptions = getDefaultOptions('pointcloud2')
       // 对于 Axis 模式，始终使用 rainbow 模式（不需要用户配置）
       const isAxisMode = config.colorTransformer === 'Axis'
-      const defaultUseRainbow = isAxisMode ? true : (config.useRainbow ?? false)
+      const defaultUseRainbow = isAxisMode ? true : (config.useRainbow ?? defaultOptions.useRainbow ?? true)
       
       // 确保颜色对象是可序列化的纯对象（避免 DataCloneError）
       const ensureSerializableColor = (color: any, defaultColor: { r: number; g: number; b: number }): { r: number; g: number; b: number } => {
@@ -2624,16 +2636,16 @@ export class SceneManager {
       }
       
       const workerConfig = {
-        size: config.size ?? 3,
-        alpha: config.alpha ?? 1.0,
-        colorTransformer: config.colorTransformer ?? 'Intensity',
+        size: config.size ?? defaultOptions.size ?? 3,
+        alpha: config.alpha ?? defaultOptions.alpha ?? 1.0,
+        colorTransformer: config.colorTransformer ?? defaultOptions.colorTransformer ?? 'Intensity',
         useRainbow: defaultUseRainbow, // Axis 模式始终为 true
-        minColor: ensureSerializableColor(config.minColor, { r: 0, g: 0, b: 0 }),
-        maxColor: ensureSerializableColor(config.maxColor, { r: 255, g: 255, b: 255 }),
-        minIntensity: config.minIntensity ?? 0,
-        maxIntensity: config.maxIntensity ?? 1,
-        axisColor: config.axisColor ?? 'Z', // 默认 Z 轴
-        flatColor: ensureSerializableColor(config.flatColor, { r: 255, g: 255, b: 0 }), // 默认黄色（参照 RViz）
+        minColor: ensureSerializableColor(config.minColor, defaultOptions.minColor || { r: 0, g: 0, b: 0 }),
+        maxColor: ensureSerializableColor(config.maxColor, defaultOptions.maxColor || { r: 255, g: 255, b: 255 }),
+        minIntensity: config.minIntensity ?? defaultOptions.minIntensity ?? 0,
+        maxIntensity: config.maxIntensity ?? defaultOptions.maxIntensity ?? 0, // 0 表示自动计算
+        axisColor: config.axisColor ?? defaultOptions.axisColor ?? 'Z',
+        flatColor: ensureSerializableColor(config.flatColor, defaultOptions.flatColor || { r: 255, g: 255, b: 0 }),
         autocomputeIntensityBounds: config.autocomputeIntensityBounds !== false
       }
 

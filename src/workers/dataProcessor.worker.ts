@@ -1032,11 +1032,11 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       size = 3, // 点大小（像素或世界空间单位）
       alpha = 1.0,
       colorTransformer = 'Intensity',
-      useRainbow = false,
+      useRainbow = true, // 与 displayComponent.ts 中的默认值一致
       minColor = { r: 0, g: 0, b: 0 },
       maxColor = { r: 255, g: 255, b: 255 },
       minIntensity = 0,
-      maxIntensity = 1,
+      maxIntensity = 0, // 与 displayComponent.ts 中的默认值一致（0 表示自动计算）
       axisColor: rawAxisColor = 'Z', // 默认使用 Z 轴
       flatColor = { r: 255, g: 255, b: 0 }, // 默认黄色（参照 RViz）
       autocomputeIntensityBounds = true

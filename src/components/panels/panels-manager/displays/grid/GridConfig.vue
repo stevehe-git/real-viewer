@@ -14,7 +14,7 @@
     <div class="config-row">
       <span class="config-label">Plane Cell Count</span>
       <el-input-number
-        :model-value="options.planeCellCount || 10"
+        :model-value="options.planeCellCount ?? defaultOptions.planeCellCount ?? 10"
         @update:model-value="update('planeCellCount', $event)"
         size="small"
         :min="1"
@@ -25,7 +25,7 @@
     <div class="config-row">
       <span class="config-label">Normal Cell Count</span>
       <el-input-number
-        :model-value="options.normalCellCount ?? 0"
+        :model-value="options.normalCellCount ?? defaultOptions.normalCellCount ?? 0"
         @update:model-value="update('normalCellCount', $event)"
         size="small"
         :min="0"
@@ -36,7 +36,7 @@
     <div class="config-row">
       <span class="config-label">Cell Size</span>
       <el-input-number
-        :model-value="options.cellSize ?? 1"
+        :model-value="options.cellSize ?? defaultOptions.cellSize ?? 1"
         @update:model-value="update('cellSize', $event)"
         size="small"
         :min="0.1"
@@ -48,7 +48,7 @@
     <div class="config-row">
       <span class="config-label">Line Style</span>
       <el-select
-        :model-value="options.lineStyle || 'Lines'"
+        :model-value="options.lineStyle || defaultOptions.lineStyle || 'Lines'"
         @update:model-value="update('lineStyle', $event)"
         size="small"
         class="config-value"
@@ -61,17 +61,17 @@
       <span class="config-label">Color</span>
       <div class="config-value color-config">
         <el-color-picker
-          :model-value="options.color || '#a0a0a4'"
+          :model-value="options.color || defaultOptions.color || '#a0a0a4'"
           @update:model-value="update('color', $event)"
           size="small"
         />
-        <span class="color-text">{{ formatColor(options.color || '#a0a0a4') }}</span>
+        <span class="color-text">{{ formatColor(options.color || defaultOptions.color || '#a0a0a4') }}</span>
       </div>
     </div>
     <div class="config-row">
       <span class="config-label">Alpha</span>
       <el-input-number
-        :model-value="options.alpha ?? 0.5"
+        :model-value="options.alpha ?? defaultOptions.alpha ?? 0.5"
         @update:model-value="update('alpha', $event)"
         size="small"
         :min="0"
@@ -83,7 +83,7 @@
     <div class="config-row">
       <span class="config-label">Plane</span>
       <el-select
-        :model-value="options.plane || 'XY'"
+        :model-value="options.plane || defaultOptions.plane || 'XY'"
         @update:model-value="update('plane', $event)"
         size="small"
         class="config-value"
@@ -138,6 +138,7 @@
 import { ref } from 'vue'
 import { useRvizStore } from '@/stores/rviz'
 import { ArrowRight } from '@element-plus/icons-vue'
+import { getDefaultOptions } from '@/stores/display/displayComponent'
 
 interface Props {
   componentId: string
@@ -146,6 +147,7 @@ interface Props {
 
 const props = defineProps<Props>()
 const rvizStore = useRvizStore()
+const defaultOptions = getDefaultOptions('grid')
 
 const offsetExpanded = ref(false)
 

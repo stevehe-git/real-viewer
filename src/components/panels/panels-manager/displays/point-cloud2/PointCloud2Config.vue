@@ -58,7 +58,7 @@
         <div class="config-row">
           <span class="config-label">X</span>
           <el-input-number
-            :model-value="options.offsetX || 0"
+            :model-value="options.offsetX ?? defaultOptions.offsetX ?? 0"
             @update:model-value="update('offsetX', $event)"
             size="small"
             class="config-value"
@@ -67,7 +67,7 @@
         <div class="config-row">
           <span class="config-label">Y</span>
           <el-input-number
-            :model-value="options.offsetY || 0"
+            :model-value="options.offsetY ?? defaultOptions.offsetY ?? 0"
             @update:model-value="update('offsetY', $event)"
             size="small"
             class="config-value"
@@ -76,7 +76,7 @@
         <div class="config-row">
           <span class="config-label">Z</span>
           <el-input-number
-            :model-value="options.offsetZ || 0"
+            :model-value="options.offsetZ ?? defaultOptions.offsetZ ?? 0"
             @update:model-value="update('offsetZ', $event)"
             size="small"
             class="config-value"
@@ -105,7 +105,7 @@
     <div class="config-row">
       <span class="config-label">Queue Size</span>
       <el-input-number
-        :model-value="options.queueSize || 10"
+        :model-value="options.queueSize ?? defaultOptions.queueSize ?? 10"
         @update:model-value="update('queueSize', $event)"
         size="small"
         :min="1"
@@ -124,7 +124,7 @@
     <div class="config-row highlight-row">
       <span class="config-label">Style</span>
       <el-select
-        :model-value="options.style || 'Points'"
+        :model-value="options.style || defaultOptions.style || 'Points'"
         @update:model-value="update('style', $event)"
         size="small"
         class="config-value"
@@ -139,7 +139,7 @@
     <div class="config-row">
       <span class="config-label">Size (Pixels)</span>
       <el-input-number
-        :model-value="options.size || 3"
+        :model-value="options.size ?? defaultOptions.size ?? 3"
         @update:model-value="update('size', $event)"
         size="small"
         :min="1"
@@ -151,7 +151,7 @@
     <div class="config-row">
       <span class="config-label">Alpha</span>
       <el-input-number
-        :model-value="options.alpha ?? 1"
+        :model-value="options.alpha ?? defaultOptions.alpha ?? 1"
         @update:model-value="update('alpha', $event)"
         size="small"
         :min="0"
@@ -164,7 +164,7 @@
     <div class="config-row">
       <span class="config-label">Decay Time</span>
       <el-input-number
-        :model-value="options.decayTime || 0"
+        :model-value="options.decayTime ?? defaultOptions.decayTime ?? 0"
         @update:model-value="update('decayTime', $event)"
         size="small"
         :min="0"
@@ -176,7 +176,7 @@
     <div class="config-row">
       <span class="config-label">Position Transformer</span>
       <el-select
-        :model-value="options.positionTransformer || 'XYZ'"
+        :model-value="options.positionTransformer || defaultOptions.positionTransformer || 'XYZ'"
         @update:model-value="update('positionTransformer', $event)"
         size="small"
         class="config-value"
@@ -187,7 +187,7 @@
     <div class="config-row">
       <span class="config-label">Color Transformer</span>
       <el-select
-        :model-value="options.colorTransformer"
+        :model-value="options.colorTransformer || defaultOptions.colorTransformer || 'Intensity'"
         @update:model-value="update('colorTransformer', $event)"
         size="small"
         class="config-value"
@@ -200,7 +200,7 @@
     <div class="config-row" v-if="options.colorTransformer === 'Axis'">
       <span class="config-label">AxisColor</span>
       <el-select
-        :model-value="options.axisColor || 'Z'"
+        :model-value="options.axisColor || defaultOptions.axisColor || 'Z'"
         @update:model-value="update('axisColor', $event)"
         size="small"
         class="config-value"
@@ -214,17 +214,17 @@
       <span class="config-label">Color</span>
       <div class="config-value color-config">
         <el-color-picker
-          :model-value="getColorString(options.flatColor || { r: 255, g: 255, b: 0 })"
+          :model-value="getColorString(options.flatColor || defaultOptions.flatColor || { r: 255, g: 255, b: 0 })"
           @update:model-value="updateColor('flatColor', $event)"
           size="small"
         />
-        <span class="color-text">{{ formatColor(getColorString(options.flatColor || { r: 255, g: 255, b: 0 })) }}</span>
+        <span class="color-text">{{ formatColor(getColorString(options.flatColor || defaultOptions.flatColor || { r: 255, g: 255, b: 0 })) }}</span>
       </div>
     </div>
     <div class="config-row" v-if="options.colorTransformer === 'Intensity'">
       <span class="config-label">Channel Name</span>
       <el-input
-        :model-value="options.channelName || 'intensity'"
+        :model-value="options.channelName || defaultOptions.channelName || 'intensity'"
         @update:model-value="update('channelName', $event)"
         size="small"
         class="config-value"
@@ -242,22 +242,22 @@
       <span class="config-label">Min Color</span>
       <div class="config-value color-config">
         <el-color-picker
-          :model-value="getColorString(options.minColor)"
+          :model-value="getColorString(options.minColor, defaultOptions.minColor)"
           @update:model-value="updateColor('minColor', $event)"
           size="small"
         />
-        <span class="color-text">{{ formatColor(getColorString(options.minColor)) }}</span>
+        <span class="color-text">{{ formatColor(getColorString(options.minColor, defaultOptions.minColor)) }}</span>
       </div>
     </div>
     <div class="config-row" v-if="options.colorTransformer === 'Intensity' && !options.useRainbow">
       <span class="config-label">Max Color</span>
       <div class="config-value color-config">
         <el-color-picker
-          :model-value="getColorString(options.maxColor)"
+          :model-value="getColorString(options.maxColor, defaultOptions.maxColor)"
           @update:model-value="updateColor('maxColor', $event)"
           size="small"
         />
-        <span class="color-text">{{ formatColor(getColorString(options.maxColor)) }}</span>
+        <span class="color-text">{{ formatColor(getColorString(options.maxColor, defaultOptions.maxColor)) }}</span>
       </div>
     </div>
     <div class="config-row" v-if="options.colorTransformer === 'Intensity'">
@@ -271,7 +271,7 @@
     <div class="config-row" v-if="options.colorTransformer === 'Intensity' && !options.autocomputeIntensityBounds">
       <span class="config-label">Min Intensity</span>
       <el-input-number
-        :model-value="options.minIntensity || 0"
+        :model-value="options.minIntensity ?? defaultOptions.minIntensity ?? 0"
         @update:model-value="update('minIntensity', $event)"
         size="small"
         class="config-value"
@@ -280,7 +280,7 @@
     <div class="config-row" v-if="options.colorTransformer === 'Intensity' && !options.autocomputeIntensityBounds">
       <span class="config-label">Max Intensity</span>
       <el-input-number
-        :model-value="options.maxIntensity || 0"
+        :model-value="options.maxIntensity ?? defaultOptions.maxIntensity ?? 0"
         @update:model-value="update('maxIntensity', $event)"
         size="small"
         class="config-value"
@@ -296,6 +296,7 @@ import { tfManager } from '@/services/tfManager'
 import { topicSubscriptionManager } from '@/services/topicSubscriptionManager'
 import { ArrowRight, CircleCheck, CircleClose } from '@element-plus/icons-vue'
 import TopicSelector from '../common/TopicSelector.vue'
+import { getDefaultOptions } from '@/stores/display/displayComponent'
 
 interface Props {
   componentId: string
@@ -306,6 +307,7 @@ const componentType = 'pointcloud2'
 
 const props = defineProps<Props>()
 const rvizStore = useRvizStore()
+const defaultOptions = getDefaultOptions('pointcloud2')
 
 const pointCloud2StatusExpanded = ref(true) // 默认展开
 const offsetExpanded = ref(false) // 默认折叠
@@ -413,12 +415,13 @@ const update = (key: string, value: any) => {
 }
 
 // 将颜色对象转换为十六进制字符串
-const getColorString = (color: any): string => {
-  if (!color) return '#000000'
-  if (typeof color === 'string') return color
-  const r = Math.round(color.r || 0).toString(16).padStart(2, '0')
-  const g = Math.round(color.g || 0).toString(16).padStart(2, '0')
-  const b = Math.round(color.b || 0).toString(16).padStart(2, '0')
+const getColorString = (color: any, defaultColor?: any): string => {
+  const finalColor = color || defaultColor
+  if (!finalColor) return '#000000'
+  if (typeof finalColor === 'string') return finalColor
+  const r = Math.round(finalColor.r || 0).toString(16).padStart(2, '0')
+  const g = Math.round(finalColor.g || 0).toString(16).padStart(2, '0')
+  const b = Math.round(finalColor.b || 0).toString(16).padStart(2, '0')
   return `#${r}${g}${b}`
 }
 

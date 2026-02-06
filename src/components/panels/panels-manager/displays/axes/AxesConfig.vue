@@ -25,7 +25,7 @@
     <div class="config-row">
       <span class="config-label">Length</span>
       <el-input-number
-        :model-value="options.length ?? 1"
+        :model-value="options.length ?? defaultOptions.length ?? 1"
         @update:model-value="update('length', $event)"
         size="small"
         :min="0.1"
@@ -37,7 +37,7 @@
     <div class="config-row">
       <span class="config-label">Radius</span>
       <el-input-number
-        :model-value="options.radius ?? 0.1"
+        :model-value="options.radius ?? defaultOptions.radius ?? 0.1"
         @update:model-value="update('radius', $event)"
         size="small"
         :min="0.01"
@@ -49,7 +49,7 @@
     <div class="config-row">
       <span class="config-label">Show Trail</span>
       <el-checkbox
-        :model-value="options.showTrail ?? false"
+        :model-value="options.showTrail ?? defaultOptions.showTrail ?? false"
         @update:model-value="update('showTrail', $event)"
         class="config-value"
       />
@@ -57,7 +57,7 @@
     <div class="config-row">
       <span class="config-label">Alpha</span>
       <el-input-number
-        :model-value="options.alpha ?? 1"
+        :model-value="options.alpha ?? defaultOptions.alpha ?? 1"
         @update:model-value="update('alpha', $event)"
         size="small"
         :min="0"
@@ -73,6 +73,7 @@
 import { computed, watch } from 'vue'
 import { useRvizStore } from '@/stores/rviz'
 import { tfManager } from '@/services/tfManager'
+import { getDefaultOptions } from '@/stores/display/displayComponent'
 
 interface Props {
   componentId: string
@@ -81,6 +82,7 @@ interface Props {
 
 const props = defineProps<Props>()
 const rvizStore = useRvizStore()
+const defaultOptions = getDefaultOptions('axes')
 
 // 获取固定帧（使用响应式引用）
 const fixedFrame = computed(() => {

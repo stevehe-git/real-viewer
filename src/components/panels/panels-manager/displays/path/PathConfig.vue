@@ -20,7 +20,7 @@
     <div class="config-row">
       <span class="config-label">Queue Size</span>
       <el-input-number
-        :model-value="options.queueSize || 10"
+        :model-value="options.queueSize ?? defaultOptions.queueSize ?? 10"
         @update:model-value="update('queueSize', $event)"
         size="small"
         :min="1"
@@ -31,7 +31,7 @@
     <div class="config-row">
       <span class="config-label">Line Style</span>
       <el-select
-        :model-value="options.lineStyle || 'Lines'"
+        :model-value="options.lineStyle || defaultOptions.lineStyle || 'Lines'"
         @update:model-value="update('lineStyle', $event)"
         size="small"
         class="config-value"
@@ -43,17 +43,17 @@
       <span class="config-label">Color</span>
       <div class="config-value color-config">
         <el-color-picker
-          :model-value="options.color || '#19ff00'"
+          :model-value="options.color || defaultOptions.color || '#19ff00'"
           @update:model-value="update('color', $event)"
           size="small"
         />
-        <span class="color-text">{{ formatColor(options.color || '#19ff00') }}</span>
+        <span class="color-text">{{ formatColor(options.color || defaultOptions.color || '#19ff00') }}</span>
       </div>
     </div>
     <div class="config-row">
       <span class="config-label">Alpha</span>
       <el-input-number
-        :model-value="options.alpha ?? 1"
+        :model-value="options.alpha ?? defaultOptions.alpha ?? 1"
         @update:model-value="update('alpha', $event)"
         size="small"
         :min="0"
@@ -66,7 +66,7 @@
     <div class="config-row">
       <span class="config-label">Buffer Length</span>
       <el-input-number
-        :model-value="options.bufferLength || 1"
+        :model-value="options.bufferLength ?? defaultOptions.bufferLength ?? 1"
         @update:model-value="update('bufferLength', $event)"
         size="small"
         :min="1"
@@ -80,13 +80,13 @@
           <ArrowRight />
         </el-icon>
         <span class="sub-item-name">Offset</span>
-        <span class="config-value-text">{{ `${options.offsetX || 0}; ${options.offsetY || 0}; ${options.offsetZ || 0}` }}</span>
+        <span class="config-value-text">{{ `${options.offsetX ?? defaultOptions.offsetX ?? 0}; ${options.offsetY ?? defaultOptions.offsetY ?? 0}; ${options.offsetZ ?? defaultOptions.offsetZ ?? 0}` }}</span>
       </div>
       <div v-show="offsetExpanded" class="sub-item-content">
         <div class="config-row">
           <span class="config-label">X</span>
           <el-input-number
-            :model-value="options.offsetX || 0"
+            :model-value="options.offsetX ?? defaultOptions.offsetX ?? 0"
             @update:model-value="update('offsetX', $event)"
             size="small"
             class="config-value"
@@ -95,7 +95,7 @@
         <div class="config-row">
           <span class="config-label">Y</span>
           <el-input-number
-            :model-value="options.offsetY || 0"
+            :model-value="options.offsetY ?? defaultOptions.offsetY ?? 0"
             @update:model-value="update('offsetY', $event)"
             size="small"
             class="config-value"
@@ -104,7 +104,7 @@
         <div class="config-row">
           <span class="config-label">Z</span>
           <el-input-number
-            :model-value="options.offsetZ || 0"
+            :model-value="options.offsetZ ?? defaultOptions.offsetZ ?? 0"
             @update:model-value="update('offsetZ', $event)"
             size="small"
             class="config-value"
@@ -115,7 +115,7 @@
     <div class="config-row">
       <span class="config-label">Pose Style</span>
       <el-select
-        :model-value="options.poseStyle"
+        :model-value="options.poseStyle || defaultOptions.poseStyle || 'None'"
         @update:model-value="update('poseStyle', $event)"
         size="small"
         class="config-value"
@@ -133,6 +133,7 @@ import { ref } from 'vue'
 import { ArrowRight } from '@element-plus/icons-vue'
 import { useRvizStore } from '@/stores/rviz'
 import TopicSelector from '../common/TopicSelector.vue'
+import { getDefaultOptions } from '@/stores/display/displayComponent'
 
 interface Props {
   componentId: string
@@ -145,6 +146,7 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 const rvizStore = useRvizStore()
+const defaultOptions = getDefaultOptions('path')
 const offsetExpanded = ref(false)
 
 const formatColor = (color: string): string => {
