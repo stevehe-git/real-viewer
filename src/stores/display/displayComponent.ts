@@ -116,13 +116,22 @@ export function getDefaultOptions(type: string): Record<string, any> {
     },
     pointcloud2: {
       topic: '/pointcloud',
+      unreliable: false,
       queueSize: 10,
-      size: 0.01,
+      selectable: true,
+      style: 'Points',
+      size: 3,
       alpha: 1,
+      decayTime: 0,
+      positionTransformer: 'XYZ',
       colorTransformer: 'RGB',
+      channelName: 'intensity',
       useRainbow: true,
       minColor: { r: 0, g: 0, b: 0 },
-      maxColor: { r: 255, g: 255, b: 255 }
+      maxColor: { r: 255, g: 255, b: 255 },
+      autocomputeIntensityBounds: true,
+      minIntensity: 0,
+      maxIntensity: 0
     },
     tf: {
       showNames: true,
