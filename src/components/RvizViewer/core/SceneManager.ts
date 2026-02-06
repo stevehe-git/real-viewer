@@ -27,6 +27,7 @@ export class SceneManager {
   private pointCloudDataMap = new Map<string, any>() // 支持多个 PointCloud，key 为 componentId
   private pointCloudConfigMap = new Map<string, { pointSize?: number }>() // 每个 PointCloud 的配置
   private pointCloud2DataMap = new Map<string, any>() // 支持多个 PointCloud2，key 为 componentId
+  private pointCloud2RawMessageMap = new Map<string, any>() // 保存原始消息，用于配置变化时重新处理
   private pointCloud2ConfigMap = new Map<string, { 
     size?: number
     alpha?: number
@@ -37,6 +38,8 @@ export class SceneManager {
     minIntensity?: number
     maxIntensity?: number
     style?: string
+    axisColor?: string // 'X' | 'Y' | 'Z'，用于 Axis 模式
+    autocomputeIntensityBounds?: boolean
   }>() // 每个 PointCloud2 的配置
   private pathsData: any[] = [] // 保留向后兼容
   private pathDataMap = new Map<string, any>() // 支持多个 Path，key 为 componentId
@@ -2590,31 +2593,82 @@ export class SceneManager {
       const { getDataProcessorWorker } = await import('@/workers/dataProcessorWorker')
       const worker = getDataProcessorWorker()
 
-      // 确保配置有默认值
+      // 确保配置有默认值（参照 RViz 实现）
+      // 对于 Axis 模式，始终使用 rainbow 模式（不需要用户配置）
+      const isAxisMode = config.colorTransformer === 'Axis'
+      const defaultUseRainbow = isAxisMode ? true : (config.useRainbow ?? false)
+      
       const workerConfig = {
         size: config.size ?? 3,
         alpha: config.alpha ?? 1.0,
-        colorTransformer: config.colorTransformer ?? 'RGB',
-        useRainbow: config.useRainbow ?? false,
+        colorTransformer: config.colorTransformer ?? 'Intensity',
+        useRainbow: defaultUseRainbow, // Axis 模式始终为 true
         minColor: config.minColor ?? { r: 0, g: 0, b: 0 },
         maxColor: config.maxColor ?? { r: 255, g: 255, b: 255 },
         minIntensity: config.minIntensity ?? 0,
-        maxIntensity: config.maxIntensity ?? 1
+        maxIntensity: config.maxIntensity ?? 1,
+        axisColor: config.axisColor ?? 'Z', // 默认 Z 轴
+        autocomputeIntensityBounds: config.autocomputeIntensityBounds !== false
+      }
+
+      // 创建一个干净的可序列化消息对象（避免 DataCloneError）
+      // 只提取 Worker 需要的字段，确保所有字段都是可序列化的
+      const cleanMessage: any = {
+        header: message.header ? {
+          seq: message.header.seq,
+          stamp: message.header.stamp ? {
+            sec: message.header.stamp.sec,
+            nsec: message.header.stamp.nsec
+          } : undefined,
+          frame_id: message.header.frame_id
+        } : undefined,
+        height: message.height,
+        width: message.width,
+        fields: message.fields ? message.fields.map((f: any) => ({
+          name: f.name,
+          offset: f.offset,
+          datatype: f.datatype,
+          count: f.count
+        })) : [],
+        is_bigendian: message.is_bigendian,
+        point_step: message.point_step,
+        row_step: message.row_step,
+        is_dense: message.is_dense
+      }
+
+      // 处理 data 字段：确保可序列化
+      if (message.data) {
+        if (typeof message.data === 'string') {
+          // Base64 字符串，直接传递
+          cleanMessage.data = message.data
+        } else if (message.data instanceof Uint8Array) {
+          // Uint8Array：转换为 ArrayBuffer（可序列化）
+          cleanMessage.data = message.data.buffer.slice(
+            message.data.byteOffset,
+            message.data.byteOffset + message.data.byteLength
+          )
+        } else if (Array.isArray(message.data)) {
+          // Array：直接传递
+          cleanMessage.data = message.data
+        } else {
+          // 其他类型：尝试转换为数组
+          cleanMessage.data = Array.from(message.data as any)
+        }
       }
 
       console.log(`[PointCloud2] Sending to worker for ${componentId}:`, {
-        messageSize: message.data?.length,
-        width: message.width,
-        height: message.height,
-        pointStep: message.point_step,
-        fields: message.fields?.length,
+        messageSize: cleanMessage.data?.byteLength || cleanMessage.data?.length,
+        width: cleanMessage.width,
+        height: cleanMessage.height,
+        pointStep: cleanMessage.point_step,
+        fields: cleanMessage.fields?.length,
         config: workerConfig
       })
 
       const result = await worker.processPointCloud2({
         type: 'processPointCloud2',
         componentId,
-        message,
+        message: cleanMessage,
         config: workerConfig,
         frameInfo // 传递 TF 变换信息到 Worker
       })
@@ -2636,6 +2690,9 @@ export class SceneManager {
 
       // 保存处理后的数据（TF 变换已在 Worker 中处理）
       if (result.data) {
+        // 保存原始消息，用于配置变化时重新处理
+        this.pointCloud2RawMessageMap.set(componentId, message)
+        
         // 调试日志
         console.log(`[PointCloud2] Data processed for ${componentId}:`, {
           pointsCount: result.data.points?.length || 0,
@@ -2643,6 +2700,8 @@ export class SceneManager {
           hasColor: !!result.data.color,
           scale: result.data.scale,
           hasPose: !!result.data.pose,
+          colorTransformer: config.colorTransformer,
+          alpha: config.alpha,
           firstPoint: result.data.points?.[0],
           firstColor: result.data.colors?.[0] || result.data.color
         })
@@ -2680,6 +2739,7 @@ export class SceneManager {
   removePointCloud2(componentId: string): void {
     this.pointCloud2DataMap.delete(componentId)
     this.pointCloud2ConfigMap.delete(componentId)
+    this.pointCloud2RawMessageMap.delete(componentId)
     this.pointCloud2Instances.delete(componentId)
     this.pointCloud2RequestIds.delete(componentId)
     requestAnimationFrame(() => {
@@ -2694,6 +2754,7 @@ export class SceneManager {
   clearAllPointCloud2s(): void {
     this.pointCloud2DataMap.clear()
     this.pointCloud2ConfigMap.clear()
+    this.pointCloud2RawMessageMap.clear()
     this.pointCloud2Instances.clear()
     this.pointCloud2RequestIds.clear()
     this.registerDrawCalls()
@@ -2712,23 +2773,58 @@ export class SceneManager {
     minIntensity?: number
     maxIntensity?: number
     style?: string
+    axisColor?: string
+    autocomputeIntensityBounds?: boolean
   }, componentId: string): void {
     if (!componentId) {
       console.warn('updatePointCloud2Options: componentId is required')
       return
     }
 
-    // 更新该 PointCloud2 的配置
+    // 获取旧配置，检查是否有重要配置变化
     const currentConfig = this.pointCloud2ConfigMap.get(componentId) || {}
+    
+    // 检查是否需要重新处理数据（alpha、colorTransformer、axisColor 等变化需要重新处理）
+    const needsReprocessing = 
+      currentConfig.alpha !== options.alpha ||
+      currentConfig.colorTransformer !== options.colorTransformer ||
+      currentConfig.useRainbow !== options.useRainbow ||
+      currentConfig.minColor !== options.minColor ||
+      currentConfig.maxColor !== options.maxColor ||
+      currentConfig.minIntensity !== options.minIntensity ||
+      currentConfig.maxIntensity !== options.maxIntensity ||
+      currentConfig.axisColor !== options.axisColor // axisColor 变化需要重新处理数据
+
+    // 更新该 PointCloud2 的配置
     this.pointCloud2ConfigMap.set(componentId, {
       ...currentConfig,
       ...options
     })
 
-    // 如果该 PointCloud2 已有数据，需要重新处理以应用新配置
+    // 如果该 PointCloud2 已有数据，需要根据配置变化类型决定处理方式
     if (this.pointCloud2DataMap.has(componentId)) {
-      this.registerDrawCalls()
-      this.worldviewContext.onDirty()
+      if (needsReprocessing) {
+        // 需要重新处理数据（alpha、colorTransformer 等变化）
+        const rawMessage = this.pointCloud2RawMessageMap.get(componentId)
+        if (rawMessage) {
+          console.log(`[PointCloud2] Re-processing data for ${componentId} due to config change:`, {
+            alpha: options.alpha,
+            colorTransformer: options.colorTransformer
+          })
+          // 异步重新处理数据
+          this.updatePointCloud2(rawMessage, componentId).catch((error) => {
+            console.error(`[PointCloud2] Failed to re-process data for ${componentId}:`, error)
+          })
+        } else {
+          // 如果没有原始消息，只更新绘制调用
+          this.registerDrawCalls()
+          this.worldviewContext.onDirty()
+        }
+      } else {
+        // 只影响渲染的配置变化（size、style等），只需更新绘制调用
+        this.registerDrawCalls()
+        this.worldviewContext.onDirty()
+      }
     }
   }
 
@@ -2745,6 +2841,8 @@ export class SceneManager {
     minIntensity?: number
     maxIntensity?: number
     style?: string
+    axisColor?: string
+    autocomputeIntensityBounds?: boolean
   }, componentId: string): void {
     this.updatePointCloud2Options(options, componentId)
   }

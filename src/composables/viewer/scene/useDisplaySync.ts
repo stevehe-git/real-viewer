@@ -68,6 +68,8 @@ export interface DisplaySyncContext {
     minIntensity?: number
     maxIntensity?: number
     style?: string
+    axisColor?: string
+    autocomputeIntensityBounds?: boolean
   }, componentId: string) => void
   destroyGrid: () => void
   destroyAxes: () => void
@@ -1065,7 +1067,9 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
             maxColor: pointCloud2Config.maxColor,
             minIntensity: pointCloud2Config.minIntensity,
             maxIntensity: pointCloud2Config.maxIntensity,
-            style: pointCloud2Config.style
+            style: pointCloud2Config.style,
+            axisColor: pointCloud2Config.axisColor,
+            autocomputeIntensityBounds: pointCloud2Config.autocomputeIntensityBounds
           }, pointCloud2Config.id)
         }
       })

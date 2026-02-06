@@ -127,14 +127,15 @@ export function getDefaultOptions(type: string): Record<string, any> {
       offsetY: 0,
       offsetZ: 0,
       positionTransformer: 'XYZ',
-      colorTransformer: 'RGB',
+      colorTransformer: 'Intensity',
       channelName: 'intensity',
       useRainbow: true,
       minColor: { r: 0, g: 0, b: 0 },
       maxColor: { r: 255, g: 255, b: 255 },
       autocomputeIntensityBounds: true,
       minIntensity: 0,
-      maxIntensity: 0
+      maxIntensity: 0,
+      axisColor: 'Z' // 默认 Z 轴
     },
     tf: {
       showNames: true,

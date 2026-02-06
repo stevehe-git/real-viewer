@@ -190,9 +190,22 @@
         size="small"
         class="config-value"
       >
-        <el-option label="RGB" value="RGB" />
         <el-option label="Intensity" value="Intensity" />
+        <el-option label="Axis" value="Axis" />
         <el-option label="Flat" value="Flat" />
+      </el-select>
+    </div>
+    <div class="config-row" v-if="options.colorTransformer === 'Axis'">
+      <span class="config-label">AxisColor</span>
+      <el-select
+        :model-value="options.axisColor || 'Z'"
+        @update:model-value="update('axisColor', $event)"
+        size="small"
+        class="config-value"
+      >
+        <el-option label="X" value="X" />
+        <el-option label="Y" value="Y" />
+        <el-option label="Z" value="Z" />
       </el-select>
     </div>
     <div class="config-row" v-if="options.colorTransformer === 'Intensity'">

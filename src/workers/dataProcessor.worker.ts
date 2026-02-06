@@ -127,6 +127,8 @@ export interface PointCloud2ProcessRequest {
     maxColor?: { r: number; g: number; b: number }
     minIntensity?: number
     maxIntensity?: number
+    axisColor?: string // 'X' | 'Y' | 'Z'，用于 Axis 模式
+    autocomputeIntensityBounds?: boolean
   }
   // TF 变换信息（从主线程传递，避免 Worker 中访问 tfManager）
   frameInfo?: {
@@ -1028,12 +1030,14 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
     const {
       size = 3, // 点大小（像素或世界空间单位）
       alpha = 1.0,
-      colorTransformer = 'RGB',
+      colorTransformer = 'Intensity',
       useRainbow = false,
       minColor = { r: 0, g: 0, b: 0 },
       maxColor = { r: 255, g: 255, b: 255 },
       minIntensity = 0,
-      maxIntensity = 1
+      maxIntensity = 1,
+      axisColor = 'Z', // 默认使用 Z 轴
+      autocomputeIntensityBounds = true
     } = config
 
     // PointCloud2 消息的 data 字段是 Uint8Array 或 Array
@@ -1061,17 +1065,47 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       }
     }
 
-    // 查找字段偏移量
+    // 查找字段偏移量（支持精确匹配）
     const findFieldOffset = (fieldName: string): number => {
       const field = fields.find((f: any) => f.name === fieldName)
       return field ? (field.offset || 0) : -1
     }
 
+    // 查找字段偏移量（支持多个可能的字段名称）
+    const findFieldOffsetVariants = (fieldNames: string[]): number => {
+      for (const name of fieldNames) {
+        const offset = findFieldOffset(name)
+        if (offset >= 0) {
+          return offset
+        }
+      }
+      return -1
+    }
+
     const xOffset = findFieldOffset('x')
     const yOffset = findFieldOffset('y')
     const zOffset = findFieldOffset('z')
-    const rgbOffset = findFieldOffset('rgb')
-    const intensityOffset = findFieldOffset('intensity')
+    
+    // 查找 Intensity 字段（支持多种字段名称变体）
+    const intensityOffset = findFieldOffsetVariants(['intensity', 'i', 'I'])
+    
+    // 调试：输出所有字段信息（仅在开发环境）
+    if (import.meta.env.DEV) {
+      const fieldNames = fields.map((f: any) => f.name).join(', ')
+      console.log(`[PointCloud2 Worker] Fields for ${componentId}:`, fields.map((f: any) => ({
+        name: f.name,
+        offset: f.offset,
+        datatype: f.datatype,
+        count: f.count
+      })))
+      console.log(`[PointCloud2 Worker] Field names: [${fieldNames}]`)
+      console.log(`[PointCloud2 Worker] Field offsets:`, {
+        x: xOffset,
+        y: yOffset,
+        z: zOffset,
+        intensity: intensityOffset
+      })
+    }
 
     if (xOffset < 0 || yOffset < 0 || zOffset < 0) {
       return {
@@ -1088,12 +1122,6 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       return view.getFloat32(0, true) // little-endian
     }
 
-    // 读取 Uint32（用于 RGB）
-    const readUint32 = (buffer: Uint8Array, offset: number): number => {
-      const view = new DataView(buffer.buffer, buffer.byteOffset + offset, 4)
-      return view.getUint32(0, true) // little-endian
-    }
-
     const points: any[] = []
     const colors: any[] = []
     const defaultColor = { r: 1, g: 1, b: 1, a: alpha }
@@ -1101,7 +1129,10 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
     // 转换数据数组为 Uint8Array（如果需要）
     // 支持 Uint8Array、Array、字符串（base64编码）
     let dataArray: Uint8Array
-    if (data instanceof Uint8Array) {
+    if (data instanceof ArrayBuffer) {
+      // ArrayBuffer：转换为 Uint8Array
+      dataArray = new Uint8Array(data)
+    } else if (data instanceof Uint8Array) {
       dataArray = data
     } else if (Array.isArray(data)) {
       dataArray = new Uint8Array(data)
@@ -1127,14 +1158,14 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
         type: 'pointCloud2Processed',
         componentId,
         data: null,
-        error: `Invalid data format: expected Uint8Array, Array, or string (base64), got ${typeof data}`
+        error: `Invalid data format: expected ArrayBuffer, Uint8Array, Array, or string (base64), got ${typeof data}`
       }
     }
 
     const pointCount = width * height || Math.floor(dataArray.length / pointStep)
 
-    // 第一遍遍历：收集所有点的 Z 值和 Intensity 值（用于 Z-Axis 和 Intensity 颜色映射的范围计算）
-    const zValues: number[] = []
+    // 第一遍遍历：收集所有点的坐标值和 Intensity 值（用于 Axis 和 Intensity 颜色映射的范围计算）
+    const axisValues: number[] = [] // 用于 Axis 模式的坐标值
     const intensityValues: number[] = []
     
     for (let i = 0; i < pointCount; i++) {
@@ -1148,9 +1179,16 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       const z = readFloat32(dataArray, pointOffset + zOffset)
 
       if (isFinite(x) && isFinite(y) && isFinite(z)) {
-        if (colorTransformer === 'Z-Axis') {
-          zValues.push(z)
-        } else if (colorTransformer === 'Intensity' && intensityOffset >= 0) {
+        if (colorTransformer === 'Axis') {
+          // 根据 axisColor 选择对应的坐标值
+          if (axisColor === 'X') {
+            axisValues.push(x)
+          } else if (axisColor === 'Y') {
+            axisValues.push(y)
+          } else {
+            axisValues.push(z) // 默认 Z
+          }
+        } else if (colorTransformer === 'Intensity' && intensityOffset >= 0 && autocomputeIntensityBounds) {
           const intensity = readFloat32(dataArray, pointOffset + intensityOffset)
           if (isFinite(intensity)) {
             intensityValues.push(intensity)
@@ -1159,14 +1197,14 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       }
     }
 
-    // 计算 Z 值的范围（用于 Z-Axis 颜色映射）
-    let zMin = 0
-    let zMax = 1
-    if (zValues.length > 0) {
-      zMin = Math.min(...zValues)
-      zMax = Math.max(...zValues)
-      if (zMax === zMin) {
-        zMax = zMin + 1 // 避免除零
+    // 计算轴坐标值的范围（用于 Axis 颜色映射）
+    let axisMin = 0
+    let axisMax = 1
+    if (axisValues.length > 0) {
+      axisMin = Math.min(...axisValues)
+      axisMax = Math.max(...axisValues)
+      if (axisMax === axisMin) {
+        axisMax = axisMin + 1 // 避免除零
       }
     }
 
@@ -1205,19 +1243,11 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       points.push({ x, y, z })
 
       // 计算颜色（参照 RViz 实现）
+      // PointCloud2 支持三种颜色转换模式：Intensity、Axis、Flat
       let color = defaultColor
       
-      if (colorTransformer === 'RGB' && rgbOffset >= 0) {
-        // RGB 模式：从 RGB 字段读取颜色
-        const rgb = readUint32(dataArray, pointOffset + rgbOffset)
-        color = {
-          r: ((rgb >> 16) & 0xFF) / 255,
-          g: ((rgb >> 8) & 0xFF) / 255,
-          b: (rgb & 0xFF) / 255,
-          a: alpha
-        }
-      } else if (colorTransformer === 'Intensity' && intensityOffset >= 0) {
-        // Intensity 模式：基于强度值计算颜色
+      if (colorTransformer === 'Intensity' && intensityOffset >= 0) {
+        // Intensity 模式：根据点的强度值（intensity 字段）映射颜色（常用于激光雷达）
         const intensity = readFloat32(dataArray, pointOffset + intensityOffset)
         // 归一化强度值到 [0, 1] 范围
         const normalizedIntensity = (intensity - intensityMin) / (intensityMax - intensityMin)
@@ -1237,25 +1267,27 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
             a: alpha
           }
         }
-      } else if (colorTransformer === 'Z-Axis') {
-        // Z-Axis 模式：基于 Z 坐标计算颜色
-        const normalizedZ = (z - zMin) / (zMax - zMin)
-        const clampedZ = Math.max(0, Math.min(1, normalizedZ))
-        
-        if (useRainbow) {
-          // Rainbow 模式：使用 HSV 颜色空间
-          const hue = (1.0 - clampedZ) * 240.0 / 360.0 // 反转：高值=红色，低值=蓝色
-          const rgb = hslToRgb(hue, 1.0, 0.5)
-          color = { ...rgb, a: alpha }
+      } else if (colorTransformer === 'Axis') {
+        // Axis 模式：基于选定轴（X、Y 或 Z）的坐标值计算颜色（参照 RViz 实现）
+        // 始终使用 rainbow 模式，产生红色→黄色→绿色的渐变效果
+        let axisValue: number
+        if (axisColor === 'X') {
+          axisValue = x
+        } else if (axisColor === 'Y') {
+          axisValue = y
         } else {
-          // 线性插值模式
-          color = {
-            r: (minColor.r + (maxColor.r - minColor.r) * clampedZ) / 255,
-            g: (minColor.g + (maxColor.g - minColor.g) * clampedZ) / 255,
-            b: (minColor.b + (maxColor.b - minColor.b) * clampedZ) / 255,
-            a: alpha
-          }
+          axisValue = z // 默认 Z
         }
+        
+        const normalizedAxis = (axisValue - axisMin) / (axisMax - axisMin)
+        const clampedAxis = Math.max(0, Math.min(1, normalizedAxis))
+        
+        // 始终使用 Rainbow 模式：使用 HSV 颜色空间（参照 RViz：红色→黄色→绿色）
+        // 低值=红色 (hue=0°), 高值=绿色 (hue=120°)
+        // 这样会产生红色→黄色→绿色的渐变效果
+        const hue = clampedAxis * 120.0 / 360.0 // 0.0 → 1/3 (红色到绿色)
+        const rgb = hslToRgb(hue, 1.0, 0.5)
+        color = { ...rgb, a: alpha }
       } else if (colorTransformer === 'Flat') {
         // Flat 模式：使用单一颜色（使用 defaultColor 或配置的颜色）
         color = defaultColor
