@@ -125,6 +125,8 @@ export interface PointCloud2ProcessRequest {
     useRainbow?: boolean
     minColor?: { r: number; g: number; b: number }
     maxColor?: { r: number; g: number; b: number }
+    minIntensity?: number
+    maxIntensity?: number
   }
   // TF 变换信息（从主线程传递，避免 Worker 中访问 tfManager）
   frameInfo?: {
@@ -1024,12 +1026,14 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
   try {
     const { message, config, componentId } = request
     const {
-      size = 3, // 默认像素大小改为 3（与配置一致）
+      size = 3, // 点大小（像素或世界空间单位）
       alpha = 1.0,
       colorTransformer = 'RGB',
       useRainbow = false,
       minColor = { r: 0, g: 0, b: 0 },
-      maxColor = { r: 255, g: 255, b: 255 }
+      maxColor = { r: 255, g: 255, b: 255 },
+      minIntensity = 0,
+      maxIntensity = 1
     } = config
 
     // PointCloud2 消息的 data 字段是 Uint8Array 或 Array
@@ -1129,6 +1133,58 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
 
     const pointCount = width * height || Math.floor(dataArray.length / pointStep)
 
+    // 第一遍遍历：收集所有点的 Z 值和 Intensity 值（用于 Z-Axis 和 Intensity 颜色映射的范围计算）
+    const zValues: number[] = []
+    const intensityValues: number[] = []
+    
+    for (let i = 0; i < pointCount; i++) {
+      const pointOffset = i * pointStep
+      if (pointOffset + pointStep > dataArray.length) {
+        break
+      }
+
+      const x = readFloat32(dataArray, pointOffset + xOffset)
+      const y = readFloat32(dataArray, pointOffset + yOffset)
+      const z = readFloat32(dataArray, pointOffset + zOffset)
+
+      if (isFinite(x) && isFinite(y) && isFinite(z)) {
+        if (colorTransformer === 'Z-Axis') {
+          zValues.push(z)
+        } else if (colorTransformer === 'Intensity' && intensityOffset >= 0) {
+          const intensity = readFloat32(dataArray, pointOffset + intensityOffset)
+          if (isFinite(intensity)) {
+            intensityValues.push(intensity)
+          }
+        }
+      }
+    }
+
+    // 计算 Z 值的范围（用于 Z-Axis 颜色映射）
+    let zMin = 0
+    let zMax = 1
+    if (zValues.length > 0) {
+      zMin = Math.min(...zValues)
+      zMax = Math.max(...zValues)
+      if (zMax === zMin) {
+        zMax = zMin + 1 // 避免除零
+      }
+    }
+
+    // 计算 Intensity 值的范围（如果使用自动计算）
+    let intensityMin = minIntensity
+    let intensityMax = maxIntensity
+    if (intensityValues.length > 0 && colorTransformer === 'Intensity') {
+      if (minIntensity === 0 && maxIntensity === 1) {
+        // 自动计算范围
+        intensityMin = Math.min(...intensityValues)
+        intensityMax = Math.max(...intensityValues)
+        if (intensityMax === intensityMin) {
+          intensityMax = intensityMin + 1 // 避免除零
+        }
+      }
+    }
+
+    // 第二遍遍历：处理所有点并计算颜色
     for (let i = 0; i < pointCount; i++) {
       const pointOffset = i * pointStep
       
@@ -1148,10 +1204,11 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
 
       points.push({ x, y, z })
 
-      // 计算颜色
+      // 计算颜色（参照 RViz 实现）
       let color = defaultColor
+      
       if (colorTransformer === 'RGB' && rgbOffset >= 0) {
-        // 从 RGB 字段读取颜色
+        // RGB 模式：从 RGB 字段读取颜色
         const rgb = readUint32(dataArray, pointOffset + rgbOffset)
         color = {
           r: ((rgb >> 16) & 0xFF) / 255,
@@ -1160,23 +1217,50 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
           a: alpha
         }
       } else if (colorTransformer === 'Intensity' && intensityOffset >= 0) {
-        // 从强度字段计算颜色
+        // Intensity 模式：基于强度值计算颜色
         const intensity = readFloat32(dataArray, pointOffset + intensityOffset)
-        const normalizedIntensity = Math.max(0, Math.min(1, intensity))
+        // 归一化强度值到 [0, 1] 范围
+        const normalizedIntensity = (intensity - intensityMin) / (intensityMax - intensityMin)
+        const clampedIntensity = Math.max(0, Math.min(1, normalizedIntensity))
         
         if (useRainbow) {
-            const hue = normalizedIntensity * 240
-            const rgb = hslToRgb(hue / 360, 1.0, 0.5)
-            color = { ...rgb, a: alpha }
+          // Rainbow 模式：使用 HSV 颜色空间（0=blue, 1=red）
+          const hue = (1.0 - clampedIntensity) * 240.0 / 360.0 // 反转：高值=红色，低值=蓝色
+          const rgb = hslToRgb(hue, 1.0, 0.5)
+          color = { ...rgb, a: alpha }
         } else {
+          // 线性插值模式
           color = {
-            r: (minColor.r + (maxColor.r - minColor.r) * normalizedIntensity) / 255,
-            g: (minColor.g + (maxColor.g - minColor.g) * normalizedIntensity) / 255,
-            b: (minColor.b + (maxColor.b - minColor.b) * normalizedIntensity) / 255,
+            r: (minColor.r + (maxColor.r - minColor.r) * clampedIntensity) / 255,
+            g: (minColor.g + (maxColor.g - minColor.g) * clampedIntensity) / 255,
+            b: (minColor.b + (maxColor.b - minColor.b) * clampedIntensity) / 255,
             a: alpha
           }
         }
+      } else if (colorTransformer === 'Z-Axis') {
+        // Z-Axis 模式：基于 Z 坐标计算颜色
+        const normalizedZ = (z - zMin) / (zMax - zMin)
+        const clampedZ = Math.max(0, Math.min(1, normalizedZ))
+        
+        if (useRainbow) {
+          // Rainbow 模式：使用 HSV 颜色空间
+          const hue = (1.0 - clampedZ) * 240.0 / 360.0 // 反转：高值=红色，低值=蓝色
+          const rgb = hslToRgb(hue, 1.0, 0.5)
+          color = { ...rgb, a: alpha }
+        } else {
+          // 线性插值模式
+          color = {
+            r: (minColor.r + (maxColor.r - minColor.r) * clampedZ) / 255,
+            g: (minColor.g + (maxColor.g - minColor.g) * clampedZ) / 255,
+            b: (minColor.b + (maxColor.b - minColor.b) * clampedZ) / 255,
+            a: alpha
+          }
+        }
+      } else if (colorTransformer === 'Flat') {
+        // Flat 模式：使用单一颜色（使用 defaultColor 或配置的颜色）
+        color = defaultColor
       }
+      // 如果 colorTransformer 不是上述任何一种，使用 defaultColor
 
       colors.push(color)
     }
@@ -1189,11 +1273,11 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       }
     }
 
-    // 注意：当 useWorldSpaceSize=true 时，size 应该是世界空间单位（米）
-    // 如果配置中的 size 是像素值，需要转换为世界空间单位
-    // 这里假设 size 是像素值，需要转换为米（粗略估算：1像素 ≈ 0.001米，可根据实际情况调整）
-    // 但为了保持兼容性，如果 size > 10，认为是像素值，需要转换
-    const worldSize = size > 10 ? size * 0.001 : size
+    // 点大小：直接使用配置值
+    // 当 useWorldSpaceSize=true 时，size 应该是世界空间单位（米）
+    // 当 useWorldSpaceSize=false 时，size 是像素值
+    // 这里直接使用 size，由渲染层根据 useWorldSpaceSize 决定如何解释
+    const pointSize = size
     
     // 应用 TF 变换（如果有 frameInfo）
     let pose = {
@@ -1236,7 +1320,7 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
         points,
         colors: colors.length > 0 ? colors : undefined,
         color: colors.length === 0 ? defaultColor : undefined,
-        scale: { x: worldSize, y: worldSize, z: worldSize }
+        scale: { x: pointSize, y: pointSize, z: pointSize }
       }
     }
   } catch (error: any) {

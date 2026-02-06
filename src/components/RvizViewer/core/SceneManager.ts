@@ -15,7 +15,8 @@ export class SceneManager {
   private reglContext: Regl
   private worldviewContext: any // WorldviewContext
   private gridCommand: any = null
-  private pointsCommandWithWorldSpace: any = null // 带 useWorldSpaceSize 的 Points 命令
+  private pointsCommandWithWorldSpace: any = null // 带 useWorldSpaceSize 的 Points 命令（用于 LaserScan）
+  private pointsCommandPixelSize: any = null // 使用像素单位的 Points 命令（用于 PointCloud2）
   private linesCommand: any = null
   private cylindersCommand: any = null
   private arrowsCommand: any = null
@@ -33,6 +34,8 @@ export class SceneManager {
     useRainbow?: boolean
     minColor?: { r: number; g: number; b: number }
     maxColor?: { r: number; g: number; b: number }
+    minIntensity?: number
+    maxIntensity?: number
   }>() // 每个 PointCloud2 的配置
   private pathsData: any[] = [] // 保留向后兼容
   private pathDataMap = new Map<string, any>() // 支持多个 Path，key 为 componentId
@@ -148,8 +151,10 @@ export class SceneManager {
       this.updateAxesData()
     }
 
-    // 初始化带 useWorldSpaceSize 的 Points 命令（用于 LaserScan 和 PointCloud）
+    // 初始化带 useWorldSpaceSize 的 Points 命令（用于 LaserScan）
     this.pointsCommandWithWorldSpace = makePointsCommand({ useWorldSpaceSize: true })
+    // 初始化使用像素单位的 Points 命令（用于 PointCloud2，参照 RViz 实现）
+    this.pointsCommandPixelSize = makePointsCommand({ useWorldSpaceSize: false })
 
     // 初始化 Lines 命令（用于路径）
     this.linesCommand = lines(this.reglContext)
@@ -367,7 +372,7 @@ export class SceneManager {
 
     // 注册所有 PointCloud2（单个实例渲染）
     this.pointCloud2DataMap.forEach((pointCloud2Data, componentId) => {
-      if (this.pointsCommandWithWorldSpace && pointCloud2Data) {
+      if (this.pointsCommandPixelSize && pointCloud2Data) {
         // 检查 Transform 是否有效（如果 Transform 无效，不注册绘制调用）
         // 从 pointCloud2Data 中获取 frameId（如果保存了的话），或者从配置中获取
         // 注意：pointCloud2Data 可能不包含 frameId，我们需要从其他地方获取
@@ -400,7 +405,7 @@ export class SceneManager {
           this.pointCloud2Instances.set(componentId, { displayName: `PointCloud2-${componentId}` })
         }
         const instance = this.pointCloud2Instances.get(componentId)
-        this.worldviewContext.onMount(instance, this.pointsCommandWithWorldSpace)
+        this.worldviewContext.onMount(instance, this.pointsCommandPixelSize)
         
         // 调试：检查数据格式
         console.log(`[PointCloud2] Registering draw call for ${componentId}:`, {
@@ -416,13 +421,13 @@ export class SceneManager {
         // 确保数据格式正确（Points 命令期望单个对象，不是数组）
         this.worldviewContext.registerDrawCall({
           instance: instance,
-          reglCommand: this.pointsCommandWithWorldSpace,
+          reglCommand: this.pointsCommandPixelSize,
           children: pointCloud2Data,
           layerIndex: 2.5
         })
       } else {
-        if (!this.pointsCommandWithWorldSpace) {
-          console.warn(`[PointCloud2] pointsCommandWithWorldSpace is not initialized`)
+        if (!this.pointsCommandPixelSize) {
+          console.warn(`[PointCloud2] pointsCommandPixelSize is not initialized`)
         }
         if (!pointCloud2Data) {
           console.warn(`[PointCloud2] pointCloud2Data is null for ${componentId}`)
@@ -2578,7 +2583,9 @@ export class SceneManager {
         colorTransformer: config.colorTransformer ?? 'RGB',
         useRainbow: config.useRainbow ?? false,
         minColor: config.minColor ?? { r: 0, g: 0, b: 0 },
-        maxColor: config.maxColor ?? { r: 255, g: 255, b: 255 }
+        maxColor: config.maxColor ?? { r: 255, g: 255, b: 255 },
+        minIntensity: config.minIntensity ?? 0,
+        maxIntensity: config.maxIntensity ?? 1
       }
 
       console.log(`[PointCloud2] Sending to worker for ${componentId}:`, {
