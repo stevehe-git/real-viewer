@@ -9,7 +9,7 @@
   >
     <div class="modal-children">
       <router-link
-        v-for="child in menuItem.children"
+        v-for="child in (menuItem.children || [])"
         :key="child.path"
         :to="child.path"
         class="modal-child"
@@ -59,7 +59,7 @@ const modalStyle = computed(() => {
 
   const sidebarWidth = 60 // 收起状态下的sidebar宽度
   const modalWidth = 200
-  const modalHeight = props.menuItem ? (props.menuItem.children.length * 48) : 0 // 只有子项高度
+  const modalHeight = props.menuItem?.children?.length ? (props.menuItem.children.length * 48) : 0 // 只有子项高度
 
   // 计算modal位置，使其在触发元素右侧居中显示
   const triggerCenterY = props.triggerRect.top + (props.triggerRect.height / 2)
