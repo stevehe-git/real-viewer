@@ -1,5 +1,36 @@
 <template>
   <div class="config-content">
+    <!-- TF Status Section -->
+    <div class="display-sub-item">
+      <div class="sub-item-header" @click="toggleTFStatus">
+        <el-icon class="expand-icon" :class="{ expanded: tfStatusExpanded }">
+          <ArrowRight />
+        </el-icon>
+        <span class="sub-item-name" :class="tfOverallStatus.class">
+          TF
+          <span class="status-text">Status: {{ tfOverallStatus.text }}</span>
+        </span>
+      </div>
+      <div v-show="tfStatusExpanded" class="sub-item-content">
+        <div class="tf-status-list">
+          <div
+            v-for="frame in allFramesForStatus"
+            :key="frame.name"
+            class="tf-status-item"
+          >
+            <el-icon class="status-icon" :class="frame.status.class">
+              <CircleCheck v-if="frame.status.isValid" />
+              <Warning v-else />
+            </el-icon>
+            <span class="frame-name" :class="frame.status.class">{{ frame.name }}</span>
+            <span class="status-message" :class="frame.status.class">
+              {{ frame.status.message }}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Show Names -->
     <div class="config-row">
       <span class="config-label">Show Names</span>
@@ -227,7 +258,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useRvizStore } from '@/stores/rviz'
-import { ArrowRight } from '@element-plus/icons-vue'
+import { ArrowRight, CircleCheck, Warning } from '@element-plus/icons-vue'
 import { tfManager } from '@/services/tfManager'
 
 interface Props {
@@ -239,6 +270,7 @@ const props = defineProps<Props>()
 const rvizStore = useRvizStore()
 
 const framesExpanded = ref(false)
+const tfStatusExpanded = ref(true) // 默认展开 TF Status
 const expandedFrames = ref<Set<string>>(new Set())
 const expandedDetails = ref<Set<string>>(new Set())
 
@@ -264,6 +296,10 @@ const allFramesEnabled = computed(() => {
 
 const toggleFrames = () => {
   framesExpanded.value = !framesExpanded.value
+}
+
+const toggleTFStatus = () => {
+  tfStatusExpanded.value = !tfStatusExpanded.value
 }
 
 const handleAllEnabledChange = (value: boolean) => {
@@ -336,6 +372,47 @@ const formatOrientation = (orient: { x: number; y: number; z: number; w: number 
   if (!orient) return 'N/A'
   return `${orient.x.toFixed(5)}; ${orient.y.toFixed(5)}; ${orient.z.toFixed(5)}; ${orient.w.toFixed(5)}`
 }
+
+// 获取所有 frames（用于 TF Status 显示）
+const allFramesForStatus = computed(() => {
+  // 访问触发器以确保响应式追踪
+  dataUpdateTrigger.value
+  const fixedFrame = tfManager.getFixedFrame() || 'map'
+  const frameNames = tfManager.getFrames()
+  
+  return frameNames.map(frameName => {
+    const info = tfManager.getFrameInfo(frameName, fixedFrame)
+    const isValid = info.position !== null && info.orientation !== null
+    
+    return {
+      name: frameName,
+      status: {
+        isValid,
+        class: isValid ? 'status-ok' : 'status-warn',
+        message: isValid 
+          ? 'Transform OK' 
+          : `No transform from [${frameName}] to frame [${fixedFrame}]`
+      }
+    }
+  }).sort((a, b) => {
+    // 先按状态排序（有效的在前），然后按名称排序
+    if (a.status.isValid !== b.status.isValid) {
+      return a.status.isValid ? -1 : 1
+    }
+    return a.name.localeCompare(b.name)
+  })
+})
+
+// 计算整体 TF 状态
+const tfOverallStatus = computed(() => {
+  const allFrames = allFramesForStatus.value
+  const hasWarnings = allFrames.some(f => !f.status.isValid)
+  
+  return {
+    class: hasWarnings ? 'status-warn' : 'status-ok',
+    text: hasWarnings ? 'Warn' : 'Ok'
+  }
+})
 
 const update = (key: string, value: any) => {
   rvizStore.updateComponentOptions(props.componentId, { [key]: value })
@@ -514,5 +591,82 @@ watch(() => props.options.frameTimeout, (timeout) => {
 .frame-detail-content {
   padding: 4px 8px 4px 24px;
   font-size: 11px;
+}
+
+.sub-item-name.status-warn {
+  color: #f97316;
+}
+
+.sub-item-name.status-ok {
+  color: #10b981;
+}
+
+.status-text {
+  margin-left: 8px;
+  font-weight: 500;
+}
+
+.tf-status-list {
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.tf-status-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px 4px 16px;
+  font-size: 12px;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.tf-status-item:hover {
+  background: #f0f2f5;
+}
+
+.status-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.status-icon.status-ok {
+  color: #10b981;
+}
+
+.status-icon.status-warn {
+  color: #f97316;
+}
+
+.tf-status-item .frame-name {
+  min-width: 150px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.tf-status-item .frame-name.status-ok {
+  color: #303133;
+}
+
+.tf-status-item .frame-name.status-warn {
+  color: #f97316;
+}
+
+.status-message {
+  flex: 1;
+  font-size: 11px;
+}
+
+.status-message.status-ok {
+  color: #10b981;
+}
+
+.status-message.status-warn {
+  color: #f97316;
 }
 </style>

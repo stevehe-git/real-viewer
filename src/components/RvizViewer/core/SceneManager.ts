@@ -1011,6 +1011,11 @@ export class SceneManager {
         timestamp: pose.timestamp
       }))
       
+      // 性能优化：当 keep 较大时，限制实际渲染的位姿数量
+      // 策略：keep <= 20 时全部渲染，keep > 20 时最多渲染 50 个
+      // 这样可以避免渲染过多位姿导致 CPU 飙升
+      const maxRenderCount = keep <= 20 ? undefined : Math.min(50, Math.ceil(keep * 0.5))
+      
       const result = await worker.processOdometry({
         type: 'processOdometry',
         componentId,
@@ -1019,7 +1024,8 @@ export class SceneManager {
           shape,
           axesLength,
           axesRadius,
-          alpha
+          alpha,
+          maxRenderCount
         }
       })
 
