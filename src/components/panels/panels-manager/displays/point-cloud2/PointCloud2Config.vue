@@ -24,7 +24,9 @@
             <CircleCheck />
           </el-icon>
           <span class="status-label status-ok">Points</span>
-          <span class="status-message status-ok">OK</span>
+          <span class="status-message status-ok">
+            {{ pointCloudSize > 0 ? `${pointCloudSize.toLocaleString()}` : 'OK' }}
+          </span>
         </div>
         
         <!-- Transform Status -->
@@ -326,6 +328,32 @@ const latestMessage = computed(() => {
 const messageFrameId = computed(() => {
   const message = latestMessage.value
   return message?.header?.frame_id || null
+})
+
+// 计算点云大小（points 数量）
+const pointCloudSize = computed(() => {
+  const message = latestMessage.value
+  if (!message) {
+    return 0
+  }
+  
+  // PointCloud2 消息的 points 数量 = width * height
+  const width = message.width || 0
+  const height = message.height || 0
+  
+  if (width > 0 && height > 0) {
+    return width * height
+  }
+  
+  // 如果没有 width 和 height，尝试从 data 长度和 point_step 计算
+  const pointStep = message.point_step || 0
+  const dataLength = message.data?.length || 0
+  
+  if (pointStep > 0 && dataLength > 0) {
+    return Math.floor(dataLength / pointStep)
+  }
+  
+  return 0
 })
 
 // Transform 状态
