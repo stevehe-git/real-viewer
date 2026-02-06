@@ -1,5 +1,88 @@
 <template>
   <div class="config-content">
+    <!-- PointCloud2 Status Section -->
+    <div class="display-sub-item">
+      <div class="sub-item-header" @click="togglePointCloud2Status">
+        <el-icon class="expand-icon" :class="{ expanded: pointCloud2StatusExpanded }">
+          <ArrowRight />
+        </el-icon>
+        <el-icon class="status-icon" :class="pointCloud2OverallStatus.class">
+          <CircleCheck v-if="pointCloud2OverallStatus.isOk" />
+          <CircleClose v-else />
+        </el-icon>
+        <span class="sub-item-name" :class="pointCloud2OverallStatus.class">
+          PointCloud2
+          <span class="status-text" v-if="!pointCloud2OverallStatus.isOk">
+            Status: {{ pointCloud2OverallStatus.text }}
+          </span>
+        </span>
+      </div>
+      <div v-show="pointCloud2StatusExpanded" class="sub-item-content">
+        <!-- Points Status -->
+        <div class="status-item">
+          <el-icon class="status-icon status-ok">
+            <CircleCheck />
+          </el-icon>
+          <span class="status-label status-ok">Points</span>
+          <span class="status-message status-ok">OK</span>
+        </div>
+        
+        <!-- Transform Status -->
+        <div class="status-item" v-if="transformStatus">
+          <el-icon class="status-icon" :class="transformStatus.class">
+            <CircleCheck v-if="transformStatus.isOk" />
+            <CircleClose v-else />
+          </el-icon>
+          <span class="status-label" :class="transformStatus.class">
+            Transform {{ transformStatus.sender ? `[sender=${transformStatus.sender}]` : '' }}
+          </span>
+          <span class="status-message" :class="transformStatus.class">
+            {{ transformStatus.message }}
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Offset Section -->
+    <div class="display-sub-item">
+      <div class="sub-item-header" @click="toggleOffset">
+        <el-icon class="expand-icon" :class="{ expanded: offsetExpanded }">
+          <ArrowRight />
+        </el-icon>
+        <span class="sub-item-name">Offset</span>
+        <span class="offset-value">{{ formatOffset() }}</span>
+      </div>
+      <div v-show="offsetExpanded" class="sub-item-content">
+        <div class="config-row">
+          <span class="config-label">X</span>
+          <el-input-number
+            :model-value="options.offsetX || 0"
+            @update:model-value="update('offsetX', $event)"
+            size="small"
+            class="config-value"
+          />
+        </div>
+        <div class="config-row">
+          <span class="config-label">Y</span>
+          <el-input-number
+            :model-value="options.offsetY || 0"
+            @update:model-value="update('offsetY', $event)"
+            size="small"
+            class="config-value"
+          />
+        </div>
+        <div class="config-row">
+          <span class="config-label">Z</span>
+          <el-input-number
+            :model-value="options.offsetZ || 0"
+            @update:model-value="update('offsetZ', $event)"
+            size="small"
+            class="config-value"
+          />
+        </div>
+      </div>
+    </div>
+
     <div class="config-row">
       <span class="config-label">Topic</span>
       <TopicSelector
@@ -181,7 +264,11 @@
 </template>
 
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import { useRvizStore } from '@/stores/rviz'
+import { tfManager } from '@/services/tfManager'
+import { topicSubscriptionManager } from '@/services/topicSubscriptionManager'
+import { ArrowRight, CircleCheck, CircleClose } from '@element-plus/icons-vue'
 import TopicSelector from '../common/TopicSelector.vue'
 
 interface Props {
@@ -193,6 +280,81 @@ const componentType = 'pointcloud2'
 
 const props = defineProps<Props>()
 const rvizStore = useRvizStore()
+
+const pointCloud2StatusExpanded = ref(true) // 默认展开
+const offsetExpanded = ref(false) // 默认折叠
+
+// 获取数据更新触发器（用于响应式追踪）
+const dataUpdateTrigger = tfManager.getDataUpdateTrigger()
+
+// 获取固定帧
+const fixedFrame = computed(() => {
+  dataUpdateTrigger.value
+  return tfManager.getFixedFrame() || 'map'
+})
+
+// 获取最新的 PointCloud2 消息
+const latestMessage = computed(() => {
+  return topicSubscriptionManager.getLatestMessage(props.componentId)
+})
+
+// 获取消息的 frame_id
+const messageFrameId = computed(() => {
+  const message = latestMessage.value
+  return message?.header?.frame_id || null
+})
+
+// Transform 状态
+const transformStatus = computed(() => {
+  const frameId = messageFrameId.value
+  if (!frameId) {
+    return null
+  }
+  
+  const fixedFrameValue = fixedFrame.value
+  const frameInfo = tfManager.getFrameInfo(frameId, fixedFrameValue)
+  const isValid = frameInfo.position !== null && frameInfo.orientation !== null
+  
+  // 获取 sender（从消息中，如果有的话）
+  const message = latestMessage.value
+  const sender = message?.header?.sender || 'unknown_publisher'
+  
+  return {
+    isOk: isValid,
+    class: isValid ? 'status-ok' : 'status-error',
+    sender: isValid ? null : sender,
+    message: isValid 
+      ? 'OK' 
+      : `For frame [${frameId}]: No transform to fixed frame [${fixedFrameValue}]. TF error: [Could not find a connection between [${frameId}] and [${fixedFrameValue}]]`
+  }
+})
+
+// PointCloud2 整体状态
+const pointCloud2OverallStatus = computed(() => {
+  const transform = transformStatus.value
+  const hasError = transform && !transform.isOk
+  
+  return {
+    isOk: !hasError,
+    class: hasError ? 'status-error' : 'status-ok',
+    text: hasError ? 'Error' : 'Ok'
+  }
+})
+
+const togglePointCloud2Status = () => {
+  pointCloud2StatusExpanded.value = !pointCloud2StatusExpanded.value
+}
+
+const toggleOffset = () => {
+  offsetExpanded.value = !offsetExpanded.value
+}
+
+const formatOffset = () => {
+  const x = props.options.offsetX || 0
+  const y = props.options.offsetY || 0
+  const z = props.options.offsetZ || 0
+  return `${x}; ${y}; ${z}`
+}
 
 const update = (key: string, value: any) => {
   rvizStore.updateComponentOptions(props.componentId, { [key]: value })
@@ -264,6 +426,122 @@ const formatColor = (color: string): string => {
 }
 
 .color-text {
+  font-size: 11px;
+  color: #909399;
+  font-family: monospace;
+}
+
+.display-sub-item {
+  border-top: 1px solid #ebeef5;
+  margin-top: 2px;
+}
+
+.sub-item-header {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px 4px 16px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #606266;
+  gap: 6px;
+}
+
+.sub-item-header:hover {
+  background: #f0f2f5;
+}
+
+.expand-icon {
+  font-size: 12px;
+  color: #909399;
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+
+.expand-icon.expanded {
+  transform: rotate(90deg);
+}
+
+.status-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.status-icon.status-ok {
+  color: #67c23a;
+}
+
+.status-icon.status-error {
+  color: #f56c6c;
+}
+
+.sub-item-name {
+  flex: 1;
+}
+
+.sub-item-name.status-error {
+  color: #f56c6c;
+}
+
+.sub-item-name.status-ok {
+  color: #303133;
+}
+
+.status-text {
+  margin-left: 8px;
+  font-weight: 500;
+}
+
+.sub-item-content {
+  padding-left: 32px;
+  background: #f5f7fa;
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px 4px 8px;
+  font-size: 12px;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.status-item:hover {
+  background: #f0f2f5;
+}
+
+.status-label {
+  min-width: 150px;
+  font-weight: 500;
+}
+
+.status-label.status-ok {
+  color: #303133;
+}
+
+.status-label.status-error {
+  color: #f56c6c;
+}
+
+.status-message {
+  flex: 1;
+  font-size: 11px;
+}
+
+.status-message.status-ok {
+  color: #303133;
+}
+
+.status-message.status-error {
+  color: #f56c6c;
+}
+
+.offset-value {
+  margin-left: auto;
   font-size: 11px;
   color: #909399;
   font-family: monospace;

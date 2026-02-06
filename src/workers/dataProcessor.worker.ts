@@ -1017,9 +1017,9 @@ function processLaserScan(request: LaserScanProcessRequest): LaserScanProcessRes
 function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2ProcessResult {
   const { componentId } = request
   try {
-    const { message, config } = request
+    const { message, config, componentId } = request
     const {
-      size = 0.01,
+      size = 3, // 默认像素大小改为 3（与配置一致）
       alpha = 1.0,
       colorTransformer = 'RGB',
       useRainbow = false,
@@ -1164,6 +1164,12 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       }
     }
 
+    // 注意：当 useWorldSpaceSize=true 时，size 应该是世界空间单位（米）
+    // 如果配置中的 size 是像素值，需要转换为世界空间单位
+    // 这里假设 size 是像素值，需要转换为米（粗略估算：1像素 ≈ 0.001米，可根据实际情况调整）
+    // 但为了保持兼容性，如果 size > 10，认为是像素值，需要转换
+    const worldSize = size > 10 ? size * 0.001 : size
+    
     return {
       type: 'pointCloud2Processed',
       componentId,
@@ -1175,7 +1181,7 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
         points,
         colors: colors.length > 0 ? colors : undefined,
         color: colors.length === 0 ? defaultColor : undefined,
-        scale: { x: size, y: size, z: size }
+        scale: { x: worldSize, y: worldSize, z: worldSize }
       }
     }
   } catch (error: any) {

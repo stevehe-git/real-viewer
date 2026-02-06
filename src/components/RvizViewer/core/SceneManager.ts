@@ -368,18 +368,55 @@ export class SceneManager {
     // 注册所有 PointCloud2（单个实例渲染）
     this.pointCloud2DataMap.forEach((pointCloud2Data, componentId) => {
       if (this.pointsCommandWithWorldSpace && pointCloud2Data) {
+        // 检查数据格式
+        if (!pointCloud2Data.points || pointCloud2Data.points.length === 0) {
+          console.warn(`[PointCloud2] No points in data for ${componentId}`, pointCloud2Data)
+          return
+        }
+        
+        // 检查颜色数据
+        const hasColors = pointCloud2Data.colors && pointCloud2Data.colors.length > 0
+        const hasColor = !!pointCloud2Data.color
+        if (!hasColors && !hasColor) {
+          console.warn(`[PointCloud2] No colors in data for ${componentId}`, {
+            hasColors,
+            hasColor,
+            pointsCount: pointCloud2Data.points.length
+          })
+        }
+        
         // 获取或创建单个实例
         if (!this.pointCloud2Instances.has(componentId)) {
           this.pointCloud2Instances.set(componentId, { displayName: `PointCloud2-${componentId}` })
         }
         const instance = this.pointCloud2Instances.get(componentId)
         this.worldviewContext.onMount(instance, this.pointsCommandWithWorldSpace)
+        
+        // 调试：检查数据格式
+        console.log(`[PointCloud2] Registering draw call for ${componentId}:`, {
+          pointsCount: pointCloud2Data.points.length,
+          colorsCount: pointCloud2Data.colors?.length || 0,
+          hasColor: !!pointCloud2Data.color,
+          scale: pointCloud2Data.scale,
+          hasPose: !!pointCloud2Data.pose,
+          firstPoint: pointCloud2Data.points[0],
+          firstColor: pointCloud2Data.colors?.[0] || pointCloud2Data.color
+        })
+        
+        // 确保数据格式正确（Points 命令期望单个对象，不是数组）
         this.worldviewContext.registerDrawCall({
           instance: instance,
           reglCommand: this.pointsCommandWithWorldSpace,
           children: pointCloud2Data,
           layerIndex: 2.5
         })
+      } else {
+        if (!this.pointsCommandWithWorldSpace) {
+          console.warn(`[PointCloud2] pointsCommandWithWorldSpace is not initialized`)
+        }
+        if (!pointCloud2Data) {
+          console.warn(`[PointCloud2] pointCloud2Data is null for ${componentId}`)
+        }
       }
     })
 
@@ -1025,7 +1062,7 @@ export class SceneManager {
           axesLength,
           axesRadius,
           alpha,
-          maxRenderCount
+          ...(maxRenderCount !== undefined && { maxRenderCount })
         }
       })
 
@@ -2518,13 +2555,29 @@ export class SceneManager {
       }
 
       // 保存处理后的数据
-      this.pointCloud2DataMap.set(componentId, result.data)
+      if (result.data) {
+        // 调试日志
+        console.log(`[PointCloud2] Data processed for ${componentId}:`, {
+          pointsCount: result.data.points?.length || 0,
+          colorsCount: result.data.colors?.length || 0,
+          hasColor: !!result.data.color,
+          scale: result.data.scale,
+          hasPose: !!result.data.pose
+        })
+        
+        this.pointCloud2DataMap.set(componentId, result.data)
 
-      // 延迟注册绘制调用
-      requestAnimationFrame(() => {
+        // 延迟注册绘制调用
+        requestAnimationFrame(() => {
+          this.registerDrawCalls()
+          this.worldviewContext.onDirty()
+        })
+      } else {
+        console.warn(`[PointCloud2] No data in result for ${componentId}`)
+        this.pointCloud2DataMap.delete(componentId)
         this.registerDrawCalls()
         this.worldviewContext.onDirty()
-      })
+      }
     } catch (error: any) {
       const currentRequestId = this.pointCloud2RequestIds.get(componentId)
       if (currentRequestId !== requestId) {
