@@ -3,7 +3,7 @@
     <div class="config-row">
       <span class="config-label">URDF Parameter</span>
       <el-input
-        :model-value="options.urdfParameter"
+        :model-value="options.urdfParameter || ''"
         @update:model-value="update('urdfParameter', $event)"
         size="small"
         placeholder="robot_description"
@@ -13,7 +13,7 @@
     <div class="config-row">
       <span class="config-label">URDF File URL</span>
       <el-input
-        :model-value="options.urdfFileUrl"
+        :model-value="options.urdfFileUrl || ''"
         @update:model-value="update('urdfFileUrl', $event)"
         size="small"
         placeholder="http://example.com/robot.urdf"
@@ -23,7 +23,7 @@
     <div class="config-row">
       <span class="config-label">Visual Enabled</span>
       <el-checkbox
-        :model-value="options.visualEnabled"
+        :model-value="options.visualEnabled ?? true"
         @update:model-value="update('visualEnabled', $event)"
         class="config-value"
       />
@@ -31,7 +31,7 @@
     <div class="config-row">
       <span class="config-label">Collision Enabled</span>
       <el-checkbox
-        :model-value="options.collisionEnabled"
+        :model-value="options.collisionEnabled ?? true"
         @update:model-value="update('collisionEnabled', $event)"
         class="config-value"
       />
@@ -39,7 +39,7 @@
     <div class="config-row">
       <span class="config-label">Alpha</span>
       <el-input-number
-        :model-value="options.alpha"
+        :model-value="options.alpha ?? 1"
         @update:model-value="update('alpha', $event)"
         size="small"
         :min="0"
@@ -52,7 +52,7 @@
     <div class="config-row">
       <span class="config-label">TF Prefix</span>
       <el-input
-        :model-value="options.tfPrefix"
+        :model-value="options.tfPrefix || ''"
         @update:model-value="update('tfPrefix', $event)"
         size="small"
         placeholder=""
@@ -62,7 +62,7 @@
     <div class="config-row">
       <span class="config-label">Update Interval</span>
       <el-input-number
-        :model-value="options.updateInterval"
+        :model-value="options.updateInterval ?? 0"
         @update:model-value="update('updateInterval', $event)"
         size="small"
         :min="0"

@@ -12,7 +12,7 @@
     <div class="config-row">
       <span class="config-label">Queue Size</span>
       <el-input-number
-        :model-value="options.queueSize"
+        :model-value="options.queueSize || 2"
         @update:model-value="update('queueSize', $event)"
         size="small"
         :min="1"
@@ -23,7 +23,7 @@
     <div class="config-row">
       <span class="config-label">Transport Hint</span>
       <el-select
-        :model-value="options.transportHint"
+        :model-value="options.transportHint || 'raw'"
         @update:model-value="update('transportHint', $event)"
         size="small"
         class="config-value"

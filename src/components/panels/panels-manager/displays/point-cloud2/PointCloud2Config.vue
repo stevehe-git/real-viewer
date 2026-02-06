@@ -105,7 +105,7 @@
     <div class="config-row">
       <span class="config-label">Queue Size</span>
       <el-input-number
-        :model-value="options.queueSize"
+        :model-value="options.queueSize || 10"
         @update:model-value="update('queueSize', $event)"
         size="small"
         :min="1"
@@ -151,7 +151,7 @@
     <div class="config-row">
       <span class="config-label">Alpha</span>
       <el-input-number
-        :model-value="options.alpha"
+        :model-value="options.alpha ?? 1"
         @update:model-value="update('alpha', $event)"
         size="small"
         :min="0"

@@ -20,7 +20,7 @@
     <div class="config-row">
       <span class="config-label">Queue Size</span>
       <el-input-number
-        :model-value="options.queueSize"
+        :model-value="options.queueSize || 10"
         @update:model-value="update('queueSize', $event)"
         size="small"
         :min="1"
@@ -31,7 +31,7 @@
     <div class="config-row">
       <span class="config-label">Position Tolerance</span>
       <el-input-number
-        :model-value="options.positionTolerance"
+        :model-value="options.positionTolerance ?? 0.1"
         @update:model-value="update('positionTolerance', $event)"
         size="small"
         :min="0"
@@ -44,7 +44,7 @@
     <div class="config-row">
       <span class="config-label">Angle Tolerance</span>
       <el-input-number
-        :model-value="options.angleTolerance"
+        :model-value="options.angleTolerance ?? 0.1"
         @update:model-value="update('angleTolerance', $event)"
         size="small"
         :min="0"
@@ -57,7 +57,7 @@
     <div class="config-row">
       <span class="config-label">Keep</span>
       <el-input-number
-        :model-value="options.keep"
+        :model-value="options.keep || 1"
         @update:model-value="update('keep', $event)"
         size="small"
         :min="1"
@@ -72,7 +72,7 @@
         </el-icon>
         <span class="sub-item-name">Shape</span>
         <el-select
-          :model-value="options.shape"
+          :model-value="options.shape || 'Axes'"
           @update:model-value="update('shape', $event)"
           @click.stop
           size="small"
@@ -85,7 +85,7 @@
         <div class="config-row">
           <span class="config-label">Axes Length</span>
           <el-input-number
-            :model-value="options.axesLength"
+            :model-value="options.axesLength ?? 1"
             @update:model-value="update('axesLength', $event)"
             size="small"
             :min="0.1"
@@ -98,7 +98,7 @@
         <div class="config-row">
           <span class="config-label">Axes Radius</span>
           <el-input-number
-            :model-value="options.axesRadius"
+            :model-value="options.axesRadius ?? 0.1"
             @update:model-value="update('axesRadius', $event)"
             size="small"
             :min="0.01"

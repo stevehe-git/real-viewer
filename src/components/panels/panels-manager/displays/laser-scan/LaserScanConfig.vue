@@ -11,7 +11,7 @@
     <div class="config-row">
       <span class="config-label">Queue Size</span>
       <el-input-number
-        :model-value="options.queueSize"
+        :model-value="options.queueSize || 10"
         @update:model-value="update('queueSize', $event)"
         size="small"
         :min="1"
@@ -22,7 +22,7 @@
     <div class="config-row">
       <span class="config-label">Style</span>
       <el-select
-        :model-value="options.style"
+        :model-value="options.style || 'Flat Squares'"
         @update:model-value="update('style', $event)"
         size="small"
         class="config-value"
@@ -35,7 +35,7 @@
     <div class="config-row">
       <span class="config-label">Size (m)</span>
       <el-input-number
-        :model-value="options.size"
+        :model-value="options.size ?? 0.01"
         @update:model-value="update('size', $event)"
         size="small"
         :min="0.001"
@@ -48,7 +48,7 @@
     <div class="config-row">
       <span class="config-label">Alpha</span>
       <el-input-number
-        :model-value="options.alpha"
+        :model-value="options.alpha ?? 1"
         @update:model-value="update('alpha', $event)"
         size="small"
         :min="0"
@@ -61,7 +61,7 @@
     <div class="config-row">
       <span class="config-label">Color Transformer</span>
       <el-select
-        :model-value="options.colorTransformer"
+        :model-value="options.colorTransformer || 'Intensity'"
         @update:model-value="update('colorTransformer', $event)"
         size="small"
         class="config-value"
@@ -107,7 +107,7 @@
     <div class="config-row" v-if="options.colorTransformer === 'Intensity' && !options.autocomputeIntensityBounds">
       <span class="config-label">Min Intensity</span>
       <el-input-number
-        :model-value="options.minIntensity"
+        :model-value="options.minIntensity ?? 0"
         @update:model-value="update('minIntensity', $event)"
         size="small"
         class="config-value"
@@ -116,7 +116,7 @@
     <div class="config-row" v-if="options.colorTransformer === 'Intensity' && !options.autocomputeIntensityBounds">
       <span class="config-label">Max Intensity</span>
       <el-input-number
-        :model-value="options.maxIntensity"
+        :model-value="options.maxIntensity ?? 0"
         @update:model-value="update('maxIntensity', $event)"
         size="small"
         class="config-value"

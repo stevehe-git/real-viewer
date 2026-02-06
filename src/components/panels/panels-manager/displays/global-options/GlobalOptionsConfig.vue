@@ -165,12 +165,12 @@ const toggleGlobalStatus = () => {
 
 // 获取背景颜色
 const backgroundColor = computed(() => {
-  return rvizStore.sceneState.backgroundColor || '#808080'
+  return rvizStore.sceneState.backgroundColor ?? '#808080'
 })
 
 // 获取帧率
 const frameRate = computed(() => {
-  return rvizStore.sceneState.fps || 30
+  return rvizStore.sceneState.fps ?? 30
 })
 
 // 获取默认灯光（从 sceneState 或 options 中获取）

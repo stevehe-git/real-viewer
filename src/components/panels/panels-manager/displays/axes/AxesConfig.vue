@@ -25,7 +25,7 @@
     <div class="config-row">
       <span class="config-label">Length</span>
       <el-input-number
-        :model-value="options.length"
+        :model-value="options.length ?? 1"
         @update:model-value="update('length', $event)"
         size="small"
         :min="0.1"
@@ -37,7 +37,7 @@
     <div class="config-row">
       <span class="config-label">Radius</span>
       <el-input-number
-        :model-value="options.radius"
+        :model-value="options.radius ?? 0.1"
         @update:model-value="update('radius', $event)"
         size="small"
         :min="0.01"
@@ -49,7 +49,7 @@
     <div class="config-row">
       <span class="config-label">Show Trail</span>
       <el-checkbox
-        :model-value="options.showTrail"
+        :model-value="options.showTrail ?? false"
         @update:model-value="update('showTrail', $event)"
         class="config-value"
       />
@@ -57,7 +57,7 @@
     <div class="config-row">
       <span class="config-label">Alpha</span>
       <el-input-number
-        :model-value="options.alpha"
+        :model-value="options.alpha ?? 1"
         @update:model-value="update('alpha', $event)"
         size="small"
         :min="0"

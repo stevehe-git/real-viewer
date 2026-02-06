@@ -11,7 +11,7 @@
     <div class="config-row">
       <span class="config-label">Alpha</span>
       <el-input-number
-        :model-value="options.alpha"
+        :model-value="options.alpha ?? 1.0"
         @update:model-value="update('alpha', $event)"
         size="small"
         :min="0"
@@ -23,7 +23,7 @@
     <div class="config-row">
       <span class="config-label">Color Scheme</span>
       <el-select
-        :model-value="options.colorScheme"
+        :model-value="options.colorScheme || 'map'"
         @update:model-value="update('colorScheme', $event)"
         size="small"
         class="config-value"

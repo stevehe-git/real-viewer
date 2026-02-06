@@ -65,7 +65,7 @@
     <div class="config-row">
       <span class="config-label">Marker Scale</span>
       <el-input-number
-        :model-value="options.markerScale"
+        :model-value="options.markerScale ?? 2"
         @update:model-value="update('markerScale', $event)"
         size="small"
         :min="0.1"
@@ -79,7 +79,7 @@
     <div class="config-row">
       <span class="config-label">Marker Alpha</span>
       <el-input-number
-        :model-value="options.markerAlpha"
+        :model-value="options.markerAlpha ?? 1"
         @update:model-value="update('markerAlpha', $event)"
         size="small"
         :min="0"
@@ -93,7 +93,7 @@
     <div class="config-row">
       <span class="config-label">Update Interval</span>
       <el-input-number
-        :model-value="options.updateInterval"
+        :model-value="options.updateInterval ?? 0"
         @update:model-value="update('updateInterval', $event)"
         size="small"
         :min="0"
@@ -107,7 +107,7 @@
     <div class="config-row">
       <span class="config-label">Frame Timeout</span>
       <el-input-number
-        :model-value="options.frameTimeout"
+        :model-value="options.frameTimeout ?? 15"
         @update:model-value="update('frameTimeout', $event)"
         size="small"
         :min="0"
@@ -121,7 +121,7 @@
     <div class="config-row">
       <span class="config-label">Filter (whitelist)</span>
       <el-input
-        :model-value="options.filterWhitelist"
+        :model-value="options.filterWhitelist || ''"
         @update:model-value="update('filterWhitelist', $event)"
         size="small"
         class="config-value"
@@ -133,7 +133,7 @@
     <div class="config-row">
       <span class="config-label">Filter (blacklist)</span>
       <el-input
-        :model-value="options.filterBlacklist"
+        :model-value="options.filterBlacklist || ''"
         @update:model-value="update('filterBlacklist', $event)"
         size="small"
         class="config-value"

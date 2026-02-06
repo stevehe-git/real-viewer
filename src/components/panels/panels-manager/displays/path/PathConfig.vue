@@ -20,7 +20,7 @@
     <div class="config-row">
       <span class="config-label">Queue Size</span>
       <el-input-number
-        :model-value="options.queueSize"
+        :model-value="options.queueSize || 10"
         @update:model-value="update('queueSize', $event)"
         size="small"
         :min="1"
@@ -31,7 +31,7 @@
     <div class="config-row">
       <span class="config-label">Line Style</span>
       <el-select
-        :model-value="options.lineStyle"
+        :model-value="options.lineStyle || 'Lines'"
         @update:model-value="update('lineStyle', $event)"
         size="small"
         class="config-value"
@@ -43,17 +43,17 @@
       <span class="config-label">Color</span>
       <div class="config-value color-config">
         <el-color-picker
-          :model-value="options.color"
+          :model-value="options.color || '#19ff00'"
           @update:model-value="update('color', $event)"
           size="small"
         />
-        <span class="color-text">{{ formatColor(options.color) }}</span>
+        <span class="color-text">{{ formatColor(options.color || '#19ff00') }}</span>
       </div>
     </div>
     <div class="config-row">
       <span class="config-label">Alpha</span>
       <el-input-number
-        :model-value="options.alpha"
+        :model-value="options.alpha ?? 1"
         @update:model-value="update('alpha', $event)"
         size="small"
         :min="0"
@@ -66,7 +66,7 @@
     <div class="config-row">
       <span class="config-label">Buffer Length</span>
       <el-input-number
-        :model-value="options.bufferLength"
+        :model-value="options.bufferLength || 1"
         @update:model-value="update('bufferLength', $event)"
         size="small"
         :min="1"
@@ -86,7 +86,7 @@
         <div class="config-row">
           <span class="config-label">X</span>
           <el-input-number
-            :model-value="options.offsetX"
+            :model-value="options.offsetX || 0"
             @update:model-value="update('offsetX', $event)"
             size="small"
             class="config-value"
@@ -95,7 +95,7 @@
         <div class="config-row">
           <span class="config-label">Y</span>
           <el-input-number
-            :model-value="options.offsetY"
+            :model-value="options.offsetY || 0"
             @update:model-value="update('offsetY', $event)"
             size="small"
             class="config-value"
@@ -104,7 +104,7 @@
         <div class="config-row">
           <span class="config-label">Z</span>
           <el-input-number
-            :model-value="options.offsetZ"
+            :model-value="options.offsetZ || 0"
             @update:model-value="update('offsetZ', $event)"
             size="small"
             class="config-value"
