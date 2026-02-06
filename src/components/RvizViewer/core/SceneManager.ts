@@ -48,7 +48,8 @@ export class SceneManager {
     poseStyle?: string
   }>() // 每个 Path 的配置
   private pathInstancesMap = new Map<string, any>() // 支持多个 Path 实例，key 为 componentId
-  private odometryDataMap = new Map<string, any>() // 支持多个 Odometry，key 为 componentId
+  private odometryDataMap = new Map<string, any>() // 支持多个 Odometry，key 为 componentId，存储所有 axes
+  private odometryPoseHistoryMap = new Map<string, Array<{ position: any; orientation: any; timestamp: number }>>() // 每个 Odometry 的历史位姿列表
   private odometryConfigMap = new Map<string, {
     shape?: string
     axesLength?: number
@@ -927,11 +928,61 @@ export class SceneManager {
     const axesLength = config.axesLength ?? 1.0
     const axesRadius = config.axesRadius ?? 0.1
     const alpha = config.alpha ?? 1.0
+    const keep = config.keep ?? 1
+    const positionTolerance = config.positionTolerance ?? 0.1
+    const angleTolerance = config.angleTolerance ?? 0.1
 
     // 获取位姿
     const pose = message.pose.pose
     const position = pose.position || { x: 0, y: 0, z: 0 }
     const orientation = pose.orientation || { x: 0, y: 0, z: 0, w: 1 }
+    const timestamp = message.header?.stamp?.sec 
+      ? message.header.stamp.sec * 1000 + (message.header.stamp.nsec || 0) / 1000000
+      : Date.now()
+
+    // 获取历史位姿列表
+    let poseHistory = this.odometryPoseHistoryMap.get(componentId) || []
+    
+    // 检查是否需要添加新位姿（基于位置和角度容差）
+    const shouldAddPose = (() => {
+      if (poseHistory.length === 0) {
+        return true // 第一个位姿总是添加
+      }
+      
+      const lastPose = poseHistory[poseHistory.length - 1]
+      if (!lastPose) {
+        return true // 如果最后一个位姿不存在，总是添加
+      }
+      
+      const dx = position.x - lastPose.position.x
+      const dy = position.y - lastPose.position.y
+      const dz = position.z - lastPose.position.z
+      const positionDiff = Math.sqrt(dx * dx + dy * dy + dz * dz)
+      
+      // 计算角度差（使用四元数点积）
+      const q1 = lastPose.orientation
+      const q2 = orientation
+      const dot = q1.x * q2.x + q1.y * q2.y + q1.z * q2.z + q1.w * q2.w
+      const angleDiff = Math.acos(Math.min(1, Math.max(-1, Math.abs(dot)))) * 2
+      
+      return positionDiff > positionTolerance || angleDiff > angleTolerance
+    })()
+
+    // 如果需要，添加新位姿到历史列表
+    if (shouldAddPose) {
+      poseHistory.push({
+        position: { ...position },
+        orientation: { ...orientation },
+        timestamp
+      })
+      
+      // 保持最多 keep 个位姿
+      if (poseHistory.length > keep) {
+        poseHistory = poseHistory.slice(-keep)
+      }
+      
+      this.odometryPoseHistoryMap.set(componentId, poseHistory)
+    }
 
     // 创建旋转四元数辅助函数
     const createRotationQuaternion = (axis: 'x' | 'y' | 'z', angle: number) => {
@@ -950,9 +1001,6 @@ export class SceneManager {
       return { x: q[0], y: q[1], z: q[2], w: q[3] }
     }
 
-    // 将位姿四元数转换为对象格式
-    const frameQuat = { x: orientation.x, y: orientation.y, z: orientation.z, w: orientation.w }
-    
     // 旋转向量辅助函数（使用四元数旋转）
     const rotateVector = (v: [number, number, number], q: { x: number; y: number; z: number; w: number }): [number, number, number] => {
       // q * v * q^-1
@@ -968,80 +1016,89 @@ export class SceneManager {
       return { x: result[0], y: result[1], z: result[2], w: result[3] }
     }
 
-    const axes: any[] = []
+    // 为所有历史位姿生成 axes
+    const allAxes: any[] = []
 
-    if (shape === 'Axes') {
-      // X轴：红色，沿 frame 的 X 方向
-      const xAxisBaseRotation = createRotationQuaternion('y', -Math.PI / 2)
-      const xAxisQuat = multiplyQuaternions(frameQuat, xAxisBaseRotation)
-      const xAxisDir = rotateVector([1, 0, 0], frameQuat)
+    // 遍历历史位姿列表，为每个位姿生成 axes
+    poseHistory.forEach((poseItem) => {
+      const posePosition = poseItem.position
+      const poseOrientation = poseItem.orientation
+      const frameQuat = { x: poseOrientation.x, y: poseOrientation.y, z: poseOrientation.z, w: poseOrientation.w }
 
-      axes.push({
-        pose: {
-          position: {
-            x: position.x + xAxisDir[0] * axesLength / 2,
-            y: position.y + xAxisDir[1] * axesLength / 2,
-            z: position.z + xAxisDir[2] * axesLength / 2
+      if (shape === 'Axes') {
+        // X轴：红色，沿 frame 的 X 方向
+        const xAxisBaseRotation = createRotationQuaternion('y', -Math.PI / 2)
+        const xAxisQuat = multiplyQuaternions(frameQuat, xAxisBaseRotation)
+        const xAxisDir = rotateVector([1, 0, 0], frameQuat)
+
+        allAxes.push({
+          pose: {
+            position: {
+              x: posePosition.x + xAxisDir[0] * axesLength / 2,
+              y: posePosition.y + xAxisDir[1] * axesLength / 2,
+              z: posePosition.z + xAxisDir[2] * axesLength / 2
+            },
+            orientation: xAxisQuat
           },
-          orientation: xAxisQuat
-        },
-        points: [{ x: 0, y: 0, z: 0 }],
-        scale: { x: axesRadius, y: axesRadius, z: axesLength },
-        color: { r: 1.0, g: 0.0, b: 0.0, a: alpha }
-      })
+          points: [{ x: 0, y: 0, z: 0 }],
+          scale: { x: axesRadius, y: axesRadius, z: axesLength },
+          color: { r: 1.0, g: 0.0, b: 0.0, a: alpha }
+        })
 
-      // Y轴：绿色，沿 frame 的 Y 方向
-      const yAxisBaseRotation = createRotationQuaternion('x', -Math.PI / 2)
-      const yAxisQuat = multiplyQuaternions(frameQuat, yAxisBaseRotation)
-      const yAxisDir = rotateVector([0, 1, 0], frameQuat)
+        // Y轴：绿色，沿 frame 的 Y 方向
+        const yAxisBaseRotation = createRotationQuaternion('x', -Math.PI / 2)
+        const yAxisQuat = multiplyQuaternions(frameQuat, yAxisBaseRotation)
+        const yAxisDir = rotateVector([0, 1, 0], frameQuat)
 
-      axes.push({
-        pose: {
-          position: {
-            x: position.x + yAxisDir[0] * axesLength / 2,
-            y: position.y + yAxisDir[1] * axesLength / 2,
-            z: position.z + yAxisDir[2] * axesLength / 2
+        allAxes.push({
+          pose: {
+            position: {
+              x: posePosition.x + yAxisDir[0] * axesLength / 2,
+              y: posePosition.y + yAxisDir[1] * axesLength / 2,
+              z: posePosition.z + yAxisDir[2] * axesLength / 2
+            },
+            orientation: yAxisQuat
           },
-          orientation: yAxisQuat
-        },
-        points: [{ x: 0, y: 0, z: 0 }],
-        scale: { x: axesRadius, y: axesRadius, z: axesLength },
-        color: { r: 0.0, g: 1.0, b: 0.0, a: alpha }
-      })
+          points: [{ x: 0, y: 0, z: 0 }],
+          scale: { x: axesRadius, y: axesRadius, z: axesLength },
+          color: { r: 0.0, g: 1.0, b: 0.0, a: alpha }
+        })
 
-      // Z轴：蓝色，沿 frame 的 Z 方向
-      const zAxisDir = rotateVector([0, 0, 1], frameQuat)
+        // Z轴：蓝色，沿 frame 的 Z 方向
+        const zAxisDir = rotateVector([0, 0, 1], frameQuat)
 
-      axes.push({
-        pose: {
-          position: {
-            x: position.x + zAxisDir[0] * axesLength / 2,
-            y: position.y + zAxisDir[1] * axesLength / 2,
-            z: position.z + zAxisDir[2] * axesLength / 2
+        allAxes.push({
+          pose: {
+            position: {
+              x: posePosition.x + zAxisDir[0] * axesLength / 2,
+              y: posePosition.y + zAxisDir[1] * axesLength / 2,
+              z: posePosition.z + zAxisDir[2] * axesLength / 2
+            },
+            orientation: { x: poseOrientation.x, y: poseOrientation.y, z: poseOrientation.z, w: poseOrientation.w }
           },
-          orientation: { x: orientation.x, y: orientation.y, z: orientation.z, w: orientation.w }
-        },
-        points: [{ x: 0, y: 0, z: 0 }],
-        scale: { x: axesRadius, y: axesRadius, z: axesLength },
-        color: { r: 0.0, g: 0.0, b: 1.0, a: alpha }
-      })
-    }
+          points: [{ x: 0, y: 0, z: 0 }],
+          scale: { x: axesRadius, y: axesRadius, z: axesLength },
+          color: { r: 0.0, g: 0.0, b: 1.0, a: alpha }
+        })
+      }
+    })
 
-    // 保存处理后的数据
-    this.odometryDataMap.set(componentId, { axes })
+    // 保存处理后的数据（包含所有历史位姿的 axes）
+    this.odometryDataMap.set(componentId, { axes: allAxes })
     
     // 调试日志
     console.log(`[Odometry Debug] updateOdometry for ${componentId}:`, {
-      axesCount: axes.length,
+      poseHistoryCount: poseHistory.length,
+      keep: keep,
+      configKeep: config.keep,
+      configKeepType: typeof config.keep,
+      configKeepUndefined: config.keep === undefined,
+      fullConfig: config,
+      axesCount: allAxes.length,
       hasCylindersCommand: !!this.cylindersCommand,
-      hasReglContext: !!this.reglContext,
-      firstAxis: axes.length > 0 ? {
-        position: axes[0].pose.position,
-        orientation: axes[0].pose.orientation,
-        scale: axes[0].scale,
-        color: axes[0].color,
-        hasPoints: !!axes[0].points
-      } : null
+      shouldAddPose: shouldAddPose,
+      positionTolerance: positionTolerance,
+      angleTolerance: angleTolerance
     })
     
     // 更新绘制调用
@@ -1055,6 +1112,7 @@ export class SceneManager {
    */
   removeOdometry(componentId: string): void {
     this.odometryDataMap.delete(componentId)
+    this.odometryPoseHistoryMap.delete(componentId)
     this.odometryConfigMap.delete(componentId)
     const instance = this.odometryInstancesMap.get(componentId)
     if (instance) {
@@ -1087,17 +1145,172 @@ export class SceneManager {
 
     // 更新配置
     const currentConfig = this.odometryConfigMap.get(componentId) || {}
-    this.odometryConfigMap.set(componentId, {
+    const newConfig = {
       ...currentConfig,
       ...options
+    }
+    this.odometryConfigMap.set(componentId, newConfig)
+    
+    // 调试日志
+    console.log(`[Odometry Debug] setOdometryOptions for ${componentId}:`, {
+      currentKeep: currentConfig.keep,
+      newKeep: newConfig.keep,
+      keepChanged: options.keep !== undefined && options.keep !== currentConfig.keep,
+      options: options,
+      newConfig: newConfig
     })
 
-    // 如果有数据，需要重新处理以应用新配置
-    // 这里只更新绘制调用，让外部调用者负责重新获取消息
+    // 如果 keep 值变化，需要调整历史位姿列表
+    if (options.keep !== undefined && options.keep !== currentConfig.keep) {
+      const poseHistory = this.odometryPoseHistoryMap.get(componentId) || []
+      if (poseHistory.length > options.keep) {
+        // 只保留最新的 keep 个位姿
+        const trimmedHistory = poseHistory.slice(-options.keep)
+        this.odometryPoseHistoryMap.set(componentId, trimmedHistory)
+      }
+    }
+
+    // 如果有历史位姿数据，重新生成 axes 以应用新配置
+    const poseHistory = this.odometryPoseHistoryMap.get(componentId)
+    if (poseHistory && poseHistory.length > 0) {
+      // 重新生成 axes 以应用新配置
+      this.updateOdometryAxes(componentId, newConfig, poseHistory)
+      return
+    }
+
+    // 如果没有历史数据，只更新绘制调用
     if (this.odometryDataMap.has(componentId)) {
       this.registerDrawCalls()
       this.worldviewContext.onDirty()
     }
+  }
+
+  /**
+   * 根据历史位姿重新生成 axes（用于配置更新）
+   * @param componentId 组件ID
+   * @param config 配置选项
+   * @param poseHistory 历史位姿列表
+   */
+  private updateOdometryAxes(
+    componentId: string,
+    config: {
+      shape?: string
+      axesLength?: number
+      axesRadius?: number
+      alpha?: number
+    },
+    poseHistory: Array<{ position: any; orientation: any; timestamp: number }>
+  ): void {
+    const shape = config.shape || 'Axes'
+    const axesLength = config.axesLength ?? 1.0
+    const axesRadius = config.axesRadius ?? 0.1
+    const alpha = config.alpha ?? 1.0
+
+    // 创建旋转四元数辅助函数
+    const createRotationQuaternion = (axis: 'x' | 'y' | 'z', angle: number) => {
+      const q = quat.create()
+      switch (axis) {
+        case 'x':
+          quat.setAxisAngle(q, [1, 0, 0], angle)
+          break
+        case 'y':
+          quat.setAxisAngle(q, [0, 1, 0], angle)
+          break
+        case 'z':
+          quat.setAxisAngle(q, [0, 0, 1], angle)
+          break
+      }
+      return { x: q[0], y: q[1], z: q[2], w: q[3] }
+    }
+
+    // 旋转向量辅助函数（使用四元数旋转）
+    const rotateVector = (v: [number, number, number], q: { x: number; y: number; z: number; w: number }): [number, number, number] => {
+      // q * v * q^-1
+      const qv = { x: v[0], y: v[1], z: v[2], w: 0 }
+      const qConj = { x: -q.x, y: -q.y, z: -q.z, w: q.w }
+      const qvq = multiplyQuaternions(multiplyQuaternions(q, qv), qConj)
+      return [qvq.x, qvq.y, qvq.z]
+    }
+
+    // 四元数乘法辅助函数
+    const multiplyQuaternions = (q1: { x: number; y: number; z: number; w: number }, q2: { x: number; y: number; z: number; w: number }): { x: number; y: number; z: number; w: number } => {
+      const result = quat.multiply([0, 0, 0, 1], [q1.x, q1.y, q1.z, q1.w], [q2.x, q2.y, q2.z, q2.w])
+      return { x: result[0], y: result[1], z: result[2], w: result[3] }
+    }
+
+    // 为所有历史位姿生成 axes
+    const allAxes: any[] = []
+
+    // 遍历历史位姿列表，为每个位姿生成 axes
+    poseHistory.forEach((poseItem) => {
+      const posePosition = poseItem.position
+      const poseOrientation = poseItem.orientation
+      const frameQuat = { x: poseOrientation.x, y: poseOrientation.y, z: poseOrientation.z, w: poseOrientation.w }
+
+      if (shape === 'Axes') {
+        // X轴：红色，沿 frame 的 X 方向
+        const xAxisBaseRotation = createRotationQuaternion('y', -Math.PI / 2)
+        const xAxisQuat = multiplyQuaternions(frameQuat, xAxisBaseRotation)
+        const xAxisDir = rotateVector([1, 0, 0], frameQuat)
+
+        allAxes.push({
+          pose: {
+            position: {
+              x: posePosition.x + xAxisDir[0] * axesLength / 2,
+              y: posePosition.y + xAxisDir[1] * axesLength / 2,
+              z: posePosition.z + xAxisDir[2] * axesLength / 2
+            },
+            orientation: xAxisQuat
+          },
+          points: [{ x: 0, y: 0, z: 0 }],
+          scale: { x: axesRadius, y: axesRadius, z: axesLength },
+          color: { r: 1.0, g: 0.0, b: 0.0, a: alpha }
+        })
+
+        // Y轴：绿色，沿 frame 的 Y 方向
+        const yAxisBaseRotation = createRotationQuaternion('x', -Math.PI / 2)
+        const yAxisQuat = multiplyQuaternions(frameQuat, yAxisBaseRotation)
+        const yAxisDir = rotateVector([0, 1, 0], frameQuat)
+
+        allAxes.push({
+          pose: {
+            position: {
+              x: posePosition.x + yAxisDir[0] * axesLength / 2,
+              y: posePosition.y + yAxisDir[1] * axesLength / 2,
+              z: posePosition.z + yAxisDir[2] * axesLength / 2
+            },
+            orientation: yAxisQuat
+          },
+          points: [{ x: 0, y: 0, z: 0 }],
+          scale: { x: axesRadius, y: axesRadius, z: axesLength },
+          color: { r: 0.0, g: 1.0, b: 0.0, a: alpha }
+        })
+
+        // Z轴：蓝色，沿 frame 的 Z 方向
+        const zAxisDir = rotateVector([0, 0, 1], frameQuat)
+
+        allAxes.push({
+          pose: {
+            position: {
+              x: posePosition.x + zAxisDir[0] * axesLength / 2,
+              y: posePosition.y + zAxisDir[1] * axesLength / 2,
+              z: posePosition.z + zAxisDir[2] * axesLength / 2
+            },
+            orientation: { x: poseOrientation.x, y: poseOrientation.y, z: poseOrientation.z, w: poseOrientation.w }
+          },
+          points: [{ x: 0, y: 0, z: 0 }],
+          scale: { x: axesRadius, y: axesRadius, z: axesLength },
+          color: { r: 0.0, g: 0.0, b: 1.0, a: alpha }
+        })
+      }
+    })
+
+    // 保存处理后的数据（包含所有历史位姿的 axes）
+    this.odometryDataMap.set(componentId, { axes: allAxes })
+    
+    // 更新绘制调用
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
   }
 
 

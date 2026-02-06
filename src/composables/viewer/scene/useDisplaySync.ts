@@ -583,6 +583,7 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     const currentPointCloudIds = syncPointCloudDisplay(previousComponentIds?.pointCloudIds)
     const currentPointCloud2Ids = syncPointCloud2Display(previousComponentIds?.pointCloud2Ids)
     const currentPathIds = syncPathDisplay(previousComponentIds?.pathIds)
+    const currentOdometryIds = syncOdometryDisplay(previousComponentIds?.odometryIds)
     syncTFDisplay()
     
     return {
@@ -590,7 +591,8 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
       laserScanIds: currentLaserScanIds,
       pointCloudIds: currentPointCloudIds,
       pointCloud2Ids: currentPointCloud2Ids,
-      pathIds: currentPathIds
+      pathIds: currentPathIds,
+      odometryIds: currentOdometryIds
     }
   }
 
@@ -836,7 +838,7 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
             // 获取消息的时间戳，用于辅助判断（建图过程中，即使哈希相同，时间戳变化也应该更新）
             const status = topicSubscriptionManager.getStatus(mapComponent.id)
             const currentTimestamp = status?.lastMessageTime || Date.now()
-            const lastProcessedTimestamp = lastProcessedMessageHashes.get(`${mapComponent.id}_timestamp`) || 0
+             const lastProcessedTimestamp = Number(lastProcessedMessageHashes.get(`${mapComponent.id}_timestamp`) || 0)
             
             // 调试日志：记录哈希比较（完整哈希值）
             // console.log(`[Map Debug] Component ${mapComponent.id} hash check:`, {
@@ -872,7 +874,7 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
               
               // 保存消息哈希和时间戳
               lastProcessedMessageHashes.set(mapComponent.id, messageHash)
-              lastProcessedMessageHashes.set(`${mapComponent.id}_timestamp`, currentTimestamp)
+              lastProcessedMessageHashes.set(`${mapComponent.id}_timestamp`, String(currentTimestamp))
               // 调用 updateMap，它内部会进行更详细的检查
               // console.log(`[Map Debug] Calling context.updateMap for ${mapComponent.id}`)
               context.updateMap(message, mapComponent.id)
@@ -1148,6 +1150,47 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
       })
       // 配置变化后，重新同步 Path 数据以应用新配置
       syncPathDisplay()
+    },
+    { deep: true }
+  )
+
+  // 监听所有 Odometry 组件的配置选项变化（shape、axesLength、axesRadius、keep等）
+  watch(
+    () => {
+      return rvizStore.displayComponents
+        .filter(c => c.type === 'odometry')
+        .map(odometryComponent => ({
+          id: odometryComponent.id,
+          enabled: odometryComponent.enabled,
+          shape: odometryComponent.options?.shape,
+          axesLength: odometryComponent.options?.axesLength,
+          axesRadius: odometryComponent.options?.axesRadius,
+          color: odometryComponent.options?.color,
+          alpha: odometryComponent.options?.alpha,
+          positionTolerance: odometryComponent.options?.positionTolerance,
+          angleTolerance: odometryComponent.options?.angleTolerance,
+          keep: odometryComponent.options?.keep
+        }))
+    },
+    (odometryConfigs) => {
+      odometryConfigs.forEach((odometryConfig) => {
+        if (odometryConfig && odometryConfig.enabled) {
+          if (context.setOdometryOptions) {
+            context.setOdometryOptions({
+              shape: odometryConfig.shape,
+              axesLength: odometryConfig.axesLength,
+              axesRadius: odometryConfig.axesRadius,
+              color: odometryConfig.color,
+              alpha: odometryConfig.alpha,
+              positionTolerance: odometryConfig.positionTolerance,
+              angleTolerance: odometryConfig.angleTolerance,
+              keep: odometryConfig.keep
+            }, odometryConfig.id)
+          }
+        }
+      })
+      // 配置变化后，重新同步 Odometry 数据以应用新配置
+      syncOdometryDisplay()
     },
     { deep: true }
   )
