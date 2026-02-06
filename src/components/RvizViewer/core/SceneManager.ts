@@ -2763,15 +2763,22 @@ export class SceneManager {
    * 移除 PointCloud2 数据
    */
   removePointCloud2(componentId: string): void {
+    // 先取消注册该实例的绘制调用
+    const instance = this.pointCloud2Instances.get(componentId)
+    if (instance) {
+      this.worldviewContext.onUnmount(instance)
+    }
+    
+    // 删除所有相关数据
     this.pointCloud2DataMap.delete(componentId)
     this.pointCloud2ConfigMap.delete(componentId)
     this.pointCloud2RawMessageMap.delete(componentId)
     this.pointCloud2Instances.delete(componentId)
     this.pointCloud2RequestIds.delete(componentId)
-    requestAnimationFrame(() => {
-      this.registerDrawCalls()
-      this.worldviewContext.onDirty()
-    })
+    
+    // 立即重新注册绘制调用，确保已删除的组件不再渲染
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
   }
 
   /**
