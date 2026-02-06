@@ -984,6 +984,12 @@ export class SceneManager {
       this.odometryPoseHistoryMap.set(componentId, poseHistory)
     }
 
+    // 关键修复：无论 shouldAddPose 是否为 true，都要更新渲染
+    // 因为：
+    // 1. 即使位姿没有变化，配置可能变化了
+    // 2. 需要保持渲染的连续性和实时性
+    // 3. 即使位姿相同，也应该渲染当前位姿（keep=1 时）
+    
     // 使用 Web Worker 处理耗时操作（axes 生成）
     // 需要深拷贝 poseHistory 以确保数据可序列化
     try {

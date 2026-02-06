@@ -365,6 +365,7 @@ export class WorldviewContext {
       // 已达到最小帧间隔，立即安排渲染
       // 使用 setTimeout 而不是 requestAnimationFrame，确保帧率限制生效
       this._frame = window.setTimeout(() => {
+        this._frame = null
         this.paint()
       }, 0) as any
     } else {
@@ -372,6 +373,7 @@ export class WorldviewContext {
       const delay = minInterval - timeSinceLastPaint
       // 使用 setTimeout 确保延迟渲染，严格遵守帧率限制
       this._frame = window.setTimeout(() => {
+        this._frame = null
         this.paint()
       }, Math.max(0, delay)) as any
     }

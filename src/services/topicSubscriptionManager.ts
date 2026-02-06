@@ -139,7 +139,7 @@ export class TopicSubscriptionManager {
     if (this.statusUpdateThrottleTimer === null) {
       // 对于高频消息类型（如图像），使用更长的节流间隔（200ms）
       // 对于其他类型，使用较短的间隔（100ms）以保持响应性
-      const throttleInterval = 200 // 统一使用 200ms，减少更新频率
+      const throttleInterval = 100 // 统一使用 200ms，减少更新频率
       // console.log(`[Map Debug] triggerStatusUpdateThrottled: Scheduling throttled update in ${throttleInterval}ms`)
       this.statusUpdateThrottleTimer = window.setTimeout(() => {
         if (this.pendingStatusUpdate) {

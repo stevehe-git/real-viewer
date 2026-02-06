@@ -76,7 +76,10 @@ class RenderDebugger {
     const windowStart = now - this.fpsUpdateInterval
     
     // 计算 FPS（基于最近5秒的数据）
-    this.stats.fps = this.frameTimes.filter(t => t >= windowStart).length
+    // 关键修复：需要除以时间窗口（秒）才能得到正确的 FPS
+    const frameCount = this.frameTimes.filter(t => t >= windowStart).length
+    const timeWindowSeconds = this.fpsUpdateInterval / 1000 // 转换为秒
+    this.stats.fps = frameCount / timeWindowSeconds
     
     // 清理旧数据（保留最近5秒的数据）
     this.frameTimes = this.frameTimes.filter(t => t >= windowStart)
