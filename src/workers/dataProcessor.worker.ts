@@ -135,8 +135,31 @@ export interface PointCloud2ProcessResult {
   error?: string
 }
 
-type WorkerRequest = MapProcessRequest | PointCloudProcessRequest | ImageProcessRequest | PathProcessRequest | TFProcessRequest | LaserScanProcessRequest | PointCloud2ProcessRequest
-type WorkerResponse = MapProcessResult | PointCloudProcessResult | ImageProcessResult | PathProcessResult | TFProcessResult | LaserScanProcessResult | PointCloud2ProcessResult
+export interface OdometryProcessRequest {
+  type: 'processOdometry'
+  componentId: string
+  poseHistory: Array<{
+    position: { x: number; y: number; z: number }
+    orientation: { x: number; y: number; z: number; w: number }
+    timestamp: number
+  }>
+  config: {
+    shape?: string
+    axesLength?: number
+    axesRadius?: number
+    alpha?: number
+  }
+}
+
+export interface OdometryProcessResult {
+  type: 'odometryProcessed'
+  componentId: string
+  axes: any[]
+  error?: string
+}
+
+type WorkerRequest = MapProcessRequest | PointCloudProcessRequest | ImageProcessRequest | PathProcessRequest | TFProcessRequest | LaserScanProcessRequest | PointCloud2ProcessRequest | OdometryProcessRequest
+type WorkerResponse = MapProcessResult | PointCloudProcessResult | ImageProcessResult | PathProcessResult | TFProcessResult | LaserScanProcessResult | PointCloud2ProcessResult | OdometryProcessResult
 
 /**
  * 处理地图数据（OccupancyGrid 转纹理数据）
@@ -655,6 +678,136 @@ function processTF(request: TFProcessRequest): TFProcessResult {
 }
 
 /**
+ * 处理 Odometry 数据（生成 axes）
+ */
+function processOdometry(request: OdometryProcessRequest): OdometryProcessResult {
+  try {
+    const { componentId, poseHistory, config } = request
+    const shape = config.shape || 'Axes'
+    const axesLength = config.axesLength ?? 1.0
+    const axesRadius = config.axesRadius ?? 0.1
+    const alpha = config.alpha ?? 1.0
+
+    // 四元数运算辅助函数（不使用 gl-matrix，纯 JavaScript 实现）
+    const quatMultiply = (q1: { x: number; y: number; z: number; w: number }, q2: { x: number; y: number; z: number; w: number }): { x: number; y: number; z: number; w: number } => {
+      return {
+        x: q1.w * q2.x + q1.x * q2.w + q1.y * q2.z - q1.z * q2.y,
+        y: q1.w * q2.y - q1.x * q2.z + q1.y * q2.w + q1.z * q2.x,
+        z: q1.w * q2.z + q1.x * q2.y - q1.y * q2.x + q1.z * q2.w,
+        w: q1.w * q2.w - q1.x * q2.x - q1.y * q2.y - q1.z * q2.z
+      }
+    }
+
+    const quatConjugate = (q: { x: number; y: number; z: number; w: number }): { x: number; y: number; z: number; w: number } => {
+      return { x: -q.x, y: -q.y, z: -q.z, w: q.w }
+    }
+
+    const rotateVector = (v: [number, number, number], q: { x: number; y: number; z: number; w: number }): [number, number, number] => {
+      // q * v * q^-1，其中 v 是纯四元数 (x, y, z, 0)
+      const qv = { x: v[0], y: v[1], z: v[2], w: 0 }
+      const qConj = quatConjugate(q)
+      const qvq = quatMultiply(quatMultiply(q, qv), qConj)
+      return [qvq.x, qvq.y, qvq.z]
+    }
+
+    const createRotationQuaternion = (axis: 'x' | 'y' | 'z', angle: number): { x: number; y: number; z: number; w: number } => {
+      const halfAngle = angle / 2
+      const s = Math.sin(halfAngle)
+      const c = Math.cos(halfAngle)
+      switch (axis) {
+        case 'x':
+          return { x: s, y: 0, z: 0, w: c }
+        case 'y':
+          return { x: 0, y: s, z: 0, w: c }
+        case 'z':
+          return { x: 0, y: 0, z: s, w: c }
+      }
+    }
+
+    const allAxes: any[] = []
+
+    // 遍历历史位姿列表，为每个位姿生成 axes
+    for (let i = 0; i < poseHistory.length; i++) {
+      const poseItem = poseHistory[i]
+      if (!poseItem) continue
+      const posePosition = poseItem.position
+      const poseOrientation = poseItem.orientation
+      const frameQuat = { x: poseOrientation.x, y: poseOrientation.y, z: poseOrientation.z, w: poseOrientation.w }
+
+      if (shape === 'Axes') {
+        // X轴：红色，沿 frame 的 X 方向
+        const xAxisBaseRotation = createRotationQuaternion('y', -Math.PI / 2)
+        const xAxisQuat = quatMultiply(frameQuat, xAxisBaseRotation)
+        const xAxisDir = rotateVector([1, 0, 0], frameQuat)
+
+        allAxes.push({
+          pose: {
+            position: {
+              x: posePosition.x + xAxisDir[0] * axesLength / 2,
+              y: posePosition.y + xAxisDir[1] * axesLength / 2,
+              z: posePosition.z + xAxisDir[2] * axesLength / 2
+            },
+            orientation: xAxisQuat
+          },
+          points: [{ x: 0, y: 0, z: 0 }],
+          scale: { x: axesRadius, y: axesRadius, z: axesLength },
+          color: { r: 1.0, g: 0.0, b: 0.0, a: alpha }
+        })
+
+        // Y轴：绿色，沿 frame 的 Y 方向
+        const yAxisBaseRotation = createRotationQuaternion('x', -Math.PI / 2)
+        const yAxisQuat = quatMultiply(frameQuat, yAxisBaseRotation)
+        const yAxisDir = rotateVector([0, 1, 0], frameQuat)
+
+        allAxes.push({
+          pose: {
+            position: {
+              x: posePosition.x + yAxisDir[0] * axesLength / 2,
+              y: posePosition.y + yAxisDir[1] * axesLength / 2,
+              z: posePosition.z + yAxisDir[2] * axesLength / 2
+            },
+            orientation: yAxisQuat
+          },
+          points: [{ x: 0, y: 0, z: 0 }],
+          scale: { x: axesRadius, y: axesRadius, z: axesLength },
+          color: { r: 0.0, g: 1.0, b: 0.0, a: alpha }
+        })
+
+        // Z轴：蓝色，沿 frame 的 Z 方向
+        const zAxisDir = rotateVector([0, 0, 1], frameQuat)
+
+        allAxes.push({
+          pose: {
+            position: {
+              x: posePosition.x + zAxisDir[0] * axesLength / 2,
+              y: posePosition.y + zAxisDir[1] * axesLength / 2,
+              z: posePosition.z + zAxisDir[2] * axesLength / 2
+            },
+            orientation: { x: poseOrientation.x, y: poseOrientation.y, z: poseOrientation.z, w: poseOrientation.w }
+          },
+          points: [{ x: 0, y: 0, z: 0 }],
+          scale: { x: axesRadius, y: axesRadius, z: axesLength },
+          color: { r: 0.0, g: 0.0, b: 1.0, a: alpha }
+        })
+      }
+    }
+
+    return {
+      type: 'odometryProcessed',
+      componentId,
+      axes: allAxes
+    }
+  } catch (error: any) {
+    return {
+      type: 'odometryProcessed',
+      componentId: request.componentId,
+      axes: [],
+      error: error?.message || 'Unknown error'
+    }
+  }
+}
+
+/**
  * 处理路径数据
  */
 function processPath(request: PathProcessRequest): PathProcessResult {
@@ -1084,6 +1237,9 @@ self.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
         break
       case 'processTF':
         response = processTF(request)
+        break
+      case 'processOdometry':
+        response = processOdometry(request)
         break
       case 'processLaserScan':
         response = processLaserScan(request)

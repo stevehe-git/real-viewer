@@ -16,7 +16,9 @@ import type {
   LaserScanProcessRequest,
   LaserScanProcessResult,
   PointCloud2ProcessRequest,
-  PointCloud2ProcessResult
+  PointCloud2ProcessResult,
+  OdometryProcessRequest,
+  OdometryProcessResult
 } from './dataProcessor.worker'
 
 export class DataProcessorWorker {
@@ -241,6 +243,25 @@ export class DataProcessorWorker {
 
     // TF 处理使用固定的 requestId，新的请求会取消旧的
     const requestId = 'tf_process'
+    return this.sendRequest(requestId, request, 5000)
+  }
+
+  /**
+   * 处理 Odometry 数据（异步）
+   */
+  async processOdometry(request: OdometryProcessRequest): Promise<OdometryProcessResult> {
+    if (!this.worker) {
+      // 回退到主线程处理（简化实现，直接返回空数据）
+      return {
+        type: 'odometryProcessed',
+        componentId: request.componentId,
+        axes: [],
+        error: 'Odometry processing requires Worker'
+      }
+    }
+
+    // Odometry 处理使用 componentId 作为 requestId，新的请求会取消旧的
+    const requestId = `odometry_${request.componentId}`
     return this.sendRequest(requestId, request, 5000)
   }
 

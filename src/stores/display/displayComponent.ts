@@ -79,7 +79,7 @@ export function getDefaultOptions(type: string): Record<string, any> {
     odometry: {
       topic: '/odom',
       unreliable: false,
-      queueSize: 1,
+      queueSize: 10,
       positionTolerance: 0.1,
       angleTolerance: 0.1,
       keep: 1,
