@@ -192,6 +192,7 @@ import AxesConfig from './axes/AxesConfig.vue'
 import CameraConfig from './camera/CameraConfig.vue'
 import MapConfig from './map/MapConfig.vue'
 import PathConfig from './path/PathConfig.vue'
+import OdometryConfig from './odometry/OdometryConfig.vue'
 import MarkerConfig from './mark/MarkerConfig.vue'
 import ImageConfig from './image/ImageConfig.vue'
 import LaserScanConfig from './laser-scan/LaserScanConfig.vue'
@@ -207,7 +208,7 @@ const rvizStore = useRvizStore()
 const displayComponents = computed(() => rvizStore.displayComponents)
 
 // 需要订阅话题的组件类型
-const TOPIC_COMPONENT_TYPES = ['map', 'path', 'laserscan', 'pointcloud2', 'marker', 'image', 'camera']
+const TOPIC_COMPONENT_TYPES = ['map', 'path', 'odometry', 'laserscan', 'pointcloud2', 'marker', 'image', 'camera']
 
 // 为每个组件维护 useTopicSubscription 实例
 // 类型：Map<componentId, useTopicSubscription返回值>
@@ -506,6 +507,7 @@ function getConfigComponent(type: string) {
     camera: CameraConfig,
     map: MapConfig,
     path: PathConfig,
+    odometry: OdometryConfig,
     marker: MarkerConfig,
     image: ImageConfig,
     laserscan: LaserScanConfig,

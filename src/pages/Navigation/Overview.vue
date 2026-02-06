@@ -258,6 +258,27 @@ watch(
                 sceneManager.setPathOptions(options, componentId)
                 worldview.markDirty()
               },
+              updateOdometry: (message: any, componentId: string) => {
+                sceneManager.updateOdometry(message, componentId)
+                worldview.markDirty()
+              },
+              removeOdometry: (componentId: string) => {
+                sceneManager.removeOdometry(componentId)
+                worldview.markDirty()
+              },
+              setOdometryOptions: (options: {
+                shape?: string
+                axesLength?: number
+                axesRadius?: number
+                color?: string
+                alpha?: number
+                positionTolerance?: number
+                angleTolerance?: number
+                keep?: number
+              }, componentId: string) => {
+                sceneManager.setOdometryOptions(options, componentId)
+                worldview.markDirty()
+              },
               finalPaint: () => {
                 // 最终渲染，清理后只渲染一次
                 worldview.markDirty()

@@ -42,6 +42,7 @@ export class TopicSubscriptionManager {
     map: 'nav_msgs/OccupancyGrid',
     map_updates: 'map_msgs/OccupancyGridUpdate', // costmap_updates 消息类型
     path: 'nav_msgs/Path',
+    odometry: 'nav_msgs/Odometry',
     laserscan: 'sensor_msgs/LaserScan',
     pointcloud2: 'sensor_msgs/PointCloud2',
     marker: 'visualization_msgs/Marker',

@@ -82,7 +82,8 @@ const COMPONENT_MESSAGE_TYPES: Record<string, string> = {
   image: 'sensor_msgs/Image',
   camera: 'sensor_msgs/Image',
   map: 'nav_msgs/OccupancyGrid',
-  path: 'nav_msgs/Path',
+    path: 'nav_msgs/Path',
+    odometry: 'nav_msgs/Odometry',
   laserscan: 'sensor_msgs/LaserScan',
   pointcloud2: 'sensor_msgs/PointCloud2',
   marker: 'visualization_msgs/Marker'

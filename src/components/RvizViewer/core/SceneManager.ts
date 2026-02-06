@@ -48,6 +48,18 @@ export class SceneManager {
     poseStyle?: string
   }>() // 每个 Path 的配置
   private pathInstancesMap = new Map<string, any>() // 支持多个 Path 实例，key 为 componentId
+  private odometryDataMap = new Map<string, any>() // 支持多个 Odometry，key 为 componentId
+  private odometryConfigMap = new Map<string, {
+    shape?: string
+    axesLength?: number
+    axesRadius?: number
+    color?: string
+    alpha?: number
+    positionTolerance?: number
+    angleTolerance?: number
+    keep?: number
+  }>() // 每个 Odometry 的配置
+  private odometryInstancesMap = new Map<string, any>() // 支持多个 Odometry 实例，key 为 componentId
   private mapTextureDataMap = new Map<string, any>() // 地图纹理数据，key 为 componentId
   private mapConfigMap = new Map<string, { alpha?: number; colorScheme?: string; drawBehind?: boolean }>() // 每个地图的配置
   private mapTopicMap = new Map<string, string>() // 每个地图的话题名称，key 为 componentId，用于排序
@@ -452,6 +464,40 @@ export class SceneManager {
         layerIndex: 5.6
       })
     }
+
+    // 注册 Odometry（使用 Cylinders 渲染 Axes）
+    this.odometryDataMap.forEach((odometryData, componentId) => {
+      if (this.cylindersCommand && odometryData && odometryData.axes && odometryData.axes.length > 0) {
+        if (!this.odometryInstancesMap.has(componentId)) {
+          this.odometryInstancesMap.set(componentId, { displayName: `Odometry-${componentId}` })
+        }
+        const instance = this.odometryInstancesMap.get(componentId)
+        this.worldviewContext.onMount(instance, cylinders)
+        
+        // 调试日志
+        console.log(`[Odometry Debug] registerDrawCall for ${componentId}:`, {
+          hasInstance: !!instance,
+          hasCylindersCommand: !!this.cylindersCommand,
+          axesCount: odometryData.axes.length,
+          firstAxis: odometryData.axes[0]
+        })
+        
+        this.worldviewContext.registerDrawCall({
+          instance: instance,
+          reglCommand: cylinders,
+          children: odometryData.axes,
+          layerIndex: 6
+        })
+      } else {
+        // 调试日志：为什么没有注册
+        console.log(`[Odometry Debug] Skipping registerDrawCall for ${componentId}:`, {
+          hasCylindersCommand: !!this.cylindersCommand,
+          hasOdometryData: !!odometryData,
+          hasAxes: !!(odometryData && odometryData.axes),
+          axesLength: odometryData?.axes?.length || 0
+        })
+      }
+    })
   }
 
   /**
@@ -846,6 +892,209 @@ export class SceneManager {
     // 如果有数据，需要重新处理以应用新配置
     // 这里只更新绘制调用，让外部调用者负责重新获取消息
     if (this.pathDataMap.has(componentId)) {
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
+    }
+  }
+
+  /**
+   * 更新 Odometry 数据（从 ROS nav_msgs/Odometry 消息）
+   * @param message ROS Odometry 消息
+   * @param componentId 组件ID
+   */
+  updateOdometry(message: any, componentId: string): void {
+    if (!componentId) {
+      console.warn('updateOdometry: componentId is required')
+      return
+    }
+
+    if (!message || !message.pose || !message.pose.pose) {
+      // 消息无效，清除数据
+      this.odometryDataMap.delete(componentId)
+      this.registerDrawCalls()
+      this.worldviewContext.onDirty()
+      return
+    }
+
+    // 确保 cylindersCommand 已初始化（即使 Axes 被禁用，Odometry 也需要它）
+    if (!this.cylindersCommand) {
+      this.cylindersCommand = cylinders(this.reglContext)
+    }
+
+    // 获取配置
+    const config = this.odometryConfigMap.get(componentId) || {}
+    const shape = config.shape || 'Axes'
+    const axesLength = config.axesLength ?? 1.0
+    const axesRadius = config.axesRadius ?? 0.1
+    const alpha = config.alpha ?? 1.0
+
+    // 获取位姿
+    const pose = message.pose.pose
+    const position = pose.position || { x: 0, y: 0, z: 0 }
+    const orientation = pose.orientation || { x: 0, y: 0, z: 0, w: 1 }
+
+    // 创建旋转四元数辅助函数
+    const createRotationQuaternion = (axis: 'x' | 'y' | 'z', angle: number) => {
+      const q = quat.create()
+      switch (axis) {
+        case 'x':
+          quat.setAxisAngle(q, [1, 0, 0], angle)
+          break
+        case 'y':
+          quat.setAxisAngle(q, [0, 1, 0], angle)
+          break
+        case 'z':
+          quat.setAxisAngle(q, [0, 0, 1], angle)
+          break
+      }
+      return { x: q[0], y: q[1], z: q[2], w: q[3] }
+    }
+
+    // 将位姿四元数转换为对象格式
+    const frameQuat = { x: orientation.x, y: orientation.y, z: orientation.z, w: orientation.w }
+    
+    // 旋转向量辅助函数（使用四元数旋转）
+    const rotateVector = (v: [number, number, number], q: { x: number; y: number; z: number; w: number }): [number, number, number] => {
+      // q * v * q^-1
+      const qv = { x: v[0], y: v[1], z: v[2], w: 0 }
+      const qConj = { x: -q.x, y: -q.y, z: -q.z, w: q.w }
+      const qvq = multiplyQuaternions(multiplyQuaternions(q, qv), qConj)
+      return [qvq.x, qvq.y, qvq.z]
+    }
+
+    // 四元数乘法辅助函数
+    const multiplyQuaternions = (q1: { x: number; y: number; z: number; w: number }, q2: { x: number; y: number; z: number; w: number }): { x: number; y: number; z: number; w: number } => {
+      const result = quat.multiply([0, 0, 0, 1], [q1.x, q1.y, q1.z, q1.w], [q2.x, q2.y, q2.z, q2.w])
+      return { x: result[0], y: result[1], z: result[2], w: result[3] }
+    }
+
+    const axes: any[] = []
+
+    if (shape === 'Axes') {
+      // X轴：红色，沿 frame 的 X 方向
+      const xAxisBaseRotation = createRotationQuaternion('y', -Math.PI / 2)
+      const xAxisQuat = multiplyQuaternions(frameQuat, xAxisBaseRotation)
+      const xAxisDir = rotateVector([1, 0, 0], frameQuat)
+
+      axes.push({
+        pose: {
+          position: {
+            x: position.x + xAxisDir[0] * axesLength / 2,
+            y: position.y + xAxisDir[1] * axesLength / 2,
+            z: position.z + xAxisDir[2] * axesLength / 2
+          },
+          orientation: xAxisQuat
+        },
+        points: [{ x: 0, y: 0, z: 0 }],
+        scale: { x: axesRadius, y: axesRadius, z: axesLength },
+        color: { r: 1.0, g: 0.0, b: 0.0, a: alpha }
+      })
+
+      // Y轴：绿色，沿 frame 的 Y 方向
+      const yAxisBaseRotation = createRotationQuaternion('x', -Math.PI / 2)
+      const yAxisQuat = multiplyQuaternions(frameQuat, yAxisBaseRotation)
+      const yAxisDir = rotateVector([0, 1, 0], frameQuat)
+
+      axes.push({
+        pose: {
+          position: {
+            x: position.x + yAxisDir[0] * axesLength / 2,
+            y: position.y + yAxisDir[1] * axesLength / 2,
+            z: position.z + yAxisDir[2] * axesLength / 2
+          },
+          orientation: yAxisQuat
+        },
+        points: [{ x: 0, y: 0, z: 0 }],
+        scale: { x: axesRadius, y: axesRadius, z: axesLength },
+        color: { r: 0.0, g: 1.0, b: 0.0, a: alpha }
+      })
+
+      // Z轴：蓝色，沿 frame 的 Z 方向
+      const zAxisDir = rotateVector([0, 0, 1], frameQuat)
+
+      axes.push({
+        pose: {
+          position: {
+            x: position.x + zAxisDir[0] * axesLength / 2,
+            y: position.y + zAxisDir[1] * axesLength / 2,
+            z: position.z + zAxisDir[2] * axesLength / 2
+          },
+          orientation: { x: orientation.x, y: orientation.y, z: orientation.z, w: orientation.w }
+        },
+        points: [{ x: 0, y: 0, z: 0 }],
+        scale: { x: axesRadius, y: axesRadius, z: axesLength },
+        color: { r: 0.0, g: 0.0, b: 1.0, a: alpha }
+      })
+    }
+
+    // 保存处理后的数据
+    this.odometryDataMap.set(componentId, { axes })
+    
+    // 调试日志
+    console.log(`[Odometry Debug] updateOdometry for ${componentId}:`, {
+      axesCount: axes.length,
+      hasCylindersCommand: !!this.cylindersCommand,
+      hasReglContext: !!this.reglContext,
+      firstAxis: axes.length > 0 ? {
+        position: axes[0].pose.position,
+        orientation: axes[0].pose.orientation,
+        scale: axes[0].scale,
+        color: axes[0].color,
+        hasPoints: !!axes[0].points
+      } : null
+    })
+    
+    // 更新绘制调用
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
+  }
+
+  /**
+   * 移除 Odometry 数据
+   * @param componentId 组件ID
+   */
+  removeOdometry(componentId: string): void {
+    this.odometryDataMap.delete(componentId)
+    this.odometryConfigMap.delete(componentId)
+    const instance = this.odometryInstancesMap.get(componentId)
+    if (instance) {
+      this.worldviewContext.onUnmount(instance)
+      this.odometryInstancesMap.delete(componentId)
+    }
+    this.registerDrawCalls()
+    this.worldviewContext.onDirty()
+  }
+
+  /**
+   * 设置 Odometry 配置选项
+   * @param options 配置选项
+   * @param componentId 组件ID
+   */
+  setOdometryOptions(options: {
+    shape?: string
+    axesLength?: number
+    axesRadius?: number
+    color?: string
+    alpha?: number
+    positionTolerance?: number
+    angleTolerance?: number
+    keep?: number
+  }, componentId: string): void {
+    if (!componentId) {
+      console.warn('setOdometryOptions: componentId is required')
+      return
+    }
+
+    // 更新配置
+    const currentConfig = this.odometryConfigMap.get(componentId) || {}
+    this.odometryConfigMap.set(componentId, {
+      ...currentConfig,
+      ...options
+    })
+
+    // 如果有数据，需要重新处理以应用新配置
+    // 这里只更新绘制调用，让外部调用者负责重新获取消息
+    if (this.odometryDataMap.has(componentId)) {
       this.registerDrawCalls()
       this.worldviewContext.onDirty()
     }

@@ -36,6 +36,8 @@ export class ROSDataConverter {
         return Array.isArray(message.data) ? message.data.length > 0 : typeof message.data === 'string' && message.data.length > 0
       case 'path':
         return !!(message.poses && Array.isArray(message.poses) && message.poses.length > 0)
+      case 'odometry':
+        return !!(message.pose && message.pose.pose)
       case 'laserscan':
         return !!(message.ranges && Array.isArray(message.ranges) && message.ranges.length > 0)
       case 'pointcloud2':

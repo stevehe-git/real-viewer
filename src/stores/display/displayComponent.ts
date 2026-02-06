@@ -76,6 +76,20 @@ export function getDefaultOptions(type: string): Record<string, any> {
       offsetZ: 0,
       poseStyle: 'None'
     },
+    odometry: {
+      topic: '/odom',
+      unreliable: false,
+      queueSize: 1,
+      positionTolerance: 0.1,
+      angleTolerance: 0.1,
+      keep: 1,
+      shape: 'Axes',
+      axesLength: 1,
+      axesRadius: 0.1,
+      covariance: true,
+      positionCovariance: true,
+      orientationCovariance: true
+    },
     marker: {
       topic: '/marker',
       queueSize: 100

@@ -181,6 +181,13 @@ const categories = ref([
         category: 'rviz'
       },
       {
+        id: 'odometry',
+        name: 'Odometry',
+        icon: markRaw(Position),
+        description: 'Displays the pose from a nav_msgs/Odometry message.',
+        category: 'rviz'
+      },
+      {
         id: 'marker',
         name: 'Marker',
         icon: markRaw(Location),

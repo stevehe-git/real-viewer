@@ -84,6 +84,18 @@ export interface DisplaySyncContext {
     offsetZ?: number
     poseStyle?: string
   }, componentId: string) => void
+  updateOdometry?: (message: any, componentId: string) => void | Promise<void>
+  removeOdometry?: (componentId: string) => void
+  setOdometryOptions?: (options: {
+    shape?: string
+    axesLength?: number
+    axesRadius?: number
+    color?: string
+    alpha?: number
+    positionTolerance?: number
+    angleTolerance?: number
+    keep?: number
+  }, componentId: string) => void
   finalPaint?: () => void
   setTFVisible?: (visible: boolean) => void
   setTFOptions?: (options: {
@@ -451,6 +463,59 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
   }
 
   /**
+   * 同步 Odometry 显示状态（支持多个 Odometry）
+   */
+  function syncOdometryDisplay(previousOdometryIds?: Set<string>): Set<string> {
+    const odometryComponents = rvizStore.displayComponents.filter(c => c.type === 'odometry')
+    const currentOdometryIds = new Set(odometryComponents.map(c => c.id))
+    
+    // 清理已删除的 Odometry 组件数据
+    if (previousOdometryIds) {
+      previousOdometryIds.forEach(componentId => {
+        if (!currentOdometryIds.has(componentId)) {
+          if (context.removeOdometry) {
+            context.removeOdometry(componentId)
+          }
+        }
+      })
+    }
+    
+    // 处理每个 Odometry 组件
+    odometryComponents.forEach((odometryComponent) => {
+      if (odometryComponent.enabled) {
+        const options = odometryComponent.options || {}
+        
+        // 更新 Odometry 配置选项
+        if (context.setOdometryOptions) {
+          context.setOdometryOptions({
+            shape: options.shape,
+            axesLength: options.axesLength,
+            axesRadius: options.axesRadius,
+            color: options.color,
+            alpha: options.alpha,
+            positionTolerance: options.positionTolerance,
+            angleTolerance: options.angleTolerance,
+            keep: options.keep
+          }, odometryComponent.id)
+        }
+
+        // 获取 Odometry 数据并更新
+        const odometryMessage = topicSubscriptionManager.getLatestMessage(odometryComponent.id)
+        if (odometryMessage && context.updateOdometry) {
+          context.updateOdometry(odometryMessage, odometryComponent.id)
+        }
+      } else {
+        // Odometry 组件被禁用，移除数据
+        if (context.removeOdometry) {
+          context.removeOdometry(odometryComponent.id)
+        }
+      }
+    })
+    
+    return currentOdometryIds
+  }
+
+  /**
    * 同步 TF 显示状态
    */
   function syncTFDisplay(): void {
@@ -502,12 +567,14 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
     pointCloudIds?: Set<string>
     pointCloud2Ids?: Set<string>
     pathIds?: Set<string>
+    odometryIds?: Set<string>
   }): {
     mapIds: Set<string>
     laserScanIds: Set<string>
     pointCloudIds: Set<string>
     pointCloud2Ids: Set<string>
     pathIds: Set<string>
+    odometryIds: Set<string>
   } {
     syncGridDisplay()
     syncAxesDisplay()
@@ -1125,6 +1192,53 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
           if (!currentPathIds.has(pathComponent.id)) {
             if (context.removePath) {
               context.removePath(pathComponent.id)
+            }
+          }
+        })
+    },
+    { immediate: true, deep: false }
+  )
+
+  // 监听所有 Odometry 组件的数据变化（从 topicSubscriptionManager）
+  watch(
+    () => {
+      const odometryComponents = rvizStore.displayComponents.filter(c => c.type === 'odometry')
+      const trigger = topicSubscriptionManager.getStatusUpdateTrigger()
+      trigger.value
+      
+      // 只处理enabled为true的组件，enabled为false时不处理数据更新
+      const messages: Record<string, { message: any; timestamp: number }> = {}
+      odometryComponents.forEach(odometryComponent => {
+        if (odometryComponent.enabled) {
+          const message = topicSubscriptionManager.getLatestMessage(odometryComponent.id)
+          if (message) {
+            const timestamp = message.header?.stamp?.sec 
+              ? message.header.stamp.sec * 1000 + (message.header.stamp.nsec || 0) / 1000000
+              : Date.now()
+            messages[odometryComponent.id] = { message, timestamp }
+          }
+        }
+        // enabled为false时，不处理数据更新，也不添加到messages中
+      })
+      return messages
+    },
+    (odometryMessages) => {
+      Object.entries(odometryMessages).forEach(([componentId, { message }]) => {
+        if (message && context.updateOdometry) {
+          context.updateOdometry(message, componentId)
+        }
+      })
+      
+      // 移除已删除的 Odometry
+      // 注意：enabled为false的组件已经在syncOdometryDisplay中通过removeOdometry处理，这里只处理真正删除的组件
+      const currentOdometryIds = new Set(Object.keys(odometryMessages))
+      rvizStore.displayComponents
+        .filter(c => c.type === 'odometry')
+        .forEach(odometryComponent => {
+          // 只处理真正删除的组件（不在currentOdometryIds中），enabled为false的组件不在这里处理
+          if (!currentOdometryIds.has(odometryComponent.id)) {
+            if (context.removeOdometry) {
+              context.removeOdometry(odometryComponent.id)
             }
           }
         })
