@@ -1,101 +1,11 @@
 /**
  * Grid 命令
  * 完全基于 regl-worldview 的 Grid.js 实现
- * 性能优化：使用 regl buffer 缓存顶点数据，避免每帧重新计算
  */
 import type { Regl } from '../../types'
-import { withPose, defaultBlend } from './utils/commandUtils'
+import { withPose } from './utils/commandUtils'
 
 const DEFAULT_GRID_COLOR: [number, number, number, number] = [0.3, 0.3, 0.3, 1]
-
-// 缓存网格数据，避免每帧重新计算
-interface CachedGridData {
-  count: number
-  cellSize: number
-  color: [number, number, number, number]
-  pointBuffer: any
-  colorBuffer: any
-  totalCount: number
-}
-
-const gridCache = new Map<string, CachedGridData>()
-
-function getCacheKey(count: number, cellSize: number, color: [number, number, number, number]): string {
-  return `${count}_${cellSize}_${color.join(',')}`
-}
-
-function generateGridData(
-  regl: Regl,
-  count: number,
-  cellSize: number,
-  color: [number, number, number, number]
-): CachedGridData {
-  const cacheKey = getCacheKey(count, cellSize, color)
-  const cached = gridCache.get(cacheKey)
-  if (cached) {
-    return cached
-  }
-
-  const points: number[] = []
-  const colors: number[] = []
-  const bound = count * cellSize
-  
-  // 绘制内部网格线
-  for (let i = -count; i <= count; i++) {
-    const pos = i * cellSize
-    // 垂直线
-    points.push(-bound, pos, 0)
-    points.push(bound, pos, 0)
-    // 水平线
-    points.push(pos, -bound, 0)
-    points.push(pos, bound, 0)
-    // 每个点对应一个颜色
-    colors.push(color[0], color[1], color[2], color[3] || 1.0)
-    colors.push(color[0], color[1], color[2], color[3] || 1.0)
-    colors.push(color[0], color[1], color[2], color[3] || 1.0)
-    colors.push(color[0], color[1], color[2], color[3] || 1.0)
-  }
-  
-  // 绘制边界框（封边）
-  // 左边界
-  points.push(-bound, -bound, 0)
-  points.push(-bound, bound, 0)
-  colors.push(color[0], color[1], color[2], color[3] || 1.0)
-  colors.push(color[0], color[1], color[2], color[3] || 1.0)
-  // 右边界
-  points.push(bound, -bound, 0)
-  points.push(bound, bound, 0)
-  colors.push(color[0], color[1], color[2], color[3] || 1.0)
-  colors.push(color[0], color[1], color[2], color[3] || 1.0)
-  // 下边界
-  points.push(-bound, -bound, 0)
-  points.push(bound, -bound, 0)
-  colors.push(color[0], color[1], color[2], color[3] || 1.0)
-  colors.push(color[0], color[1], color[2], color[3] || 1.0)
-  // 上边界
-  points.push(-bound, bound, 0)
-  points.push(bound, bound, 0)
-  colors.push(color[0], color[1], color[2], color[3] || 1.0)
-  colors.push(color[0], color[1], color[2], color[3] || 1.0)
-  
-  const totalCount = points.length / 3
-  
-  // 创建 regl buffer 缓存数据
-  const pointBuffer = regl.buffer(points)
-  const colorBuffer = regl.buffer(colors)
-  
-  const cachedData: CachedGridData = {
-    count,
-    cellSize,
-    color,
-    pointBuffer,
-    colorBuffer,
-    totalCount
-  }
-  
-  gridCache.set(cacheKey, cachedData)
-  return cachedData
-}
 
 export function grid(regl: Regl) {
   if (!regl) {
@@ -106,7 +16,6 @@ export function grid(regl: Regl) {
     vert: `
     precision mediump float;
     uniform mat4 projection, view;
-    #WITH_POSE
 
     attribute vec3 point;
     attribute vec4 color;
@@ -114,10 +23,7 @@ export function grid(regl: Regl) {
 
     void main () {
       fragColor = color;
-      vec3 p = applyPose(point);
-      // 关键修复：网格在 Z=0.0001，确保网格在地图（Z=0）上方可见
-      // 这个微小的偏移确保网格不会被地图遮挡
-      p.z = p.z + 0.0001;
+      vec3 p = point;
       gl_Position = projection * view * vec4(p, 1);
     }
     `,
@@ -131,35 +37,49 @@ export function grid(regl: Regl) {
     primitive: 'lines',
     attributes: {
       point: (context: any, props: any) => {
-        const count = props.count || 5
-        const cellSize = props.cellSize || 1.0
-        const color = props.color || DEFAULT_GRID_COLOR
-        const cachedData = generateGridData(regl, count, cellSize, color)
-        return cachedData.pointBuffer
+        const points: number[][] = []
+        const bound = props.count
+        
+        // 绘制内部网格线
+        for (let i = -props.count; i < props.count; i++) {
+          // 垂直线
+          points.push([-bound, i, 0])
+          points.push([bound, i, 0])
+          // 水平线
+          points.push([i, -bound, 0])
+          points.push([i, bound, 0])
+        }
+        
+        // 绘制边界框（封边）
+        // 左边界
+        points.push([-bound, -bound, 0])
+        points.push([-bound, bound, 0])
+        // 右边界
+        points.push([bound, -bound, 0])
+        points.push([bound, bound, 0])
+        // 下边界
+        points.push([-bound, -bound, 0])
+        points.push([bound, -bound, 0])
+        // 上边界
+        points.push([-bound, bound, 0])
+        points.push([bound, bound, 0])
+        
+        return points
       },
       color: (context: any, props: any) => {
-        const count = props.count || 5
-        const cellSize = props.cellSize || 1.0
         const color = props.color || DEFAULT_GRID_COLOR
-        const cachedData = generateGridData(regl, count, cellSize, color)
-        return cachedData.colorBuffer
+        // 内部网格线：props.count * 4 * 2 个点
+        // 边界框：8 个点（4条边，每条边2个点）
+        const totalPoints = props.count * 4 * 2 + 8
+        return new Array(totalPoints).fill(color)
       }
     },
     count: (context: any, props: any) => {
-      const count = props.count || 5
-      const cellSize = props.cellSize || 1.0
-      const color = props.color || DEFAULT_GRID_COLOR
-      const cachedData = generateGridData(regl, count, cellSize, color)
-      return cachedData.totalCount
-    },
-    // 深度测试配置：确保网格能正确渲染
-    // 网格在 Z=0，启用深度测试和深度写入，确保网格能正确与地图交互
-    depth: {
-      enable: true,
-      mask: true, // 启用深度写入，确保网格能正确与地图交互
-      func: 'lequal' // 使用 'lequal' 允许相同或更近的深度渲染
-    },
-    blend: defaultBlend
+      // 内部网格线：props.count * 4 * 2 个点
+      // 边界框：8 个点
+      const count = props.count * 4 * 2 + 8
+      return count
+    }
   })
 }
 
