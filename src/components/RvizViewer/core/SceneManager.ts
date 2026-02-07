@@ -70,6 +70,10 @@ export class SceneManager {
     positionTolerance?: number
     angleTolerance?: number
     keep?: number
+    pointSize?: number
+    pointColor?: string
+    arrowColor?: string
+    arrowShaftRadius?: number
   }>() // 每个 Odometry 的配置
   private odometryInstancesMap = new Map<string, any>() // 支持多个 Odometry 实例，key 为 componentId
   private mapTextureDataMap = new Map<string, any>() // 地图纹理数据，key 为 componentId
@@ -541,36 +545,37 @@ export class SceneManager {
       })
     }
 
-    // 注册 Odometry（使用 Cylinders 渲染 Axes）
+    // 注册 Odometry（根据形状类型使用不同的渲染命令）
     this.odometryDataMap.forEach((odometryData, componentId) => {
-      if (this.cylindersCommand && odometryData && odometryData.axes && odometryData.axes.length > 0) {
-        if (!this.odometryInstancesMap.has(componentId)) {
-          this.odometryInstancesMap.set(componentId, { displayName: `Odometry-${componentId}` })
-        }
-        const instance = this.odometryInstancesMap.get(componentId)
+      if (!this.odometryInstancesMap.has(componentId)) {
+        this.odometryInstancesMap.set(componentId, { displayName: `Odometry-${componentId}` })
+      }
+      const instance = this.odometryInstancesMap.get(componentId)
+      const shape = odometryData?.shape || 'Axes'
+
+      if (shape === 'Axes' && this.cylindersCommand && odometryData?.axes && odometryData.axes.length > 0) {
         this.worldviewContext.onMount(instance, cylinders)
-        
-        // // 调试日志
-        // console.log(`[Odometry Debug] registerDrawCall for ${componentId}:`, {
-        //   hasInstance: !!instance,
-        //   hasCylindersCommand: !!this.cylindersCommand,
-        //   axesCount: odometryData.axes.length,
-        //   firstAxis: odometryData.axes[0]
-        // })
-        
         this.worldviewContext.registerDrawCall({
           instance: instance,
           reglCommand: cylinders,
           children: odometryData.axes,
           layerIndex: 6
         })
-      } else {
-        // 调试日志：为什么没有注册
-        console.log(`[Odometry Debug] Skipping registerDrawCall for ${componentId}:`, {
-          hasCylindersCommand: !!this.cylindersCommand,
-          hasOdometryData: !!odometryData,
-          hasAxes: !!(odometryData && odometryData.axes),
-          axesLength: odometryData?.axes?.length || 0
+      } else if (shape === 'Arrow' && this.arrowsCommand && this.arrowsCommandFactory && odometryData?.arrows && odometryData.arrows.length > 0) {
+        this.worldviewContext.onMount(instance, this.arrowsCommandFactory)
+        this.worldviewContext.registerDrawCall({
+          instance: instance,
+          reglCommand: this.arrowsCommandFactory,
+          children: odometryData.arrows,
+          layerIndex: 6
+        })
+      } else if (shape === 'Point' && this.pointsCommandWithWorldSpace && odometryData?.points && odometryData.points.length > 0) {
+        this.worldviewContext.onMount(instance, this.pointsCommandWithWorldSpace)
+        this.worldviewContext.registerDrawCall({
+          instance: instance,
+          reglCommand: this.pointsCommandWithWorldSpace,
+          children: odometryData.points,
+          layerIndex: 6
         })
       }
     })
@@ -1007,6 +1012,10 @@ export class SceneManager {
     const keep = config.keep ?? defaultOptions.keep ?? 1
     const positionTolerance = config.positionTolerance ?? defaultOptions.positionTolerance ?? 0.1
     const angleTolerance = config.angleTolerance ?? defaultOptions.angleTolerance ?? 0.1
+    const pointSize = config.pointSize ?? defaultOptions.pointSize ?? 0.05
+    const pointColor = config.pointColor ?? defaultOptions.pointColor ?? '#ff0000'
+    const arrowColor = config.arrowColor ?? defaultOptions.arrowColor ?? '#ff0000'
+    const arrowShaftRadius = config.arrowShaftRadius ?? defaultOptions.arrowShaftRadius ?? 0.1
 
     // 获取位姿
     const pose = message.pose.pose
@@ -1101,6 +1110,10 @@ export class SceneManager {
           axesLength,
           axesRadius,
           alpha,
+          pointSize,
+          pointColor,
+          arrowColor,
+          arrowShaftRadius,
           ...(maxRenderCount !== undefined && { maxRenderCount })
         }
       })
@@ -1110,8 +1123,14 @@ export class SceneManager {
         return
       }
 
-      // 保存处理后的数据（包含所有历史位姿的 axes）
-      this.odometryDataMap.set(componentId, { axes: result.axes })
+      // 保存处理后的数据（根据形状类型保存对应的数据）
+      if (shape === 'Axes' && result.axes) {
+        this.odometryDataMap.set(componentId, { axes: result.axes, shape: 'Axes' })
+      } else if (shape === 'Arrow' && result.arrows) {
+        this.odometryDataMap.set(componentId, { arrows: result.arrows, shape: 'Arrow' })
+      } else if (shape === 'Point' && result.points) {
+        this.odometryDataMap.set(componentId, { points: result.points, shape: 'Point' })
+      }
       
       // 更新绘制调用
       this.registerDrawCalls()
@@ -1152,6 +1171,10 @@ export class SceneManager {
     positionTolerance?: number
     angleTolerance?: number
     keep?: number
+    pointSize?: number
+    pointColor?: string
+    arrowColor?: string
+    arrowShaftRadius?: number
   }, componentId: string): void {
     if (!componentId) {
       console.warn('setOdometryOptions: componentId is required')
@@ -1213,6 +1236,10 @@ export class SceneManager {
       axesLength?: number
       axesRadius?: number
       alpha?: number
+      pointSize?: number
+      pointColor?: string
+      arrowColor?: string
+      arrowShaftRadius?: number
     },
     poseHistory: Array<{ position: any; orientation: any; timestamp: number }>
   ): Promise<void> {
@@ -1220,6 +1247,19 @@ export class SceneManager {
     // 需要深拷贝 poseHistory 以确保数据可序列化
     try {
       const worker = getDataProcessorWorker()
+      
+      // 获取默认值并合并配置
+      const defaultOptions = getDefaultOptions('odometry')
+      const finalConfig = {
+        shape: config.shape || defaultOptions.shape || 'Axes',
+        axesLength: config.axesLength ?? defaultOptions.axesLength ?? 1.0,
+        axesRadius: config.axesRadius ?? defaultOptions.axesRadius ?? 0.1,
+        alpha: config.alpha ?? defaultOptions.alpha ?? 1.0,
+        pointSize: config.pointSize ?? defaultOptions.pointSize ?? 0.05,
+        pointColor: config.pointColor ?? defaultOptions.pointColor ?? '#ff0000',
+        arrowColor: config.arrowColor ?? defaultOptions.arrowColor ?? '#ff0000',
+        arrowShaftRadius: config.arrowShaftRadius ?? defaultOptions.arrowShaftRadius ?? 0.1
+      }
       
       // 深拷贝 poseHistory 以确保可序列化（避免传递不可序列化的对象）
       const serializablePoseHistory = poseHistory.map(pose => ({
@@ -1241,7 +1281,7 @@ export class SceneManager {
         type: 'processOdometry',
         componentId,
         poseHistory: serializablePoseHistory,
-        config
+        config: finalConfig
       })
 
       if (result.error) {
@@ -1249,8 +1289,15 @@ export class SceneManager {
         return
       }
 
-      // 保存处理后的数据（包含所有历史位姿的 axes）
-      this.odometryDataMap.set(componentId, { axes: result.axes })
+      // 保存处理后的数据（根据形状类型保存对应的数据）
+      const shape = finalConfig.shape || 'Axes'
+      if (shape === 'Axes' && result.axes) {
+        this.odometryDataMap.set(componentId, { axes: result.axes, shape: 'Axes' })
+      } else if (shape === 'Arrow' && result.arrows) {
+        this.odometryDataMap.set(componentId, { arrows: result.arrows, shape: 'Arrow' })
+      } else if (shape === 'Point' && result.points) {
+        this.odometryDataMap.set(componentId, { points: result.points, shape: 'Point' })
+      }
       
       // 更新绘制调用
       this.registerDrawCalls()

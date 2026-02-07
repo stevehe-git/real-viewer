@@ -79,35 +79,107 @@
           class="config-value-select"
         >
           <el-option label="Axes" value="Axes" />
+          <el-option label="Arrow" value="Arrow" />
+          <el-option label="Point" value="Point" />
         </el-select>
       </div>
       <div v-show="shapeExpanded" class="sub-item-content">
-        <div class="config-row">
-          <span class="config-label">Axes Length</span>
-          <el-input-number
-            :model-value="options.axesLength ?? 1"
-            @update:model-value="update('axesLength', $event)"
-            size="small"
-            :min="0.1"
-            :max="10"
-            :step="0.1"
-            :precision="1"
-            class="config-value"
-          />
-        </div>
-        <div class="config-row">
-          <span class="config-label">Axes Radius</span>
-          <el-input-number
-            :model-value="options.axesRadius ?? 0.1"
-            @update:model-value="update('axesRadius', $event)"
-            size="small"
-            :min="0.01"
-            :max="1"
-            :step="0.01"
-            :precision="2"
-            class="config-value"
-          />
-        </div>
+        <!-- Axes 配置 -->
+        <template v-if="(options.shape || 'Axes') === 'Axes'">
+          <div class="config-row">
+            <span class="config-label">Axes Length</span>
+            <el-input-number
+              :model-value="options.axesLength ?? 1"
+              @update:model-value="update('axesLength', $event)"
+              size="small"
+              :min="0.1"
+              :max="10"
+              :step="0.1"
+              :precision="1"
+              class="config-value"
+            />
+          </div>
+          <div class="config-row">
+            <span class="config-label">Axes Radius</span>
+            <el-input-number
+              :model-value="options.axesRadius ?? 0.1"
+              @update:model-value="update('axesRadius', $event)"
+              size="small"
+              :min="0.01"
+              :max="1"
+              :step="0.01"
+              :precision="2"
+              class="config-value"
+            />
+          </div>
+        </template>
+        <!-- Arrow 配置 -->
+        <template v-else-if="(options.shape || 'Axes') === 'Arrow'">
+          <div class="config-row">
+            <span class="config-label">Arrow Length</span>
+            <el-input-number
+              :model-value="options.axesLength ?? 1"
+              @update:model-value="update('axesLength', $event)"
+              size="small"
+              :min="0.1"
+              :max="10"
+              :step="0.1"
+              :precision="1"
+              class="config-value"
+            />
+          </div>
+          <div class="config-row">
+            <span class="config-label">Shaft Radius</span>
+            <el-input-number
+              :model-value="options.arrowShaftRadius ?? 0.1"
+              @update:model-value="update('arrowShaftRadius', $event)"
+              size="small"
+              :min="0.01"
+              :max="1"
+              :step="0.01"
+              :precision="2"
+              class="config-value"
+            />
+          </div>
+          <div class="config-row">
+            <span class="config-label">Arrow Color</span>
+            <div class="config-value color-config">
+              <el-color-picker
+                :model-value="options.arrowColor || '#ff0000'"
+                @update:model-value="update('arrowColor', $event)"
+                size="small"
+              />
+              <span class="color-text">{{ formatColor(options.arrowColor || '#ff0000') }}</span>
+            </div>
+          </div>
+        </template>
+        <!-- Point 配置 -->
+        <template v-else-if="(options.shape || 'Axes') === 'Point'">
+          <div class="config-row">
+            <span class="config-label">Point Size</span>
+            <el-input-number
+              :model-value="options.pointSize ?? 0.05"
+              @update:model-value="update('pointSize', $event)"
+              size="small"
+              :min="0.01"
+              :max="1"
+              :step="0.01"
+              :precision="2"
+              class="config-value"
+            />
+          </div>
+          <div class="config-row">
+            <span class="config-label">Point Color</span>
+            <div class="config-value color-config">
+              <el-color-picker
+                :model-value="options.pointColor || '#ff0000'"
+                @update:model-value="update('pointColor', $event)"
+                size="small"
+              />
+              <span class="color-text">{{ formatColor(options.pointColor || '#ff0000') }}</span>
+            </div>
+          </div>
+        </template>
       </div>
     </div>
     <div class="display-sub-item">
@@ -164,6 +236,16 @@ const props = withDefaults(defineProps<Props>(), {
 const rvizStore = useRvizStore()
 const shapeExpanded = ref(false)
 const covarianceExpanded = ref(false)
+
+const formatColor = (color: string): string => {
+  if (color && color.indexOf('#') === 0) {
+    const r = parseInt(color.slice(1, 3), 16)
+    const g = parseInt(color.slice(3, 5), 16)
+    const b = parseInt(color.slice(5, 7), 16)
+    return `${r}; ${g}; ${b}`
+  }
+  return color || '0; 0; 0'
+}
 
 const toggleShape = () => {
   shapeExpanded.value = !shapeExpanded.value
@@ -246,6 +328,16 @@ const update = (key: string, value: any) => {
 
 .config-value-checkbox {
   margin-left: auto;
+}
+
+.color-config {
+  gap: 8px;
+}
+
+.color-text {
+  font-size: 11px;
+  color: #909399;
+  font-family: monospace;
 }
 
 .sub-item-content {

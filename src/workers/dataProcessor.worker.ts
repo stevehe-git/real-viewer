@@ -158,13 +158,19 @@ export interface OdometryProcessRequest {
     axesLength?: number
     axesRadius?: number
     alpha?: number
+    pointSize?: number
+    pointColor?: string
+    arrowColor?: string
+    arrowShaftRadius?: number
   }
 }
 
 export interface OdometryProcessResult {
   type: 'odometryProcessed'
   componentId: string
-  axes: any[]
+  axes?: any[]
+  arrows?: any[]
+  points?: any[]
   error?: string
 }
 
@@ -697,6 +703,28 @@ function processOdometry(request: OdometryProcessRequest): OdometryProcessResult
     const axesLength = config.axesLength ?? 1.0
     const axesRadius = config.axesRadius ?? 0.1
     const alpha = config.alpha ?? 1.0
+    const pointSize = config.pointSize ?? 0.05
+    const pointColorHex = config.pointColor || '#ff0000'
+    const arrowColorHex = config.arrowColor || '#ff0000'
+    const arrowShaftRadius = config.arrowShaftRadius ?? 0.1
+    
+    // 将十六进制颜色转换为 RGB
+    const hexToRgb = (hex: string): { r: number; g: number; b: number } => {
+      if (!hex || typeof hex !== 'string') {
+        return { r: 1.0, g: 0.0, b: 0.0 }
+      }
+      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+      if (result && result[1] && result[2] && result[3]) {
+        return {
+          r: parseInt(result[1], 16) / 255.0,
+          g: parseInt(result[2], 16) / 255.0,
+          b: parseInt(result[3], 16) / 255.0
+        }
+      }
+      return { r: 1.0, g: 0.0, b: 0.0 }
+    }
+    const pointColor = hexToRgb(pointColorHex)
+    const arrowColor = hexToRgb(arrowColorHex)
 
     // 四元数运算辅助函数（不使用 gl-matrix，纯 JavaScript 实现）
     const quatMultiply = (q1: { x: number; y: number; z: number; w: number }, q2: { x: number; y: number; z: number; w: number }): { x: number; y: number; z: number; w: number } => {
@@ -735,8 +763,10 @@ function processOdometry(request: OdometryProcessRequest): OdometryProcessResult
     }
 
     const allAxes: any[] = []
+    const allArrows: any[] = []
+    const allPoints: any[] = []
 
-    // 遍历历史位姿列表，为每个位姿生成 axes
+    // 遍历历史位姿列表，为每个位姿生成对应形状
     for (let i = 0; i < poseHistory.length; i++) {
       const poseItem = poseHistory[i]
       if (!poseItem) continue
@@ -799,19 +829,56 @@ function processOdometry(request: OdometryProcessRequest): OdometryProcessResult
           scale: { x: axesRadius, y: axesRadius, z: axesLength },
           color: { r: 0.0, g: 0.0, b: 1.0, a: alpha }
         })
+      } else if (shape === 'Arrow') {
+        // 箭头：指向 X 方向（前进方向）
+        // scale.x 是箭头总长度
+        // scale.y 是 shaft（圆柱体）的半径
+        // scale.z 是 shaft 的另一个半径（通常与 scale.y 相同）
+        // Arrows.ts 会根据 scale.x 计算 headLength = 0.23 * scale.x, shaftLength = 0.77 * scale.x
+        // headWidth = 2 * shaftWidth
+        allArrows.push({
+          pose: {
+            position: posePosition,
+            orientation: poseOrientation
+          },
+          scale: { x: axesLength, y: arrowShaftRadius, z: arrowShaftRadius }, // x: 总长度, y: shaft 半径, z: shaft 半径
+          color: { r: arrowColor.r, g: arrowColor.g, b: arrowColor.b, a: alpha }
+        })
+      } else if (shape === 'Point') {
+        // 点：在位置处显示一个点
+        allPoints.push({
+          pose: {
+            position: posePosition,
+            orientation: { x: 0, y: 0, z: 0, w: 1 }
+          },
+          points: [{ x: 0, y: 0, z: 0 }],
+          color: { r: pointColor.r, g: pointColor.g, b: pointColor.b, a: alpha },
+          scale: { x: pointSize, y: pointSize, z: pointSize } // 点的大小
+        })
       }
     }
 
-    return {
+    const result: OdometryProcessResult = {
       type: 'odometryProcessed',
-      componentId,
-      axes: allAxes
+      componentId
     }
+
+    if (shape === 'Axes') {
+      result.axes = allAxes
+    } else if (shape === 'Arrow') {
+      result.arrows = allArrows
+    } else if (shape === 'Point') {
+      result.points = allPoints
+    }
+
+    return result
   } catch (error: any) {
     return {
       type: 'odometryProcessed',
       componentId: request.componentId,
       axes: [],
+      arrows: [],
+      points: [],
       error: error?.message || 'Unknown error'
     }
   }

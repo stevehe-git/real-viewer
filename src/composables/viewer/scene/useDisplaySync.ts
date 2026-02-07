@@ -101,6 +101,10 @@ export interface DisplaySyncContext {
     positionTolerance?: number
     angleTolerance?: number
     keep?: number
+    pointSize?: number
+    pointColor?: string
+    arrowColor?: string
+    arrowShaftRadius?: number
   }, componentId: string) => void
   finalPaint?: () => void
   setTFVisible?: (visible: boolean) => void
@@ -508,7 +512,11 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
             alpha: options.alpha,
             positionTolerance: options.positionTolerance,
             angleTolerance: options.angleTolerance,
-            keep: options.keep
+            keep: options.keep,
+            pointSize: options.pointSize,
+            pointColor: options.pointColor,
+            arrowColor: options.arrowColor,
+            arrowShaftRadius: options.arrowShaftRadius
           }, odometryComponent.id)
         }
 
@@ -1194,7 +1202,9 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
           alpha: odometryComponent.options?.alpha,
           positionTolerance: odometryComponent.options?.positionTolerance,
           angleTolerance: odometryComponent.options?.angleTolerance,
-          keep: odometryComponent.options?.keep
+          keep: odometryComponent.options?.keep,
+          pointSize: odometryComponent.options?.pointSize,
+          pointColor: odometryComponent.options?.pointColor
         }))
     },
     (odometryConfigs) => {
@@ -1209,7 +1219,11 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
               alpha: odometryConfig.alpha,
               positionTolerance: odometryConfig.positionTolerance,
               angleTolerance: odometryConfig.angleTolerance,
-              keep: odometryConfig.keep
+              keep: odometryConfig.keep,
+              pointSize: odometryConfig.pointSize,
+              pointColor: odometryConfig.pointColor,
+              arrowColor: odometryConfig.arrowColor,
+              arrowShaftRadius: odometryConfig.arrowShaftRadius
             }, odometryConfig.id)
           }
         }

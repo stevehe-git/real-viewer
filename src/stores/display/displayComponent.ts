@@ -87,6 +87,10 @@ export function getDefaultOptions(type: string): Record<string, any> {
       shape: 'Axes',
       axesLength: 1,
       axesRadius: 0.1,
+      pointSize: 0.1,
+      pointColor: '#06f943',
+      arrowColor: '#06f943',
+      arrowShaftRadius: 0.1,
       covariance: true,
       positionCovariance: true,
       orientationCovariance: true

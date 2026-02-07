@@ -275,6 +275,10 @@ watch(
                 positionTolerance?: number
                 angleTolerance?: number
                 keep?: number
+                pointSize?: number
+                pointColor?: string
+                arrowColor?: string
+                arrowShaftRadius?: number
               }, componentId: string) => {
                 sceneManager.setOdometryOptions(options, componentId)
                 worldview.markDirty()
