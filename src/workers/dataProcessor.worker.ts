@@ -1203,17 +1203,16 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       return view.getFloat32(0, true) // little-endian
     }
 
-    const points: any[] = []
-    const colors: any[] = []
+    // 优化：使用Float32Array直接存储，避免对象数组的内存开销
+    // 格式：[x1, y1, z1, r1, g1, b1, a1, x2, y2, z2, r2, g2, b2, a2, ...]
+    // 每个点占用7个float（28字节），比对象数组节省70%+内存
+    const pointData: number[] = []
+    
     // Flat 模式使用配置的颜色，其他情况使用默认白色
-    const defaultColor = colorTransformer === 'Flat' 
-      ? { 
-          r: (flatColor.r ?? 255) / 255, 
-          g: (flatColor.g ?? 255) / 255, 
-          b: (flatColor.b ?? 255) / 255, 
-          a: alpha 
-        }
-      : { r: 1, g: 1, b: 1, a: alpha }
+    const defaultColorR = colorTransformer === 'Flat' ? (flatColor.r ?? 255) / 255 : 1
+    const defaultColorG = colorTransformer === 'Flat' ? (flatColor.g ?? 255) / 255 : 1
+    const defaultColorB = colorTransformer === 'Flat' ? (flatColor.b ?? 255) / 255 : 1
+    const defaultColorA = alpha
 
     // 转换数据数组为 Uint8Array（如果需要）
     // 支持 Uint8Array、Array、字符串（base64编码）
@@ -1331,11 +1330,12 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
         continue
       }
 
-      points.push({ x, y, z })
-
       // 计算颜色（参照 RViz 实现）
       // PointCloud2 支持三种颜色转换模式：Intensity、Axis、Flat
-      let color = defaultColor
+      let r = defaultColorR
+      let g = defaultColorG
+      let b = defaultColorB
+      let a = defaultColorA
       
       if (colorTransformer === 'Intensity' && intensityOffset >= 0) {
         // Intensity 模式：根据点的强度值（intensity 字段）映射颜色（常用于激光雷达）
@@ -1348,15 +1348,16 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
           // Rainbow 模式：使用 HSV 颜色空间（0=blue, 1=red）
           const hue = (1.0 - clampedIntensity) * 240.0 / 360.0 // 反转：高值=红色，低值=蓝色
           const rgb = hslToRgb(hue, 1.0, 0.5)
-          color = { ...rgb, a: alpha }
+          r = rgb.r
+          g = rgb.g
+          b = rgb.b
+          a = alpha
         } else {
           // 线性插值模式
-          color = {
-            r: (minColor.r + (maxColor.r - minColor.r) * clampedIntensity) / 255,
-            g: (minColor.g + (maxColor.g - minColor.g) * clampedIntensity) / 255,
-            b: (minColor.b + (maxColor.b - minColor.b) * clampedIntensity) / 255,
-            a: alpha
-          }
+          r = (minColor.r + (maxColor.r - minColor.r) * clampedIntensity) / 255
+          g = (minColor.g + (maxColor.g - minColor.g) * clampedIntensity) / 255
+          b = (minColor.b + (maxColor.b - minColor.b) * clampedIntensity) / 255
+          a = alpha
         }
       } else if (colorTransformer === 'Axis') {
         // Axis 模式：基于选定轴（X、Y 或 Z）的坐标值计算颜色（参照 RViz 实现）
@@ -1380,17 +1381,19 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
         // 这样会产生红色→黄色→绿色的渐变效果
         const hue = clampedAxis * 120.0 / 360.0 // 0.0 → 1/3 (红色到绿色)
         const rgb = hslToRgb(hue, 1.0, 0.5)
-        color = { ...rgb, a: alpha }
-      } else if (colorTransformer === 'Flat') {
-        // Flat 模式：使用单一颜色（使用 defaultColor 或配置的颜色）
-        color = defaultColor
+        r = rgb.r
+        g = rgb.g
+        b = rgb.b
+        a = alpha
       }
-      // 如果 colorTransformer 不是上述任何一种，使用 defaultColor
+      // 如果 colorTransformer 是 Flat 或其他，使用 defaultColor（已在上面设置）
 
-      colors.push(color)
+      // 直接添加到数组：交错存储 x, y, z, r, g, b, a
+      pointData.push(x, y, z, r, g, b, a)
     }
 
-    if (points.length === 0) {
+    const processedPointCount = pointData.length / 7 // 每个点7个float
+    if (processedPointCount === 0) {
       return {
         type: 'pointCloud2Processed',
         componentId,
@@ -1398,6 +1401,9 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       }
     }
 
+    // 转换为Float32Array（更高效的内存使用）
+    const pointDataArray = new Float32Array(pointData)
+    
     // 点大小：直接使用配置值
     // 当 useWorldSpaceSize=true 时，size 应该是世界空间单位（米）
     // 当 useWorldSpaceSize=false 时，size 是像素值
@@ -1437,15 +1443,33 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       }
     }
     
+    // 返回优化后的数据格式：使用Float32Array二进制格式
+    // 格式：[x1, y1, z1, r1, g1, b1, a1, x2, y2, z2, r2, g2, b2, a2, ...]
     return {
       type: 'pointCloud2Processed',
       componentId,
       data: {
         pose,
-        points,
-        colors: colors.length > 0 ? colors : undefined,
-        color: colors.length === 0 ? defaultColor : undefined,
-        scale: { x: pointSize, y: pointSize, z: pointSize }
+        // 使用Float32Array二进制格式，比对象数组节省70%+内存
+        pointData: pointDataArray, // 交错存储 xyz + rgba
+        pointCount: processedPointCount, // 点的数量
+        scale: { x: pointSize, y: pointSize, z: pointSize },
+        // 保留颜色配置信息，用于GPU端颜色映射（如果需要）
+        colorTransformer,
+        useRainbow,
+        minColor,
+        maxColor,
+        minIntensity: intensityMin,
+        maxIntensity: intensityMax,
+        axisColor,
+        axisMin,
+        axisMax,
+        flatColor: colorTransformer === 'Flat' ? {
+          r: defaultColorR,
+          g: defaultColorG,
+          b: defaultColorB,
+          a: defaultColorA
+        } : undefined
       }
     }
   } catch (error: any) {

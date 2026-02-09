@@ -397,25 +397,53 @@ export class SceneManager {
           return
         }
         
-        // 检查数据格式
-        if (!pointCloud2Data.points || pointCloud2Data.points.length === 0) {
-          console.warn(`[PointCloud2] No points in data for ${componentId}`, pointCloud2Data)
-          return
-        }
-        
-        // 检查颜色数据
-        const hasColors = pointCloud2Data.colors && pointCloud2Data.colors.length > 0
-        const hasColor = !!pointCloud2Data.color
-        if (!hasColors && !hasColor) {
-          console.warn(`[PointCloud2] No colors in data for ${componentId}`, {
-            hasColors,
-            hasColor,
-            pointsCount: pointCloud2Data.points.length
-          })
-        }
-        
         // 获取配置
         const config = this.pointCloud2ConfigMap.get(componentId) || {}
+        
+        // 优化：直接使用Float32Array格式，避免转换开销
+        let renderData: any
+        if (pointCloud2Data.pointData && pointCloud2Data.pointData instanceof Float32Array) {
+          // 新格式：Float32Array [x1, y1, z1, r1, g1, b1, a1, ...]
+          const pointData = pointCloud2Data.pointData
+          const pointCount = pointCloud2Data.pointCount || (pointData.length / 7)
+          
+          if (pointCount === 0) {
+            console.warn(`[PointCloud2] No points in data for ${componentId}`)
+            return
+          }
+          
+          // 直接传递Float32Array，Points命令会直接处理
+          renderData = {
+            pose: pointCloud2Data.pose,
+            pointData, // 直接传递Float32Array
+            pointCount, // 点的数量
+            scale: {
+              x: config.size ?? pointCloud2Data.scale?.x ?? 3,
+              y: config.size ?? pointCloud2Data.scale?.y ?? 3,
+              z: config.size ?? pointCloud2Data.scale?.z ?? 3
+            },
+            style: config.style || 'Points'
+          }
+        } else if (pointCloud2Data.points) {
+          // 旧格式兼容：对象数组格式
+          if (pointCloud2Data.points.length === 0) {
+            console.warn(`[PointCloud2] No points in data for ${componentId}`, pointCloud2Data)
+            return
+          }
+          
+          renderData = {
+            ...pointCloud2Data,
+            scale: {
+              x: config.size ?? pointCloud2Data.scale?.x ?? 3,
+              y: config.size ?? pointCloud2Data.scale?.y ?? 3,
+              z: config.size ?? pointCloud2Data.scale?.z ?? 3
+            },
+            style: config.style || 'Points'
+          }
+        } else {
+          console.warn(`[PointCloud2] Invalid data format for ${componentId}`, pointCloud2Data)
+          return
+        }
         
         // 获取或创建单个实例
         if (!this.pointCloud2Instances.has(componentId)) {
@@ -423,17 +451,6 @@ export class SceneManager {
         }
         const instance = this.pointCloud2Instances.get(componentId)
         this.worldviewContext.onMount(instance, this.pointsCommandPixelSize)
-        
-        // 应用配置到渲染数据（包括 style 和 size）
-        const renderData = {
-          ...pointCloud2Data,
-          scale: {
-            x: config.size ?? pointCloud2Data.scale?.x ?? 3,
-            y: config.size ?? pointCloud2Data.scale?.y ?? 3,
-            z: config.size ?? pointCloud2Data.scale?.z ?? 3
-          },
-          style: config.style || 'Points' // 传递 style 配置
-        }
         
         // 调试：检查数据格式和配置
         // console.log(`[PointCloud2] Registering draw call for ${componentId}:`, {
@@ -2607,44 +2624,122 @@ export class SceneManager {
       return firstItem ? firstItem.data : null
     }
     
-    // 合并多个点云数据
-    const mergedPoints: number[] = []
-    const mergedColors: number[] = []
-    let mergedPose: any = null
-    let mergedScale: any = null
+    // 增量更新：根据索引更新点云数据，保留历史轨迹
+    // 策略：对于每个索引位置，保留该索引在所有历史数据中的不同位置
+    // 如果同一个索引的点在不同时间帧中位置相同，只保留一个点
+    // 新格式：使用Float32Array二进制格式 [x1, y1, z1, r1, g1, b1, a1, ...]
+    const sortedHistory = [...historyDataArray].sort((a, b) => a.timestamp - b.timestamp)
     
-    // 使用最新的 pose 和 scale（最后一个数据的）
-    const lastItem = historyDataArray[historyDataArray.length - 1]
-    if (!lastItem) return null
-    const lastData = lastItem.data
-    mergedPose = lastData.pose
-    mergedScale = lastData.scale
+    // 使用 Map 来存储每个索引位置的所有不同点
+    // key: 索引位置，value: Set<string> 存储该索引的所有不同位置（用 "x,y,z" 作为 key）
+    const indexToPointsMap = new Map<number, Set<string>>()
+    const indexToPointDataMap = new Map<number, Map<string, { x: number; y: number; z: number; r: number; g: number; b: number; a: number }>>()
     
-    // 合并所有点
-    historyDataArray.forEach(({ data }) => {
-      if (data && data.points && Array.isArray(data.points)) {
-        mergedPoints.push(...data.points)
+    // 找到所有历史数据中的最大点数
+    let maxPointsCount = 0
+    for (const historyItem of sortedHistory) {
+      if (!historyItem || !historyItem.data) continue
+      const { data } = historyItem
+      if (!data || !data.pointData || !(data.pointData instanceof Float32Array)) continue
+      const pointCount = data.pointCount || (data.pointData.length / 7)
+      maxPointsCount = Math.max(maxPointsCount, pointCount)
+    }
+    
+    // 遍历所有历史数据，收集每个索引位置的不同点
+    for (const historyItem of sortedHistory) {
+      if (!historyItem || !historyItem.data) continue
+      const { data } = historyItem
+      if (!data || !data.pointData || !(data.pointData instanceof Float32Array)) continue
+      
+      const pointData = data.pointData
+      const pointCount = data.pointCount || (pointData.length / 7)
+      
+      for (let pointIndex = 0; pointIndex < pointCount; pointIndex++) {
+        const offset = pointIndex * 7
+        if (offset + 6 >= pointData.length) continue
         
-        // 合并颜色数据
-        if (data.colors && Array.isArray(data.colors)) {
-          mergedColors.push(...data.colors)
-        } else if (data.color) {
-          // 如果使用单一颜色，为每个点添加相同颜色
-          const color = data.color
-          const colorArray = Array.isArray(color) ? color : [color.r || 1, color.g || 1, color.b || 1, color.a || 1]
-          for (let i = 0; i < data.points.length / 3; i++) {
-            mergedColors.push(...colorArray)
+        const x = pointData[offset + 0]
+        const y = pointData[offset + 1]
+        const z = pointData[offset + 2]
+        const r = pointData[offset + 3]
+        const g = pointData[offset + 4]
+        const b = pointData[offset + 5]
+        const a = pointData[offset + 6]
+        
+        // 使用位置作为唯一标识（精度到小数点后6位）
+        const pointKey = `${x.toFixed(6)},${y.toFixed(6)},${z.toFixed(6)}`
+        
+        // 初始化该索引的 Set
+        if (!indexToPointsMap.has(pointIndex)) {
+          indexToPointsMap.set(pointIndex, new Set())
+          indexToPointDataMap.set(pointIndex, new Map())
+        }
+        
+        const pointSet = indexToPointsMap.get(pointIndex)!
+        const pointDataMap = indexToPointDataMap.get(pointIndex)!
+        
+        // 如果这个位置还没有记录过，添加到 Set 中
+        if (!pointSet.has(pointKey)) {
+          pointSet.add(pointKey)
+          pointDataMap.set(pointKey, { x, y, z, r, g, b, a })
+        }
+      }
+    }
+    
+    // 将所有不同位置的点合并到一个Float32Array中
+    const mergedPointData: number[] = []
+    
+    // 按索引顺序遍历，将每个索引的所有不同位置的点都添加到结果中
+    for (let pointIndex = 0; pointIndex < maxPointsCount; pointIndex++) {
+      const pointSet = indexToPointsMap.get(pointIndex)
+      const pointDataMap = indexToPointDataMap.get(pointIndex)
+      
+      if (pointSet && pointDataMap) {
+        // 将该索引的所有不同位置的点都添加到结果中
+        for (const pointKey of pointSet) {
+          const pointData = pointDataMap.get(pointKey)
+          if (pointData) {
+            // 交错存储 x, y, z, r, g, b, a
+            mergedPointData.push(
+              pointData.x,
+              pointData.y,
+              pointData.z,
+              pointData.r,
+              pointData.g,
+              pointData.b,
+              pointData.a
+            )
           }
         }
       }
-    })
+    }
+    
+    // 使用最新的 pose 和 scale（最后一个数据的）
+    const lastItem = sortedHistory[sortedHistory.length - 1]
+    if (!lastItem || !lastItem.data) return null
+    const lastData = lastItem.data
+    
+    // 转换为Float32Array
+    const mergedPointDataArray = new Float32Array(mergedPointData)
+    const mergedPointCount = mergedPointDataArray.length / 7
     
     return {
-      points: mergedPoints,
-      colors: mergedColors.length > 0 ? mergedColors : undefined,
-      color: mergedColors.length === 0 ? lastData.color : undefined,
-      pose: mergedPose,
-      scale: mergedScale
+      pose: lastData.pose,
+      scale: lastData.scale,
+      // 使用Float32Array二进制格式
+      pointData: mergedPointDataArray,
+      pointCount: mergedPointCount,
+      // 保留颜色配置信息
+      colorTransformer: lastData.colorTransformer,
+      useRainbow: lastData.useRainbow,
+      minColor: lastData.minColor,
+      maxColor: lastData.maxColor,
+      minIntensity: lastData.minIntensity,
+      maxIntensity: lastData.maxIntensity,
+      axisColor: lastData.axisColor,
+      axisMin: lastData.axisMin,
+      axisMax: lastData.axisMax,
+      flatColor: lastData.flatColor
     }
   }
 
@@ -2848,7 +2943,7 @@ export class SceneManager {
       })
 
       // 记录 Worker 处理结束
-      const pointsCount = result.data?.points?.length ? result.data.points.length / 3 : 0
+      const pointsCount = result.data?.pointCount || 0
       if (workerProcessStartTime > 0) {
         pointCloud2Debugger.recordWorkerProcessEnd(workerProcessStartTime, pointsCount)
       }

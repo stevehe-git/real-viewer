@@ -133,9 +133,43 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
     `,
         attributes: {
           point: (_context: any, props: any) => {
+            // 优化：支持Float32Array二进制格式
+            // 格式：[x1, y1, z1, r1, g1, b1, a1, x2, y2, z2, ...]
+            if (props.pointData && props.pointData instanceof Float32Array) {
+              const pointData = props.pointData
+              const pointCount = props.pointCount || (pointData.length / 7)
+              // 提取位置数据：每7个float中取前3个
+              const positions = new Float32Array(pointCount * 3)
+              for (let i = 0; i < pointCount; i++) {
+                const srcOffset = i * 7
+                const dstOffset = i * 3
+                positions[dstOffset + 0] = pointData[srcOffset + 0]
+                positions[dstOffset + 1] = pointData[srcOffset + 1]
+                positions[dstOffset + 2] = pointData[srcOffset + 2]
+              }
+              return positions
+            }
+            // 向后兼容：对象数组格式
             return props.points.map((point: any) => (Array.isArray(point) ? point : pointToVec3(point)))
           },
           color: (_context: any, props: any) => {
+            // 优化：支持Float32Array二进制格式
+            if (props.pointData && props.pointData instanceof Float32Array) {
+              const pointData = props.pointData
+              const pointCount = props.pointCount || (pointData.length / 7)
+              // 提取颜色数据：每7个float中取后4个
+              const colors = new Float32Array(pointCount * 4)
+              for (let i = 0; i < pointCount; i++) {
+                const srcOffset = i * 7
+                const dstOffset = i * 4
+                colors[dstOffset + 0] = pointData[srcOffset + 3]
+                colors[dstOffset + 1] = pointData[srcOffset + 4]
+                colors[dstOffset + 2] = pointData[srcOffset + 5]
+                colors[dstOffset + 3] = pointData[srcOffset + 6]
+              }
+              return colors
+            }
+            // 向后兼容：对象数组格式
             const colors = getVertexColors(props)
             return colors
           }
@@ -165,7 +199,14 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
           }
         },
 
-        count: regl.prop('points.length')
+        count: (_context: any, props: any) => {
+          // 优化：支持Float32Array格式
+          if (props.pointData && props.pointData instanceof Float32Array) {
+            return props.pointCount || (props.pointData.length / 7)
+          }
+          // 向后兼容：对象数组格式
+          return props.points?.length || 0
+        }
       })
     )
 
@@ -174,21 +215,26 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
       if (Array.isArray(inProps)) {
         // 如果是数组，遍历每个元素并渲染
         inProps.forEach((pointData: any, index: number) => {
-          if (!pointData || !pointData.points || pointData.points.length === 0) {
+          // 优化：支持Float32Array格式
+          const hasPointData = pointData?.pointData instanceof Float32Array
+          const hasPoints = pointData?.points && pointData.points.length > 0
+          
+          if (!pointData || (!hasPointData && !hasPoints)) {
             console.warn(`Points: Invalid point data at index ${index}`, pointData)
             return
           }
-          // console.log(`Points: Rendering point cloud ${index}:`, {
-          //   points: pointData.points?.length,
-          //   pose: pointData.pose,
-          //   color: pointData.color,
-          //   colors: pointData.colors?.length,
-          //   scale: pointData.scale
-          // })
           command(pointData)
         })
       } else {
         // 如果是单个对象，直接渲染
+        // 优化：支持Float32Array格式
+        const hasPointData = inProps?.pointData instanceof Float32Array
+        const hasPoints = inProps?.points && inProps.points.length > 0
+        
+        if (!inProps || (!hasPointData && !hasPoints)) {
+          console.warn(`Points: Invalid point data`, inProps)
+          return
+        }
         command(inProps)
       }
     }
