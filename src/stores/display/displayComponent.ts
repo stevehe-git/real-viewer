@@ -138,9 +138,9 @@ export function getDefaultOptions(type: string): Record<string, any> {
       invertRainbow: false,
       minColor: { r: 0, g: 0, b: 0 },
       maxColor: { r: 255, g: 255, b: 255 },
-      autocomputeIntensityBounds: true,
+      autocomputeIntensityBounds: false,
       minIntensity: 0,
-      maxIntensity: 0,
+      maxIntensity: 246, // 默认值 246（当 autocompute 关闭时使用）
       axisColor: 'Z', // 默认 Z 轴
       flatColor: { r: 255, g: 255, b: 0 } // 默认黄色（参照 RViz）
     },

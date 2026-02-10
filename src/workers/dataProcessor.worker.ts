@@ -1105,7 +1105,7 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       minColor = { r: 0, g: 0, b: 0 },
       maxColor = { r: 255, g: 255, b: 255 },
       minIntensity = 0,
-      maxIntensity = 0, // 与 displayComponent.ts 中的默认值一致（0 表示自动计算）
+      maxIntensity = 246, // 默认值 246（当 autocompute 关闭时使用）
       axisColor: rawAxisColor = 'Z', // 默认使用 Z 轴
       flatColor = { r: 255, g: 255, b: 0 }, // 默认黄色（参照 RViz）
       autocomputeIntensityBounds = true
@@ -1311,24 +1311,22 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
     // 优化：使用循环查找最小值和最大值，避免展开运算符导致堆栈溢出（适用于百万级点云）
     let intensityMin = minIntensity
     let intensityMax = maxIntensity
-    if (intensityValues.length > 0 && colorTransformer === 'Intensity') {
-      if (minIntensity === 0 && maxIntensity === 1) {
-        // 自动计算范围
-        let min = Infinity
-        let max = -Infinity
-        for (let i = 0; i < intensityValues.length; i++) {
-          const val = intensityValues[i]
-          if (val !== undefined && val !== null && isFinite(val)) {
-            if (val < min) min = val
-            if (val > max) max = val
-          }
+    if (intensityValues.length > 0 && colorTransformer === 'Intensity' && autocomputeIntensityBounds) {
+      // 自动计算范围
+      let min = Infinity
+      let max = -Infinity
+      for (let i = 0; i < intensityValues.length; i++) {
+        const val = intensityValues[i]
+        if (val !== undefined && val !== null && isFinite(val)) {
+          if (val < min) min = val
+          if (val > max) max = val
         }
-        if (isFinite(min) && isFinite(max)) {
-          intensityMin = min
-          intensityMax = max
-          if (intensityMax === intensityMin) {
-            intensityMax = intensityMin + 1 // 避免除零
-          }
+      }
+      if (isFinite(min) && isFinite(max)) {
+        intensityMin = min
+        intensityMax = max
+        if (intensityMax === intensityMin) {
+          intensityMax = intensityMin + 1 // 避免除零
         }
       }
     }

@@ -135,10 +135,11 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
         
         if (useRainbow) {
           // RViz彩虹色映射核心公式：归一化值映射到HSV色相
-          // h = (1 - n) * 240° / 360° = (1 - n) * 2/3
-          // n=0 → h=240°(蓝紫), n=1 → h=0°(红)
+          // Intensity模式：最小值→红色，最大值→蓝紫色（与Axis模式一致）
+          // h = n * 240° / 360° = n * 2/3
+          // n=0 → h=0°(红), n=1 → h=240°(蓝紫)
           // 固定饱和度s=1，明度v=1
-          float hue = (1.0 - normalizedIntensity) * 240.0 / 360.0;
+          float hue = normalizedIntensity * 240.0 / 360.0;
           finalColor = hsvToRgb(vec3(hue, 1.0, 1.0));
         } else {
           // 线性插值模式
