@@ -191,6 +191,12 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
     `,
         attributes: {
           point: (_context: any, props: any) => {
+            // 性能优化：优先使用缓存的 GPU buffer（如果存在）
+            // 这样可以避免每帧重新创建 Float32Array，大幅提升性能
+            if (props._cachedBuffers?.positionBuffer) {
+              return props._cachedBuffers.positionBuffer
+            }
+            
             // 优化：支持Float32Array二进制格式
             // GPU端颜色映射：格式为 [x1, y1, z1, intensity1, x2, y2, z2, intensity2, ...] (4个float/点)
             // 或旧格式：[x1, y1, z1, r1, g1, b1, a1, ...] (7个float/点，向后兼容)
@@ -223,6 +229,11 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
             return props.points.map((point: any) => (Array.isArray(point) ? point : pointToVec3(point)))
           },
           intensity: (_context: any, props: any) => {
+            // 性能优化：优先使用缓存的 GPU buffer（如果存在）
+            if (props._cachedBuffers?.intensityBuffer) {
+              return props._cachedBuffers.intensityBuffer
+            }
+            
             // GPU端颜色映射：提取intensity数据
             // 注意：regl要求attribute必须始终提供有效的Float32Array，且长度必须与point属性匹配
             if (props.pointData && props.pointData instanceof Float32Array && props.useGpuColorMapping) {
@@ -252,6 +263,11 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
             return new Float32Array(count).fill(0)
           },
           color: (_context: any, props: any) => {
+            // 性能优化：优先使用缓存的 GPU buffer（如果存在，且是旧格式）
+            if (props._cachedBuffers?.colorBuffer && !props.useGpuColorMapping) {
+              return props._cachedBuffers.colorBuffer
+            }
+            
             // 向后兼容：如果使用GPU颜色映射，不需要color属性（但regl要求attribute必须存在）
             if (props.useGpuColorMapping) {
               const pointCount = props.pointCount || (props.pointData?.length ? Math.floor(props.pointData.length / 4) : 0)

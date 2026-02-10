@@ -7,6 +7,7 @@ import { grid, lines, makePointsCommand, cylinders, makeArrowsCommand, makeMapTe
 import { clearMapTextureCache, clearAllMapTextureCache } from '../commands/MapTexture'
 import { quat } from 'gl-matrix'
 import { tfManager } from '@/services/tfManager'
+import { PointCloudBufferManager, generateDataHash, type CompactPointCloudData } from '../commands/PointCloudBufferManager'
 import { getDataProcessorWorker } from '@/workers/dataProcessorWorker'
 import type { TFProcessRequest } from '@/workers/dataProcessor.worker'
 import { tfDebugger, pointCloud2Debugger } from '@/utils/debug'
@@ -103,6 +104,7 @@ export class SceneManager {
   private pointCloud2RequestIds = new Map<string, number>() // 每个 PointCloud2 的当前请求 ID
   private laserScanRequestIdCounter = 0
   private pointCloud2RequestIdCounter = 0
+  private pointCloudBufferManager: PointCloudBufferManager | null = null // GPU Buffer 缓存管理器（用于性能优化）
 
   private options: Required<Omit<RenderOptions, 'gridColor'>> & { gridColor: [number, number, number, number] }
   private gridVisible = true
@@ -142,6 +144,9 @@ export class SceneManager {
       gridDivisions: options?.gridDivisions ?? 5,
       gridColor: options?.gridColor || [0.67, 0.67, 0.67, 1.0]
     }
+
+    // 初始化 GPU Buffer 缓存管理器（用于 PointCloud2 性能优化）
+    this.pointCloudBufferManager = new PointCloudBufferManager(reglContext)
 
     // 初始化命令
     this.initializeCommands()
@@ -437,6 +442,20 @@ export class SceneManager {
             return
           }
           
+          // 性能优化：优先使用缓存的 GPU buffer（如果存在）
+          // 这样可以避免每帧重新创建 Float32Array，大幅提升渲染性能
+          let cachedBuffers: { positionBuffer?: any; intensityBuffer?: any; colorBuffer?: any } | undefined
+          if (this.pointCloudBufferManager) {
+            const buffers = this.pointCloudBufferManager.getBuffers(componentId)
+            if (buffers) {
+              cachedBuffers = {
+                positionBuffer: buffers.positionBuffer,
+                intensityBuffer: buffers.intensityBuffer,
+                colorBuffer: buffers.colorBuffer
+              }
+            }
+          }
+          
           // 直接传递Float32Array，Points命令会直接处理
           // 传递GPU端颜色映射配置
           renderData = {
@@ -461,7 +480,9 @@ export class SceneManager {
             axisMin: pointCloud2Data.axisMin ?? 0,
             axisMax: pointCloud2Data.axisMax ?? (pointCloud2Data.axisMax === 0 && pointCloud2Data.axisMin === 0 ? 1 : pointCloud2Data.axisMax ?? 1),
             flatColor: pointCloud2Data.flatColor || { r: 255, g: 255, b: 0 },
-            alpha: pointCloud2Data.alpha ?? 1.0
+            alpha: pointCloud2Data.alpha ?? 1.0,
+            // 性能优化：传递缓存的 GPU buffer（如果存在）
+            _cachedBuffers: cachedBuffers
           }
         } else if (pointCloud2Data.points) {
           // 旧格式兼容：对象数组格式
@@ -3168,6 +3189,38 @@ export class SceneManager {
         // })
         
         this.pointCloud2DataMap.set(componentId, finalData)
+        
+        // 性能优化：将数据上传到 GPU Buffer 缓存（如果支持）
+        // 这样可以避免每帧重新创建 buffer，提升渲染性能，特别是对于 Decay Time 积累的数据
+        if (this.pointCloudBufferManager && finalData.pointData && finalData.pointData instanceof Float32Array) {
+          const useGpuColorMapping = finalData.useGpuColorMapping ?? true
+          const pointCount = finalData.pointCount || Math.floor(finalData.pointData.length / (useGpuColorMapping ? 4 : 7))
+          const dataHash = generateDataHash(finalData.pointData, pointCount, useGpuColorMapping)
+          
+          const compactData: CompactPointCloudData = {
+            data: finalData.pointData,
+            count: pointCount,
+            pointSize: config.size ?? finalData.scale?.x ?? 3,
+            dataHash,
+            useGpuColorMapping
+          }
+          
+          // 更新 GPU Buffer 缓存（如果数据变化，会自动创建新 buffer；否则复用缓存）
+          this.pointCloudBufferManager.updatePointCloudData(componentId, compactData)
+          
+          // 更新实例配置（轻量参数，不触发 buffer 重建）
+          this.pointCloudBufferManager.updateInstanceConfig(componentId, {
+            componentId,
+            pose: finalData.pose || { position: { x: 0, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } },
+            pointSize: config.size ?? finalData.scale?.x ?? 3,
+            colorTransformer: finalData.colorTransformer || 'Flat',
+            useRainbow: finalData.useRainbow ?? true,
+            minColor: finalData.minColor || { r: 0, g: 0, b: 0 },
+            maxColor: finalData.maxColor || { r: 255, g: 255, b: 255 },
+            minValue: finalData.minIntensity ?? 0,
+            maxValue: finalData.maxIntensity ?? 1
+          })
+        }
 
         // 立即注册绘制调用（不使用 requestAnimationFrame，避免延迟）
         this.registerDrawCalls()
@@ -3204,6 +3257,11 @@ export class SceneManager {
       this.worldviewContext.onUnmount(instance)
     }
     
+    // 从 GPU Buffer 缓存中移除
+    if (this.pointCloudBufferManager) {
+      this.pointCloudBufferManager.removeInstance(componentId)
+    }
+    
     // 删除所有相关数据
     this.pointCloud2DataMap.delete(componentId)
     this.pointCloud2ConfigMap.delete(componentId)
@@ -3227,6 +3285,11 @@ export class SceneManager {
     this.pointCloud2HistoryMap.clear() // 清除所有历史数据
     this.pointCloud2Instances.clear()
     this.pointCloud2RequestIds.clear()
+    
+    // 清除 GPU Buffer 缓存
+    if (this.pointCloudBufferManager) {
+      this.pointCloudBufferManager.clearAll()
+    }
     this.registerDrawCalls()
   }
 
