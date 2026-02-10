@@ -2621,6 +2621,10 @@ export class SceneManager {
    * @param historyDataArray 历史数据数组，每个元素包含 { data, timestamp }
    * @returns 合并后的点云数据
    */
+  /**
+   * 优化版合并点云数据：保留历史轨迹，相同位置的点只保留一个
+   * 策略：使用高效的去重算法，避免大量临时对象分配
+   */
   private mergePointCloud2Data(historyDataArray: Array<{ data: any; timestamp: number }>): any {
     if (historyDataArray.length === 0) {
       return null
@@ -2631,38 +2635,30 @@ export class SceneManager {
       return firstItem ? firstItem.data : null
     }
     
-    // 增量更新：根据索引更新点云数据，保留历史轨迹
-    // 策略：对于每个索引位置，保留该索引在所有历史数据中的不同位置
-    // 如果同一个索引的点在不同时间帧中位置相同，只保留一个点
-    // 新格式：使用Float32Array二进制格式 [x1, y1, z1, r1, g1, b1, a1, ...]
-    const sortedHistory = [...historyDataArray].sort((a, b) => a.timestamp - b.timestamp)
+    // 使用 Set 来存储唯一点的位置hash（使用整数hash，避免字符串操作）
+    // 精度：0.01单位（可以根据需要调整）
+    const PRECISION = 0.01
+    const PRECISION_INV = 1.0 / PRECISION
     
-    // 使用 Map 来存储每个索引位置的所有不同点
-    // key: 索引位置，value: Set<string> 存储该索引的所有不同位置（用 "x,y,z" 作为 key）
-    const indexToPointsMap = new Map<number, Set<string>>()
-    const indexToPointDataMap = new Map<number, Map<string, { x: number; y: number; z: number; r: number; g: number; b: number; a: number }>>()
+    // 使用 Map 存储位置hash到点数据的映射
+    // key: 位置hash (整数), value: {x, y, z, r, g, b, a}
+    const pointMap = new Map<number, { x: number; y: number; z: number; r: number; g: number; b: number; a: number }>()
     
-    // 找到所有历史数据中的最大点数
-    let maxPointsCount = 0
-    for (const historyItem of sortedHistory) {
-      if (!historyItem || !historyItem.data) continue
-      const { data } = historyItem
-      if (!data || !data.pointData || !(data.pointData instanceof Float32Array)) continue
-      const pointCount = data.pointCount || (data.pointData.length / 7)
-      maxPointsCount = Math.max(maxPointsCount, pointCount)
-    }
+    // 遍历所有历史数据，收集唯一的点
+    let lastData: any = null
     
-    // 遍历所有历史数据，收集每个索引位置的不同点
-    for (const historyItem of sortedHistory) {
+    for (const historyItem of historyDataArray) {
       if (!historyItem || !historyItem.data) continue
       const { data } = historyItem
       if (!data || !data.pointData || !(data.pointData instanceof Float32Array)) continue
       
+      lastData = data // 保存最新的数据用于配置
       const pointData = data.pointData
       const pointCount = data.pointCount || (pointData.length / 7)
       
-      for (let pointIndex = 0; pointIndex < pointCount; pointIndex++) {
-        const offset = pointIndex * 7
+      // 遍历该帧的所有点
+      for (let i = 0; i < pointCount; i++) {
+        const offset = i * 7
         if (offset + 6 >= pointData.length) continue
         
         const x = pointData[offset + 0]
@@ -2673,70 +2669,46 @@ export class SceneManager {
         const b = pointData[offset + 5]
         const a = pointData[offset + 6]
         
-        // 使用位置作为唯一标识（精度到小数点后6位）
-        const pointKey = `${x.toFixed(6)},${y.toFixed(6)},${z.toFixed(6)}`
+        // 计算位置hash（使用整数，避免字符串操作）
+        // 使用简单的hash函数：将坐标量化后组合成整数
+        const quantizedX = Math.round(x * PRECISION_INV)
+        const quantizedY = Math.round(y * PRECISION_INV)
+        const quantizedZ = Math.round(z * PRECISION_INV)
         
-        // 初始化该索引的 Set
-        if (!indexToPointsMap.has(pointIndex)) {
-          indexToPointsMap.set(pointIndex, new Set())
-          indexToPointDataMap.set(pointIndex, new Map())
-        }
+        // 使用简单的hash组合（避免整数溢出，使用位运算）
+        // 假设坐标范围在合理范围内（±10000），这样hash值不会溢出
+        const hash = quantizedX * 73856093 ^ quantizedY * 19349663 ^ quantizedZ * 83492791
         
-        const pointSet = indexToPointsMap.get(pointIndex)!
-        const pointDataMap = indexToPointDataMap.get(pointIndex)!
-        
-        // 如果这个位置还没有记录过，添加到 Set 中
-        if (!pointSet.has(pointKey)) {
-          pointSet.add(pointKey)
-          pointDataMap.set(pointKey, { x, y, z, r, g, b, a })
+        // 如果这个位置还没有记录过，添加到Map中
+        if (!pointMap.has(hash)) {
+          pointMap.set(hash, { x, y, z, r, g, b, a })
         }
       }
     }
     
-    // 将所有不同位置的点合并到一个Float32Array中
-    const mergedPointData: number[] = []
-    
-    // 按索引顺序遍历，将每个索引的所有不同位置的点都添加到结果中
-    for (let pointIndex = 0; pointIndex < maxPointsCount; pointIndex++) {
-      const pointSet = indexToPointsMap.get(pointIndex)
-      const pointDataMap = indexToPointDataMap.get(pointIndex)
-      
-      if (pointSet && pointDataMap) {
-        // 将该索引的所有不同位置的点都添加到结果中
-        for (const pointKey of pointSet) {
-          const pointData = pointDataMap.get(pointKey)
-          if (pointData) {
-            // 交错存储 x, y, z, r, g, b, a
-            mergedPointData.push(
-              pointData.x,
-              pointData.y,
-              pointData.z,
-              pointData.r,
-              pointData.g,
-              pointData.b,
-              pointData.a
-            )
-          }
-        }
-      }
+    if (!lastData || pointMap.size === 0) {
+      return null
     }
     
-    // 使用最新的 pose 和 scale（最后一个数据的）
-    const lastItem = sortedHistory[sortedHistory.length - 1]
-    if (!lastItem || !lastItem.data) return null
-    const lastData = lastItem.data
-    
-    // 转换为Float32Array
-    const mergedPointDataArray = new Float32Array(mergedPointData)
-    const mergedPointCount = mergedPointDataArray.length / 7
+    // 将所有唯一的点转换为Float32Array
+    const mergedPointData = new Float32Array(pointMap.size * 7)
+    let index = 0
+    for (const point of pointMap.values()) {
+      mergedPointData[index * 7 + 0] = point.x
+      mergedPointData[index * 7 + 1] = point.y
+      mergedPointData[index * 7 + 2] = point.z
+      mergedPointData[index * 7 + 3] = point.r
+      mergedPointData[index * 7 + 4] = point.g
+      mergedPointData[index * 7 + 5] = point.b
+      mergedPointData[index * 7 + 6] = point.a
+      index++
+    }
     
     return {
       pose: lastData.pose,
       scale: lastData.scale,
-      // 使用Float32Array二进制格式
-      pointData: mergedPointDataArray,
-      pointCount: mergedPointCount,
-      // 保留颜色配置信息
+      pointData: mergedPointData,
+      pointCount: pointMap.size,
       colorTransformer: lastData.colorTransformer,
       useRainbow: lastData.useRainbow,
       minColor: lastData.minColor,
@@ -2771,8 +2743,27 @@ export class SceneManager {
     const decayTimeMs = decayTimeSeconds * 1000
     const cutoffTime = currentTimestamp - decayTimeMs
     
-    // 过滤出在时间窗口内的数据
-    return historyDataArray.filter(({ timestamp }) => timestamp >= cutoffTime)
+    // 过滤出在时间窗口内的数据（保留所有在时间窗口内的数据，不限制帧数）
+    const filtered = historyDataArray.filter(({ timestamp }) => timestamp >= cutoffTime)
+    
+    // 调试日志：帮助诊断问题
+    if (import.meta.env.DEV && filtered.length !== historyDataArray.length) {
+      const oldestItem = filtered.length > 0 ? filtered[0] : undefined
+      const oldestTimestamp = oldestItem?.timestamp ?? currentTimestamp
+      const ageSeconds = (currentTimestamp - oldestTimestamp) / 1000
+      console.log(`[PointCloud2] Filter history:`, {
+        totalHistory: historyDataArray.length,
+        filteredCount: filtered.length,
+        decayTimeSeconds,
+        currentTimestamp,
+        cutoffTime,
+        oldestTimestamp,
+        ageSeconds: ageSeconds.toFixed(2),
+        removedCount: historyDataArray.length - filtered.length
+      })
+    }
+    
+    return filtered
   }
 
   /**
@@ -3003,13 +2994,22 @@ export class SceneManager {
         this.pointCloud2HistoryMap.set(componentId, filteredHistory)
         
         // 合并历史数据（如果 Decay Time > 0）
+        // 优化：对于大规模点云（>50万点），禁用历史合并以提高性能
         let finalData: any
-        if (decayTime > 0 && filteredHistory.length > 1) {
-          // 需要合并多个时间点的数据
+        const pointCount = result.data?.pointCount || (result.data?.pointData?.length / 7 || 0)
+        const isLargePointCloud = pointCount > 500000
+        
+        if (decayTime > 0 && filteredHistory.length > 1 && !isLargePointCloud) {
+          // 需要合并多个时间点的数据（仅对小规模点云）
           finalData = this.mergePointCloud2Data(filteredHistory)
         } else {
-          // Decay Time 为 0 或只有一条数据，直接使用最新数据
+          // Decay Time 为 0、只有一条数据、或大规模点云：直接使用最新数据
           finalData = result.data
+          
+          // 对于大规模点云，如果启用了Decay Time，给出提示
+          if (isLargePointCloud && decayTime > 0 && filteredHistory.length > 1) {
+            console.warn(`[PointCloud2] Decay Time disabled for large point cloud (${pointCount.toLocaleString()} points) to improve performance. Consider reducing Decay Time or point cloud size.`)
+          }
         }
         
         // 调试日志
@@ -3199,12 +3199,25 @@ export class SceneManager {
           
           // 合并历史数据
           let finalData: any
-          if (decayTime > 0 && filteredHistory.length > 1) {
+          // 优化：对于大规模点云（>50万点），禁用历史合并以提高性能
+          const lastHistoryItem = filteredHistory.length > 0 ? filteredHistory[filteredHistory.length - 1] : undefined
+          const pointCount = lastHistoryItem?.data 
+            ? (lastHistoryItem.data.pointCount || (lastHistoryItem.data.pointData?.length / 7 || 0))
+            : 0
+          const isLargePointCloud = pointCount > 500000
+          
+          if (decayTime > 0 && filteredHistory.length > 1 && !isLargePointCloud) {
+            // 需要合并多个时间点的数据（仅对小规模点云）
             finalData = this.mergePointCloud2Data(filteredHistory)
           } else {
-            // Decay Time 为 0 或只有一条数据，使用最新数据
+            // Decay Time 为 0、只有一条数据、或大规模点云：直接使用最新数据
             const lastItem = filteredHistory.length > 0 ? filteredHistory[filteredHistory.length - 1] : undefined
             finalData = lastItem ? lastItem.data : null
+            
+            // 对于大规模点云，如果启用了Decay Time，给出提示
+            if (isLargePointCloud && decayTime > 0 && filteredHistory.length > 1) {
+              console.warn(`[PointCloud2] Decay Time disabled for large point cloud (${pointCount.toLocaleString()} points) to improve performance.`)
+            }
           }
           
           if (finalData) {
