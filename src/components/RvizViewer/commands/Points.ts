@@ -3,7 +3,7 @@
  * 完全基于 regl-worldview 的 Points.js 实现
  */
 import type { Regl, PointType } from '../types'
-import { getVertexColors, pointToVec3, withPose } from './utils/commandUtils'
+import { getVertexColors, pointToVec3, withPose, defaultBlend } from './utils/commandUtils'
 
 type PointsProps = {
   useWorldSpaceSize?: boolean
@@ -26,6 +26,21 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
     const command = regl(
       withPose({
         primitive: 'points',
+        // 优化混合模式：当 alpha < 1.0 时启用混合，alpha = 1.0 时禁用混合（避免模糊）
+        blend: {
+          enable: (_context: any, props: any) => {
+            // 只有当 alpha < 1.0 时才启用混合，alpha = 1.0 时禁用混合以获得清晰渲染
+            const alpha = props.useGpuColorMapping ? (props.alpha ?? 1.0) : 1.0
+            return alpha < 0.999 // 使用 0.999 作为阈值，避免浮点数精度问题
+          },
+          func: defaultBlend.func,
+          equation: defaultBlend.equation
+        },
+        // 启用深度测试，确保正确的渲染顺序
+        depth: {
+          enable: true,
+          mask: true // 启用深度写入，确保正确的深度排序
+        },
         vert: `
     precision mediump float;
 
