@@ -1283,26 +1283,50 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
     }
 
     // 计算轴坐标值的范围（用于 Axis 颜色映射）
+    // 优化：使用循环查找最小值和最大值，避免展开运算符导致堆栈溢出（适用于百万级点云）
     let axisMin = 0
     let axisMax = 1
     if (axisValues.length > 0) {
-      axisMin = Math.min(...axisValues)
-      axisMax = Math.max(...axisValues)
-      if (axisMax === axisMin) {
-        axisMax = axisMin + 1 // 避免除零
+      let min = Infinity
+      let max = -Infinity
+      for (let i = 0; i < axisValues.length; i++) {
+        const val = axisValues[i]
+        if (val !== undefined && val !== null && isFinite(val)) {
+          if (val < min) min = val
+          if (val > max) max = val
+        }
+      }
+      if (isFinite(min) && isFinite(max)) {
+        axisMin = min
+        axisMax = max
+        if (axisMax === axisMin) {
+          axisMax = axisMin + 1 // 避免除零
+        }
       }
     }
 
     // 计算 Intensity 值的范围（如果使用自动计算）
+    // 优化：使用循环查找最小值和最大值，避免展开运算符导致堆栈溢出（适用于百万级点云）
     let intensityMin = minIntensity
     let intensityMax = maxIntensity
     if (intensityValues.length > 0 && colorTransformer === 'Intensity') {
       if (minIntensity === 0 && maxIntensity === 1) {
         // 自动计算范围
-        intensityMin = Math.min(...intensityValues)
-        intensityMax = Math.max(...intensityValues)
-        if (intensityMax === intensityMin) {
-          intensityMax = intensityMin + 1 // 避免除零
+        let min = Infinity
+        let max = -Infinity
+        for (let i = 0; i < intensityValues.length; i++) {
+          const val = intensityValues[i]
+          if (val !== undefined && val !== null && isFinite(val)) {
+            if (val < min) min = val
+            if (val > max) max = val
+          }
+        }
+        if (isFinite(min) && isFinite(max)) {
+          intensityMin = min
+          intensityMax = max
+          if (intensityMax === intensityMin) {
+            intensityMax = intensityMin + 1 // 避免除零
+          }
         }
       }
     }
