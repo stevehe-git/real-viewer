@@ -453,14 +453,21 @@ export class SceneManager {
         this.worldviewContext.onMount(instance, this.pointsCommandPixelSize)
         
         // 调试：检查数据格式和配置
-        // console.log(`[PointCloud2] Registering draw call for ${componentId}:`, {
-        //   pointsCount: pointCloud2Data.points.length,
-        //   colorsCount: pointCloud2Data.colors?.length || 0,
-        //   hasColor: !!pointCloud2Data.color,
-        //   scale: renderData.scale,
-        //   style: renderData.style,
-        //   hasPose: !!pointCloud2Data.pose
-        // })
+        // 兼容新旧两种数据格式
+        const pointsCount = pointCloud2Data.pointData 
+          ? (pointCloud2Data.pointData.length / 7) 
+          : (pointCloud2Data.points?.length || 0)
+        const colorsCount = pointCloud2Data.colors?.length || 0
+        
+        console.log(`[PointCloud2] Registering draw call for ${componentId}:`, {
+          pointsCount,
+          colorsCount,
+          hasColor: !!pointCloud2Data.color,
+          scale: renderData.scale,
+          style: renderData.style,
+          hasPose: !!pointCloud2Data.pose,
+          dataFormat: pointCloud2Data.pointData ? 'Float32Array' : 'ObjectArray'
+        })
         
         // 确保数据格式正确（Points 命令期望单个对象，不是数组）
         this.worldviewContext.registerDrawCall({

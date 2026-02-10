@@ -1403,7 +1403,7 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
 
     // 转换为Float32Array（更高效的内存使用）
     const pointDataArray = new Float32Array(pointData)
-    
+
     // 点大小：直接使用配置值
     // 当 useWorldSpaceSize=true 时，size 应该是世界空间单位（米）
     // 当 useWorldSpaceSize=false 时，size 是像素值
