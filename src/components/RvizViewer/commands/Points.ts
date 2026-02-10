@@ -39,7 +39,7 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
     uniform float minPointSize;
     uniform float maxPointSize;
     uniform int pointStyle;
-    
+
     // GPU端颜色映射配置
     uniform int colorTransformer; // 0=Flat, 1=Intensity, 2=Axis
     uniform bool useRainbow;
@@ -336,8 +336,8 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
               case 'Intensity': return 1
               case 'Axis': return 2
               default: return 0 // Flat
-            }
-          },
+          }
+        },
           useRainbow: (_context: any, props: any) => {
             return props.useGpuColorMapping ? (props.useRainbow ?? true) : false
           },

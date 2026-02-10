@@ -285,46 +285,46 @@ export class PointCloudBufferManager {
       }
     } else {
       // 旧格式：[x, y, z, r, g, b, a]
-      const colorData = new Float32Array(count * 4)
-      
-      for (let i = 0; i < count; i++) {
+    const colorData = new Float32Array(count * 4)
+    
+    for (let i = 0; i < count; i++) {
         const srcOffset = i * stride
-        const posOffset = i * 3
-        const colorOffset = i * 4
-        
-        // 位置：xyz
-        positionData[posOffset + 0] = floatData[srcOffset + 0] ?? 0
-        positionData[posOffset + 1] = floatData[srcOffset + 1] ?? 0
-        positionData[posOffset + 2] = floatData[srcOffset + 2] ?? 0
-        
-        // 颜色：rgba
-        colorData[colorOffset + 0] = floatData[srcOffset + 3] ?? 1
-        colorData[colorOffset + 1] = floatData[srcOffset + 4] ?? 1
-        colorData[colorOffset + 2] = floatData[srcOffset + 5] ?? 1
-        colorData[colorOffset + 3] = floatData[srcOffset + 6] ?? 1
-      }
+      const posOffset = i * 3
+      const colorOffset = i * 4
+      
+      // 位置：xyz
+      positionData[posOffset + 0] = floatData[srcOffset + 0] ?? 0
+      positionData[posOffset + 1] = floatData[srcOffset + 1] ?? 0
+      positionData[posOffset + 2] = floatData[srcOffset + 2] ?? 0
+      
+      // 颜色：rgba
+      colorData[colorOffset + 0] = floatData[srcOffset + 3] ?? 1
+      colorData[colorOffset + 1] = floatData[srcOffset + 4] ?? 1
+      colorData[colorOffset + 2] = floatData[srcOffset + 5] ?? 1
+      colorData[colorOffset + 3] = floatData[srcOffset + 6] ?? 1
+    }
 
       // 创建 regl buffer（一次性上传到 GPU，使用 static usage 优化）
       // usage: 'static' 提示 GPU 数据不会频繁更新，允许 GPU 进行内存优化和缓存
-      const positionBuffer = this.regl.buffer({
-        type: 'float',
+    const positionBuffer = this.regl.buffer({
+      type: 'float',
         usage: 'static', // 静态使用，数据不会频繁更新，GPU 可以优化内存布局
-        data: positionData
-      })
+      data: positionData
+    })
 
-      const colorBuffer = this.regl.buffer({
-        type: 'float',
-        usage: 'static', // 静态使用，数据不会频繁更新
-        data: colorData
-      })
+    const colorBuffer = this.regl.buffer({
+      type: 'float',
+      usage: 'static', // 静态使用，数据不会频繁更新
+      data: colorData
+    })
 
-      return {
-        positionBuffer,
-        colorBuffer,
-        count,
-        dataHash: data.dataHash,
+    return {
+      positionBuffer,
+      colorBuffer,
+      count,
+      dataHash: data.dataHash,
         useGpuColorMapping: false,
-        lastUsed: this.currentFrameTime
+      lastUsed: this.currentFrameTime
       }
     }
   }
@@ -408,9 +408,9 @@ export class PointCloudBufferManager {
         useGpuColorMapping: true
       }
     } else {
-      return {
-        positionBuffer: bufferItem.positionBuffer,
-        colorBuffer: bufferItem.colorBuffer,
+    return {
+      positionBuffer: bufferItem.positionBuffer,
+      colorBuffer: bufferItem.colorBuffer,
         count: bufferItem.count,
         useGpuColorMapping: false
       }

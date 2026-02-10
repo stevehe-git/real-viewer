@@ -440,8 +440,8 @@ export class SceneManager {
           if (pointCount === 0) {
             console.warn(`[PointCloud2] No points in data for ${componentId}`)
             return
-          }
-          
+        }
+        
           // 性能优化：优先使用缓存的 GPU buffer（如果存在）
           // 这样可以避免每帧重新创建 Float32Array，大幅提升渲染性能
           let cachedBuffers: { positionBuffer?: any; intensityBuffer?: any; colorBuffer?: any } | undefined
@@ -492,12 +492,12 @@ export class SceneManager {
           }
           
           renderData = {
-            ...pointCloud2Data,
-            scale: {
-              x: config.size ?? pointCloud2Data.scale?.x ?? 3,
-              y: config.size ?? pointCloud2Data.scale?.y ?? 3,
-              z: config.size ?? pointCloud2Data.scale?.z ?? 3
-            },
+          ...pointCloud2Data,
+          scale: {
+            x: config.size ?? pointCloud2Data.scale?.x ?? 3,
+            y: config.size ?? pointCloud2Data.scale?.y ?? 3,
+            z: config.size ?? pointCloud2Data.scale?.z ?? 3
+          },
             style: config.style || 'Points'
           }
         } else {
