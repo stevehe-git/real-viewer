@@ -135,6 +135,7 @@ export function getDefaultOptions(type: string): Record<string, any> {
       colorTransformer: 'Intensity',
       channelName: 'intensity',
       useRainbow: true,
+      invertRainbow: false,
       minColor: { r: 0, g: 0, b: 0 },
       maxColor: { r: 255, g: 255, b: 255 },
       autocomputeIntensityBounds: true,

@@ -123,6 +123,7 @@ export interface PointCloud2ProcessRequest {
     alpha?: number
     colorTransformer?: string
     useRainbow?: boolean
+    invertRainbow?: boolean // 反转彩虹色谱方向
     minColor?: { r: number; g: number; b: number }
     maxColor?: { r: number; g: number; b: number }
     minIntensity?: number
@@ -1100,6 +1101,7 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       alpha = 1.0,
       colorTransformer = 'Intensity',
       useRainbow = true, // 与 displayComponent.ts 中的默认值一致
+      invertRainbow = false, // 反转彩虹色谱方向
       minColor = { r: 0, g: 0, b: 0 },
       maxColor = { r: 255, g: 255, b: 255 },
       minIntensity = 0,
@@ -1431,6 +1433,7 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
         useGpuColorMapping: true,
         colorTransformer,
         useRainbow,
+        invertRainbow,
         minColor,
         maxColor,
         minIntensity: intensityMin,

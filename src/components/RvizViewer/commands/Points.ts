@@ -43,6 +43,7 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
     // GPU端颜色映射配置
     uniform int colorTransformer; // 0=Flat, 1=Intensity, 2=Axis
     uniform bool useRainbow;
+    uniform bool invertRainbow; // 反转彩虹色谱方向
     uniform float intensityMin;
     uniform float intensityMax;
     uniform vec3 minColor;
@@ -57,10 +58,44 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
     attribute float intensity; // 用于Intensity模式，如果不需要则为0（可选属性）
     varying vec4 fragColor;
     
-    // HSL转RGB（GPU端实现）
-    vec3 hslToRgb(vec3 c) {
-      vec3 rgb = clamp(abs(mod(c.x*6.0+vec3(0.0,4.0,2.0), 6.0)-3.0)-1.0, 0.0, 1.0);
-      return c.z + c.y * (rgb - 0.5) * (1.0 - abs(2.0 * c.z - 1.0));
+    // HSV转RGB（GPU端实现，完全复刻RViz的彩虹色映射）
+    // 输入：h (0~1), s (0~1), v (0~1)
+    // 输出：RGB (0~1)
+    // 使用标准HSV转RGB算法，完全兼容所有GLSL版本
+    vec3 hsvToRgb(vec3 c) {
+      float h = c.x;
+      float s = c.y;
+      float v = c.z;
+      
+      // 将色相映射到 [0, 6) 范围
+      float h6 = h * 6.0;
+      // 计算整数部分和小数部分
+      float i = floor(h6);
+      float f = h6 - i;
+      
+      // 计算中间值
+      float p = v * (1.0 - s);
+      float q = v * (1.0 - f * s);
+      float t = v * (1.0 - (1.0 - f) * s);
+      
+      // 使用分段函数计算RGB，避免整数比较
+      // 这是标准的HSV转RGB算法
+      vec3 rgb;
+      if (i < 1.0) {
+        rgb = vec3(v, t, p);
+      } else if (i < 2.0) {
+        rgb = vec3(q, v, p);
+      } else if (i < 3.0) {
+        rgb = vec3(p, v, t);
+      } else if (i < 4.0) {
+        rgb = vec3(p, q, v);
+      } else if (i < 5.0) {
+        rgb = vec3(t, p, v);
+      } else {
+        rgb = vec3(v, p, q);
+      }
+      
+      return rgb;
     }
     
     void main () {
@@ -78,10 +113,18 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
           normalizedIntensity = clamp((intensity - intensityMin) / intensityRange, 0.0, 1.0);
         }
         
+        // 支持反色映射：反转归一化值
+        if (invertRainbow) {
+          normalizedIntensity = 1.0 - normalizedIntensity;
+        }
+        
         if (useRainbow) {
-          // Rainbow模式：HSV颜色空间（0=blue, 1=red）
+          // RViz彩虹色映射核心公式：归一化值映射到HSV色相
+          // h = (1 - n) * 240° / 360° = (1 - n) * 2/3
+          // n=0 → h=240°(蓝紫), n=1 → h=0°(红)
+          // 固定饱和度s=1，明度v=1
           float hue = (1.0 - normalizedIntensity) * 240.0 / 360.0;
-          finalColor = hslToRgb(vec3(hue, 1.0, 0.5));
+          finalColor = hsvToRgb(vec3(hue, 1.0, 1.0));
         } else {
           // 线性插值模式
           finalColor = mix(minColor, maxColor, normalizedIntensity);
@@ -96,9 +139,41 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
           normalizedAxis = clamp((axisValue - axisMin) / axisRange, 0.0, 1.0);
         }
         
-        // 始终使用Rainbow模式：红色→黄色→绿色
-        float hue = normalizedAxis * 120.0 / 360.0;
-        finalColor = hslToRgb(vec3(hue, 1.0, 0.5));
+        // 支持反色映射：反转归一化值
+        if (invertRainbow) {
+          normalizedAxis = 1.0 - normalizedAxis;
+        }
+        
+        if (useRainbow) {
+          // RViz彩虹色映射核心公式：归一化值映射到HSV色相
+          // 默认方向：红->紫（最小值→红色，最大值→蓝紫色）
+          // h = n * 300° / 360° = n * 5/6
+          // n=0 → h=0°(红), n=1 → h=300°(深紫)
+          float hue = normalizedAxis * 300.0 / 360.0;
+          
+          // RViz蓝紫分界优化：对蓝紫区间（hue >= 192°/360°）增加亮度增益和饱和度调整
+          // 模拟RViz的视觉效果，让蓝、紫区分更明显
+          float s = 1.0;
+          float v = 1.0;
+          float hueDegrees = hue * 360.0;
+          
+          // 蓝紫区间（hue >= 192°）：增加亮度增益，降低饱和度
+          // 核心分界点：192°(青色)、210°(纯蓝)、240°(蓝紫)、300°(深紫)
+          if (hueDegrees >= 192.0) {
+            // 越接近300°（深紫色），明度增益越高，避免过暗
+            // v = 0.8 + (300 - hue) / (300 - 192) * 0.2
+            // 在192°~300°区间内，从192°的v=1.0渐变到300°的v=0.8
+            float hueNormalized = (hueDegrees - 192.0) / (300.0 - 192.0); // 归一化到 [0, 1]
+            v = 0.8 + (1.0 - hueNormalized) * 0.2;
+            // 蓝紫区间（hue > 210°）降低饱和度，让紫色更突出
+            s = hueDegrees > 210.0 ? 0.95 : 1.0;
+          }
+          
+          finalColor = hsvToRgb(vec3(hue, s, v));
+        } else {
+          // 单色映射：在 Min Color 与 Max Color 之间线性插值
+          finalColor = mix(minColor, maxColor, normalizedAxis);
+        }
       } else {
         // Flat模式
         finalColor = flatColor;
@@ -340,6 +415,9 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
         },
           useRainbow: (_context: any, props: any) => {
             return props.useGpuColorMapping ? (props.useRainbow ?? true) : false
+          },
+          invertRainbow: (_context: any, props: any) => {
+            return props.useGpuColorMapping ? (props.invertRainbow ?? false) : false
           },
           intensityMin: (_context: any, props: any) => {
             if (!props.useGpuColorMapping) return 0

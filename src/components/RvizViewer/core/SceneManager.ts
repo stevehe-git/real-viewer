@@ -37,6 +37,7 @@ export class SceneManager {
     flatColor?: { r: number; g: number; b: number }
     colorTransformer?: string
     useRainbow?: boolean
+    invertRainbow?: boolean // 反转彩虹色谱方向
     minColor?: { r: number; g: number; b: number }
     maxColor?: { r: number; g: number; b: number }
     minIntensity?: number
@@ -472,6 +473,7 @@ export class SceneManager {
             useGpuColorMapping: pointCloud2Data.useGpuColorMapping ?? true,
             colorTransformer: pointCloud2Data.colorTransformer || 'Flat',
             useRainbow: pointCloud2Data.useRainbow ?? true,
+            invertRainbow: pointCloud2Data.invertRainbow ?? false,
             minColor: pointCloud2Data.minColor || { r: 0, g: 0, b: 0 },
             maxColor: pointCloud2Data.maxColor || { r: 255, g: 255, b: 255 },
             minIntensity: pointCloud2Data.minIntensity ?? 0,
@@ -3011,9 +3013,9 @@ export class SceneManager {
 
       // 从 getDefaultOptions 获取默认值
       const defaultOptions = getDefaultOptions('pointcloud2')
-      // 对于 Axis 模式，始终使用 rainbow 模式（不需要用户配置）
+      // 对于 Axis 模式，支持 useRainbow 和 invertRainbow 配置
       const isAxisMode = config.colorTransformer === 'Axis'
-      const defaultUseRainbow = isAxisMode ? true : (config.useRainbow ?? defaultOptions.useRainbow ?? true)
+      const defaultUseRainbow = isAxisMode ? (config.useRainbow ?? defaultOptions.useRainbow ?? true) : (config.useRainbow ?? defaultOptions.useRainbow ?? true)
       
       // 确保颜色对象是可序列化的纯对象（避免 DataCloneError）
       const ensureSerializableColor = (color: any, defaultColor: { r: number; g: number; b: number }): { r: number; g: number; b: number } => {
@@ -3032,7 +3034,8 @@ export class SceneManager {
         size: config.size ?? defaultOptions.size ?? 3,
         alpha: config.alpha ?? defaultOptions.alpha ?? 1.0,
         colorTransformer: config.colorTransformer ?? defaultOptions.colorTransformer ?? 'Intensity',
-        useRainbow: defaultUseRainbow, // Axis 模式始终为 true
+        useRainbow: defaultUseRainbow,
+        invertRainbow: config.invertRainbow ?? defaultOptions.invertRainbow ?? false,
         minColor: ensureSerializableColor(config.minColor, defaultOptions.minColor || { r: 0, g: 0, b: 0 }),
         maxColor: ensureSerializableColor(config.maxColor, defaultOptions.maxColor || { r: 255, g: 255, b: 255 }),
         minIntensity: config.minIntensity ?? defaultOptions.minIntensity ?? 0,
