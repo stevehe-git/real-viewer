@@ -1205,11 +1205,11 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       return view.getFloat32(0, true) // little-endian
     }
 
-    // 优化：使用Float32Array直接存储，支持GPU端颜色映射
+    // 优化：使用预分配的Float32Array直接存储，支持GPU端颜色映射
     // GPU端颜色映射格式：[x1, y1, z1, intensity1, x2, y2, z2, intensity2, ...]
     // 每个点占用4个float（16字节），比旧格式节省43%内存
     // 旧格式（向后兼容）：[x1, y1, z1, r1, g1, b1, a1, ...] (7个float/点)
-    const pointData: number[] = []
+    // 注意：pointData数组已移除，直接使用预分配的Float32Array
 
     // 转换数据数组为 Uint8Array（如果需要）
     // 支持 Uint8Array、Array、字符串（base64编码）
@@ -1247,92 +1247,34 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       }
     }
 
-    const pointCount = width * height || Math.floor(dataArray.length / pointStep)
-
-    // 第一遍遍历：收集所有点的坐标值和 Intensity 值（用于 Axis 和 Intensity 颜色映射的范围计算）
-    const axisValues: number[] = [] // 用于 Axis 模式的坐标值
-    const intensityValues: number[] = []
+    const rawPointCount = width * height || Math.floor(dataArray.length / pointStep)
     
-    for (let i = 0; i < pointCount; i++) {
-      const pointOffset = i * pointStep
-      if (pointOffset + pointStep > dataArray.length) {
-        break
-      }
-
-      const x = readFloat32(dataArray, pointOffset + xOffset)
-      const y = readFloat32(dataArray, pointOffset + yOffset)
-      const z = readFloat32(dataArray, pointOffset + zOffset)
-
-      if (isFinite(x) && isFinite(y) && isFinite(z)) {
-        if (colorTransformer === 'Axis') {
-          // 根据 axisColor 选择对应的坐标值
-          let selectedValue: number
-          if (axisColor === 'X') {
-            selectedValue = x
-          } else if (axisColor === 'Y') {
-            selectedValue = y
-          } else {
-            selectedValue = z // 默认 Z
-          }
-          axisValues.push(selectedValue)
-        } else if (colorTransformer === 'Intensity' && intensityOffset >= 0 && autocomputeIntensityBounds) {
-          const intensity = readFloat32(dataArray, pointOffset + intensityOffset)
-          if (isFinite(intensity)) {
-            intensityValues.push(intensity)
-          }
-        }
-      }
+    // 智能采样：对于超大点云（超过500万点），自动降采样以保持性能
+    // 亿万级点云需要降采样，否则会导致内存溢出和浏览器崩溃
+    const MAX_POINTS = 5000000 // 最多处理500万点
+    const needsDownsampling = rawPointCount > MAX_POINTS
+    const sampleStep = needsDownsampling ? Math.ceil(rawPointCount / MAX_POINTS) : 1
+    const pointCount = needsDownsampling ? Math.floor(rawPointCount / sampleStep) : rawPointCount
+    
+    if (needsDownsampling) {
+      console.warn(`[PointCloud2 Worker] Large point cloud detected (${rawPointCount.toLocaleString()} points). Downsampling to ${pointCount.toLocaleString()} points (step: ${sampleStep})`)
     }
 
-    // 计算轴坐标值的范围（用于 Axis 颜色映射）
-    // 优化：使用循环查找最小值和最大值，避免展开运算符导致堆栈溢出（适用于百万级点云）
-    let axisMin = 0
-    let axisMax = 1
-    if (axisValues.length > 0) {
-      let min = Infinity
-      let max = -Infinity
-      for (let i = 0; i < axisValues.length; i++) {
-        const val = axisValues[i]
-        if (val !== undefined && val !== null && isFinite(val)) {
-          if (val < min) min = val
-          if (val > max) max = val
-        }
-      }
-      if (isFinite(min) && isFinite(max)) {
-        axisMin = min
-        axisMax = max
-        if (axisMax === axisMin) {
-          axisMax = axisMin + 1 // 避免除零
-        }
-      }
-    }
+    // 预分配Float32Array，避免中间数组的内存开销
+    // 每个点4个float：x, y, z, intensity
+    const pointDataArray = new Float32Array(pointCount * 4)
+    
+    // 用于范围计算的临时变量（单遍遍历时使用）
+    let axisMin = Infinity
+    let axisMax = -Infinity
+    let intensityMin = Infinity
+    let intensityMax = -Infinity
+    let validPointCount = 0
+    let hasAxisValues = false
+    let hasIntensityValues = false
 
-    // 计算 Intensity 值的范围（如果使用自动计算）
-    // 优化：使用循环查找最小值和最大值，避免展开运算符导致堆栈溢出（适用于百万级点云）
-    let intensityMin = minIntensity
-    let intensityMax = maxIntensity
-    if (intensityValues.length > 0 && colorTransformer === 'Intensity' && autocomputeIntensityBounds) {
-      // 自动计算范围
-      let min = Infinity
-      let max = -Infinity
-      for (let i = 0; i < intensityValues.length; i++) {
-        const val = intensityValues[i]
-        if (val !== undefined && val !== null && isFinite(val)) {
-          if (val < min) min = val
-          if (val > max) max = val
-        }
-      }
-      if (isFinite(min) && isFinite(max)) {
-        intensityMin = min
-        intensityMax = max
-        if (intensityMax === intensityMin) {
-          intensityMax = intensityMin + 1 // 避免除零
-        }
-      }
-    }
-
-    // 第二遍遍历：处理所有点并计算颜色
-    for (let i = 0; i < pointCount; i++) {
+    // 单遍遍历：同时处理数据收集和范围计算（优化性能）
+    for (let i = 0; i < rawPointCount; i += sampleStep) {
       const pointOffset = i * pointStep
       
       if (pointOffset + pointStep > dataArray.length) {
@@ -1349,23 +1291,74 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
         continue
       }
 
+      // 计算范围（用于颜色映射）
+      if (colorTransformer === 'Axis') {
+        let selectedValue: number
+        if (axisColor === 'X') {
+          selectedValue = x
+        } else if (axisColor === 'Y') {
+          selectedValue = y
+        } else {
+          selectedValue = z
+        }
+        if (selectedValue < axisMin) axisMin = selectedValue
+        if (selectedValue > axisMax) axisMax = selectedValue
+        hasAxisValues = true
+      }
+
       // GPU端颜色映射：只传递原始数据，不计算颜色
       let intensityValue = 0.0
       
       if (colorTransformer === 'Intensity' && intensityOffset >= 0) {
-        // Intensity 模式：传递原始intensity值，颜色在GPU端计算
         intensityValue = readFloat32(dataArray, pointOffset + intensityOffset)
         if (!isFinite(intensityValue)) {
           intensityValue = 0.0
+        } else {
+          // 同时计算intensity范围
+          if (autocomputeIntensityBounds) {
+            if (intensityValue < intensityMin) intensityMin = intensityValue
+            if (intensityValue > intensityMax) intensityMax = intensityValue
+            hasIntensityValues = true
+          }
         }
       }
-      // Axis 和 Flat 模式：intensity值为0，坐标值在position中，颜色在GPU端计算
 
-      // 直接添加到数组：交错存储 x, y, z, intensity（GPU端颜色映射格式）
-      pointData.push(x, y, z, intensityValue)
+      // 直接写入预分配的Float32Array（避免push操作的开销）
+      const arrayIndex = validPointCount * 4
+      pointDataArray[arrayIndex] = x
+      pointDataArray[arrayIndex + 1] = y
+      pointDataArray[arrayIndex + 2] = z
+      pointDataArray[arrayIndex + 3] = intensityValue
+      
+      validPointCount++
     }
 
-    const processedPointCount = pointData.length / 4 // 每个点4个float（GPU端颜色映射格式）
+    // 处理范围计算的边界情况
+    if (hasAxisValues) {
+      if (!isFinite(axisMin) || !isFinite(axisMax)) {
+        axisMin = 0
+        axisMax = 1
+      } else if (axisMax === axisMin) {
+        axisMax = axisMin + 1 // 避免除零
+      }
+    } else {
+      axisMin = 0
+      axisMax = 1
+    }
+
+    if (hasIntensityValues && autocomputeIntensityBounds) {
+      if (!isFinite(intensityMin) || !isFinite(intensityMax)) {
+        intensityMin = minIntensity
+        intensityMax = maxIntensity
+      } else if (intensityMax === intensityMin) {
+        intensityMax = intensityMin + 1 // 避免除零
+      }
+    } else {
+      intensityMin = minIntensity
+      intensityMax = maxIntensity
+    }
+
+    const processedPointCount = validPointCount
     if (processedPointCount === 0) {
       return {
         type: 'pointCloud2Processed',
@@ -1374,8 +1367,10 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       }
     }
 
-    // 转换为Float32Array（更高效的内存使用）
-    const pointDataArray = new Float32Array(pointData)
+    // 如果实际处理的点数少于预分配的大小，创建精确大小的数组（节省内存）
+    const finalPointDataArray = processedPointCount < pointCount 
+      ? pointDataArray.slice(0, processedPointCount * 4)
+      : pointDataArray
 
     // 点大小：直接使用配置值
     // 当 useWorldSpaceSize=true 时，size 应该是世界空间单位（米）
@@ -1424,7 +1419,7 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       data: {
         pose,
         // 使用Float32Array二进制格式，比对象数组节省70%+内存
-        pointData: pointDataArray, // 交错存储 xyz + intensity（GPU端颜色映射）
+        pointData: finalPointDataArray, // 交错存储 xyz + intensity（GPU端颜色映射）
         pointCount: processedPointCount, // 点的数量
         scale: { x: pointSize, y: pointSize, z: pointSize },
         // GPU端颜色映射配置
@@ -1520,15 +1515,22 @@ self.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
         throw new Error(`Unknown request type: ${(request as any).type}`)
     }
 
-    // 使用 Transferable Objects 优化大数据传输（ImageData 可以传输）
+    // 使用 Transferable Objects 优化大数据传输，避免序列化开销
     if (response.type === 'imageProcessed') {
       const imageResult = response as ImageProcessResult
       if (imageResult.imageData) {
         // ImageData.data 是 Uint8ClampedArray，可以作为 Transferable 传输
-        // Worker 的 postMessage 支持第二个参数作为 transfer 数组
-        // Worker postMessage 的 transfer 参数需要作为第二个参数传递
-        // 注意：Worker 的 postMessage 第二个参数是 transfer 数组，不是 options 对象
         const transferList = [imageResult.imageData.data.buffer]
+        ;(self.postMessage as any)(response, transferList)
+      } else {
+        self.postMessage(response)
+      }
+    } else if (response.type === 'pointCloud2Processed') {
+      const pointCloudResult = response as PointCloud2ProcessResult
+      if (pointCloudResult.data?.pointData && pointCloudResult.data.pointData instanceof Float32Array) {
+        // Float32Array 可以作为 Transferable 传输，避免大数据序列化
+        // 这对于百万/千万级点云非常重要，可以避免内存复制和崩溃
+        const transferList = [pointCloudResult.data.pointData.buffer]
         ;(self.postMessage as any)(response, transferList)
       } else {
         self.postMessage(response)
