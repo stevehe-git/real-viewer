@@ -168,9 +168,10 @@
         @update:model-value="update('decayTime', $event)"
         size="small"
         :min="0"
-        :max="100"
         :step="0.1"
         class="config-value"
+        :precision="1"
+        placeholder="无上限"
       />
     </div>
     <div class="config-row">

@@ -2807,6 +2807,12 @@ export class SceneManager {
       return lastItem ? [lastItem] : []
     }
     
+    // 处理无上限情况：如果 decayTimeSeconds 非常大（如 Infinity 或 > 1e6 秒），保留所有历史数据
+    if (!isFinite(decayTimeSeconds) || decayTimeSeconds > 1e6) {
+      // 无上限：保留所有历史数据
+      return historyDataArray
+    }
+    
     const decayTimeMs = decayTimeSeconds * 1000
     const cutoffTime = currentTimestamp - decayTimeMs
     
