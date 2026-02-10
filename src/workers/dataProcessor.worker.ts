@@ -1203,16 +1203,11 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       return view.getFloat32(0, true) // little-endian
     }
 
-    // 优化：使用Float32Array直接存储，避免对象数组的内存开销
-    // 格式：[x1, y1, z1, r1, g1, b1, a1, x2, y2, z2, r2, g2, b2, a2, ...]
-    // 每个点占用7个float（28字节），比对象数组节省70%+内存
+    // 优化：使用Float32Array直接存储，支持GPU端颜色映射
+    // GPU端颜色映射格式：[x1, y1, z1, intensity1, x2, y2, z2, intensity2, ...]
+    // 每个点占用4个float（16字节），比旧格式节省43%内存
+    // 旧格式（向后兼容）：[x1, y1, z1, r1, g1, b1, a1, ...] (7个float/点)
     const pointData: number[] = []
-    
-    // Flat 模式使用配置的颜色，其他情况使用默认白色
-    const defaultColorR = colorTransformer === 'Flat' ? (flatColor.r ?? 255) / 255 : 1
-    const defaultColorG = colorTransformer === 'Flat' ? (flatColor.g ?? 255) / 255 : 1
-    const defaultColorB = colorTransformer === 'Flat' ? (flatColor.b ?? 255) / 255 : 1
-    const defaultColorA = alpha
 
     // 转换数据数组为 Uint8Array（如果需要）
     // 支持 Uint8Array、Array、字符串（base64编码）
@@ -1330,69 +1325,23 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
         continue
       }
 
-      // 计算颜色（参照 RViz 实现）
-      // PointCloud2 支持三种颜色转换模式：Intensity、Axis、Flat
-      let r = defaultColorR
-      let g = defaultColorG
-      let b = defaultColorB
-      let a = defaultColorA
+      // GPU端颜色映射：只传递原始数据，不计算颜色
+      let intensityValue = 0.0
       
       if (colorTransformer === 'Intensity' && intensityOffset >= 0) {
-        // Intensity 模式：根据点的强度值（intensity 字段）映射颜色（常用于激光雷达）
-        const intensity = readFloat32(dataArray, pointOffset + intensityOffset)
-        // 归一化强度值到 [0, 1] 范围
-        const normalizedIntensity = (intensity - intensityMin) / (intensityMax - intensityMin)
-        const clampedIntensity = Math.max(0, Math.min(1, normalizedIntensity))
-        
-        if (useRainbow) {
-          // Rainbow 模式：使用 HSV 颜色空间（0=blue, 1=red）
-          const hue = (1.0 - clampedIntensity) * 240.0 / 360.0 // 反转：高值=红色，低值=蓝色
-          const rgb = hslToRgb(hue, 1.0, 0.5)
-          r = rgb.r
-          g = rgb.g
-          b = rgb.b
-          a = alpha
-        } else {
-          // 线性插值模式
-          r = (minColor.r + (maxColor.r - minColor.r) * clampedIntensity) / 255
-          g = (minColor.g + (maxColor.g - minColor.g) * clampedIntensity) / 255
-          b = (minColor.b + (maxColor.b - minColor.b) * clampedIntensity) / 255
-          a = alpha
+        // Intensity 模式：传递原始intensity值，颜色在GPU端计算
+        intensityValue = readFloat32(dataArray, pointOffset + intensityOffset)
+        if (!isFinite(intensityValue)) {
+          intensityValue = 0.0
         }
-      } else if (colorTransformer === 'Axis') {
-        // Axis 模式：基于选定轴（X、Y 或 Z）的坐标值计算颜色（参照 RViz 实现）
-        // 始终使用 rainbow 模式，产生红色→黄色→绿色的渐变效果
-        let axisValue: number
-        if (axisColor === 'X') {
-          axisValue = x
-        } else if (axisColor === 'Y') {
-          axisValue = y
-        } else {
-          axisValue = z // 默认 Z
-        }
-        
-        // 计算归一化值（避免除零）
-        const axisRange = axisMax - axisMin
-        const normalizedAxis = axisRange > 0 ? (axisValue - axisMin) / axisRange : 0
-        const clampedAxis = Math.max(0, Math.min(1, normalizedAxis))
-        
-        // 始终使用 Rainbow 模式：使用 HSV 颜色空间（参照 RViz：红色→黄色→绿色）
-        // 低值=红色 (hue=0°), 高值=绿色 (hue=120°)
-        // 这样会产生红色→黄色→绿色的渐变效果
-        const hue = clampedAxis * 120.0 / 360.0 // 0.0 → 1/3 (红色到绿色)
-        const rgb = hslToRgb(hue, 1.0, 0.5)
-        r = rgb.r
-        g = rgb.g
-        b = rgb.b
-        a = alpha
       }
-      // 如果 colorTransformer 是 Flat 或其他，使用 defaultColor（已在上面设置）
+      // Axis 和 Flat 模式：intensity值为0，坐标值在position中，颜色在GPU端计算
 
-      // 直接添加到数组：交错存储 x, y, z, r, g, b, a
-      pointData.push(x, y, z, r, g, b, a)
+      // 直接添加到数组：交错存储 x, y, z, intensity（GPU端颜色映射格式）
+      pointData.push(x, y, z, intensityValue)
     }
 
-    const processedPointCount = pointData.length / 7 // 每个点7个float
+    const processedPointCount = pointData.length / 4 // 每个点4个float（GPU端颜色映射格式）
     if (processedPointCount === 0) {
       return {
         type: 'pointCloud2Processed',
@@ -1443,18 +1392,19 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       }
     }
     
-    // 返回优化后的数据格式：使用Float32Array二进制格式
-    // 格式：[x1, y1, z1, r1, g1, b1, a1, x2, y2, z2, r2, g2, b2, a2, ...]
+    // 返回优化后的数据格式：使用Float32Array二进制格式，支持GPU端颜色映射
+    // GPU端颜色映射格式：[x1, y1, z1, intensity1, x2, y2, z2, intensity2, ...]
     return {
       type: 'pointCloud2Processed',
       componentId,
       data: {
         pose,
         // 使用Float32Array二进制格式，比对象数组节省70%+内存
-        pointData: pointDataArray, // 交错存储 xyz + rgba
+        pointData: pointDataArray, // 交错存储 xyz + intensity（GPU端颜色映射）
         pointCount: processedPointCount, // 点的数量
         scale: { x: pointSize, y: pointSize, z: pointSize },
-        // 保留颜色配置信息，用于GPU端颜色映射（如果需要）
+        // GPU端颜色映射配置
+        useGpuColorMapping: true,
         colorTransformer,
         useRainbow,
         minColor,
@@ -1464,12 +1414,12 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
         axisColor,
         axisMin,
         axisMax,
-        flatColor: colorTransformer === 'Flat' ? {
-          r: defaultColorR,
-          g: defaultColorG,
-          b: defaultColorB,
-          a: defaultColorA
-        } : undefined
+        flatColor: {
+          r: flatColor.r ?? 255,
+          g: flatColor.g ?? 255,
+          b: flatColor.b ?? 0
+        },
+        alpha
       }
     }
   } catch (error: any) {

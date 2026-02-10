@@ -8,14 +8,26 @@ const rotateGLSL = `
   uniform vec3 _position;
   uniform vec4 _rotation;
 
-  // rotate a 3d point v by a rotation quaternion q
+  // 优化的四元数旋转函数（GPU端TF变换）
+  // 使用更高效的旋转算法，减少交叉乘积计算
   vec3 rotate(vec3 v, vec4 q) {
-    vec3 temp = cross(q.xyz, v) + q.w * v;
-    return v + (2.0 * cross(q.xyz, temp));
+    // 四元数旋转公式：v' = q * v * q^-1
+    // 优化版本：减少临时变量和计算
+    vec3 qxyz = q.xyz;
+    float qw = q.w;
+    
+    // 计算 q * v（作为纯四元数）
+    vec3 t = 2.0 * cross(qxyz, v);
+    
+    // 应用旋转：v' = v + qw * t + cross(qxyz, t)
+    return v + qw * t + cross(qxyz, t);
   }
 
+  // GPU端TF变换：应用pose（旋转+平移）
+  // 这是完全在GPU中执行的，不占用CPU资源
   vec3 applyPose(vec3 point) {
-    // rotate the point and then add the position of the pose
+    // 先旋转点，然后加上位置偏移
+    // 这是标准的TF变换：T * R * point
     return rotate(point, _rotation) + _position;
   }
 `

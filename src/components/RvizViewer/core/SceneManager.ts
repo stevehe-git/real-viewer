@@ -403,9 +403,34 @@ export class SceneManager {
         // 优化：直接使用Float32Array格式，避免转换开销
         let renderData: any
         if (pointCloud2Data.pointData && pointCloud2Data.pointData instanceof Float32Array) {
-          // 新格式：Float32Array [x1, y1, z1, r1, g1, b1, a1, ...]
+          // GPU端颜色映射格式：Float32Array [x1, y1, z1, intensity1, x2, y2, z2, intensity2, ...]
+          // 每个点占用4个float（16字节）
           const pointData = pointCloud2Data.pointData
-          const pointCount = pointCloud2Data.pointCount || (pointData.length / 7)
+          const useGpuColorMapping = pointCloud2Data.useGpuColorMapping ?? true
+          const stride = useGpuColorMapping ? 4 : 7 // GPU端颜色映射：4个float/点，旧格式：7个float/点
+          
+          // 如果数据长度不是stride的倍数，截断到最近的完整点
+          const validDataLength = Math.floor(pointData.length / stride) * stride
+          const pointCount = pointCloud2Data.pointCount || Math.floor(pointData.length / stride)
+          
+          // 验证数据格式：确保数据长度是stride的倍数
+          if (pointData.length % stride !== 0) {
+            if (import.meta.env.DEV) {
+              console.warn(`[PointCloud2] Invalid data length for ${componentId}:`, {
+                dataLength: pointData.length,
+                stride,
+                remainder: pointData.length % stride,
+                validDataLength,
+                pointCount,
+                useGpuColorMapping
+              })
+            }
+            // 如果数据不完整，使用截断后的数据
+            if (validDataLength > 0) {
+              // 创建一个新的截断后的数组（如果需要）
+              // 注意：这里不实际截断，只是记录警告，实际截断在Points命令中处理
+            }
+          }
           
           if (pointCount === 0) {
             console.warn(`[PointCloud2] No points in data for ${componentId}`)
@@ -413,16 +438,30 @@ export class SceneManager {
           }
           
           // 直接传递Float32Array，Points命令会直接处理
+          // 传递GPU端颜色映射配置
           renderData = {
             pose: pointCloud2Data.pose,
-            pointData, // 直接传递Float32Array
+            pointData, // 直接传递Float32Array（GPU端颜色映射格式：[x, y, z, intensity, ...]）
             pointCount, // 点的数量
             scale: {
               x: config.size ?? pointCloud2Data.scale?.x ?? 3,
               y: config.size ?? pointCloud2Data.scale?.y ?? 3,
               z: config.size ?? pointCloud2Data.scale?.z ?? 3
             },
-            style: config.style || 'Points'
+            style: config.style || 'Points',
+            // GPU端颜色映射配置
+            useGpuColorMapping: pointCloud2Data.useGpuColorMapping ?? true,
+            colorTransformer: pointCloud2Data.colorTransformer || 'Flat',
+            useRainbow: pointCloud2Data.useRainbow ?? true,
+            minColor: pointCloud2Data.minColor || { r: 0, g: 0, b: 0 },
+            maxColor: pointCloud2Data.maxColor || { r: 255, g: 255, b: 255 },
+            minIntensity: pointCloud2Data.minIntensity ?? 0,
+            maxIntensity: pointCloud2Data.maxIntensity ?? (pointCloud2Data.maxIntensity === 0 && pointCloud2Data.minIntensity === 0 ? 1 : pointCloud2Data.maxIntensity ?? 1),
+            axisColor: pointCloud2Data.axisColor || 'Z',
+            axisMin: pointCloud2Data.axisMin ?? 0,
+            axisMax: pointCloud2Data.axisMax ?? (pointCloud2Data.axisMax === 0 && pointCloud2Data.axisMin === 0 ? 1 : pointCloud2Data.axisMax ?? 1),
+            flatColor: pointCloud2Data.flatColor || { r: 255, g: 255, b: 0 },
+            alpha: pointCloud2Data.alpha ?? 1.0
           }
         } else if (pointCloud2Data.points) {
           // 旧格式兼容：对象数组格式
@@ -454,20 +493,28 @@ export class SceneManager {
         
         // 调试：检查数据格式和配置
         // 兼容新旧两种数据格式
+        const useGpuColorMapping = pointCloud2Data.useGpuColorMapping ?? true
+        const stride = useGpuColorMapping ? 4 : 7
         const pointsCount = pointCloud2Data.pointData 
-          ? (pointCloud2Data.pointData.length / 7) 
+          ? Math.floor(pointCloud2Data.pointData.length / stride)
           : (pointCloud2Data.points?.length || 0)
         const colorsCount = pointCloud2Data.colors?.length || 0
         
-        console.log(`[PointCloud2] Registering draw call for ${componentId}:`, {
-          pointsCount,
-          colorsCount,
-          hasColor: !!pointCloud2Data.color,
-          scale: renderData.scale,
-          style: renderData.style,
-          hasPose: !!pointCloud2Data.pose,
-          dataFormat: pointCloud2Data.pointData ? 'Float32Array' : 'ObjectArray'
-        })
+        if (import.meta.env.DEV) {
+          console.log(`[PointCloud2] Registering draw call for ${componentId}:`, {
+            pointsCount,
+            colorsCount,
+            hasColor: !!pointCloud2Data.color,
+            scale: renderData.scale,
+            style: renderData.style,
+            hasPose: !!pointCloud2Data.pose,
+            dataFormat: pointCloud2Data.pointData ? (useGpuColorMapping ? 'Float32Array(GPU)' : 'Float32Array(Old)') : 'ObjectArray',
+            useGpuColorMapping,
+            colorTransformer: renderData.colorTransformer,
+            intensityRange: `[${renderData.minIntensity}, ${renderData.maxIntensity}]`,
+            axisRange: `[${renderData.axisMin}, ${renderData.axisMax}]`
+          })
+        }
         
         // 确保数据格式正确（Points 命令期望单个对象，不是数组）
         this.worldviewContext.registerDrawCall({
@@ -2641,8 +2688,8 @@ export class SceneManager {
     const PRECISION_INV = 1.0 / PRECISION
     
     // 使用 Map 存储位置hash到点数据的映射
-    // key: 位置hash (整数), value: {x, y, z, r, g, b, a}
-    const pointMap = new Map<number, { x: number; y: number; z: number; r: number; g: number; b: number; a: number }>()
+    // key: 位置hash (整数), value: {x, y, z, intensity}
+    const pointMap = new Map<number, { x: number; y: number; z: number; intensity: number }>()
     
     // 遍历所有历史数据，收集唯一的点
     let lastData: any = null
@@ -2654,20 +2701,40 @@ export class SceneManager {
       
       lastData = data // 保存最新的数据用于配置
       const pointData = data.pointData
-      const pointCount = data.pointCount || (pointData.length / 7)
+      
+      // 检测数据格式：4个float/点（新格式：xyz + intensity）或7个float/点（旧格式：xyz + rgba）
+      const useGpuColorMapping = data.useGpuColorMapping ?? true
+      const stride = useGpuColorMapping ? 4 : 7
+      const pointCount = data.pointCount || Math.floor(pointData.length / stride)
+      
+      // 确保数据长度是stride的倍数，如果不是则截断
+      const validDataLength = Math.floor(pointData.length / stride) * stride
+      if (validDataLength !== pointData.length && import.meta.env.DEV) {
+        console.warn(`[PointCloud2] mergePointCloud2Data: Data length ${pointData.length} is not a multiple of ${stride}, truncating to ${validDataLength}`)
+      }
       
       // 遍历该帧的所有点
-      for (let i = 0; i < pointCount; i++) {
-        const offset = i * 7
-        if (offset + 6 >= pointData.length) continue
+      for (let i = 0; i < pointCount && (i * stride + stride - 1) < pointData.length; i++) {
+        const offset = i * stride
         
         const x = pointData[offset + 0]
         const y = pointData[offset + 1]
         const z = pointData[offset + 2]
-        const r = pointData[offset + 3]
-        const g = pointData[offset + 4]
-        const b = pointData[offset + 5]
-        const a = pointData[offset + 6]
+        
+        // 根据格式提取intensity或使用默认值
+        let intensity = 0.0
+        if (useGpuColorMapping) {
+          // 新格式：第4个float是intensity
+          intensity = (offset + 3 < pointData.length) ? pointData[offset + 3] : 0.0
+        } else {
+          // 旧格式：没有intensity，使用默认值0
+          intensity = 0.0
+        }
+        
+        // 跳过无效的点（NaN或Infinity）
+        if (!isFinite(x) || !isFinite(y) || !isFinite(z) || !isFinite(intensity)) {
+          continue
+        }
         
         // 计算位置hash（使用整数，避免字符串操作）
         // 使用简单的hash函数：将坐标量化后组合成整数
@@ -2681,7 +2748,7 @@ export class SceneManager {
         
         // 如果这个位置还没有记录过，添加到Map中
         if (!pointMap.has(hash)) {
-          pointMap.set(hash, { x, y, z, r, g, b, a })
+          pointMap.set(hash, { x, y, z, intensity })
         }
       }
     }
@@ -2690,17 +2757,14 @@ export class SceneManager {
       return null
     }
     
-    // 将所有唯一的点转换为Float32Array
-    const mergedPointData = new Float32Array(pointMap.size * 7)
+    // 将所有唯一的点转换为Float32Array（输出格式：4个float/点，xyz + intensity）
+    const mergedPointData = new Float32Array(pointMap.size * 4)
     let index = 0
     for (const point of pointMap.values()) {
-      mergedPointData[index * 7 + 0] = point.x
-      mergedPointData[index * 7 + 1] = point.y
-      mergedPointData[index * 7 + 2] = point.z
-      mergedPointData[index * 7 + 3] = point.r
-      mergedPointData[index * 7 + 4] = point.g
-      mergedPointData[index * 7 + 5] = point.b
-      mergedPointData[index * 7 + 6] = point.a
+      mergedPointData[index * 4 + 0] = point.x
+      mergedPointData[index * 4 + 1] = point.y
+      mergedPointData[index * 4 + 2] = point.z
+      mergedPointData[index * 4 + 3] = point.intensity
       index++
     }
     
@@ -2709,6 +2773,7 @@ export class SceneManager {
       scale: lastData.scale,
       pointData: mergedPointData,
       pointCount: pointMap.size,
+      useGpuColorMapping: true, // 合并后的数据总是使用GPU颜色映射格式（4个float/点）
       colorTransformer: lastData.colorTransformer,
       useRainbow: lastData.useRainbow,
       minColor: lastData.minColor,
@@ -2718,7 +2783,9 @@ export class SceneManager {
       axisColor: lastData.axisColor,
       axisMin: lastData.axisMin,
       axisMax: lastData.axisMax,
-      flatColor: lastData.flatColor
+      flatColor: lastData.flatColor,
+      alpha: lastData.alpha,
+      hasIntensity: lastData.hasIntensity
     }
   }
 
