@@ -2758,14 +2758,84 @@ export class SceneManager {
     }
     
     // 将所有唯一的点转换为Float32Array（输出格式：4个float/点，xyz + intensity）
+    // 同时收集坐标值用于重新计算 axisMin 和 axisMax（如果使用 Axis 颜色映射）
     const mergedPointData = new Float32Array(pointMap.size * 4)
+    const axisValues: number[] = [] // 用于重新计算 Axis 颜色映射的范围
+    const intensityValues: number[] = [] // 用于重新计算 Intensity 颜色映射的范围
+    const axisColor = lastData.axisColor || 'Z'
+    
     let index = 0
     for (const point of pointMap.values()) {
       mergedPointData[index * 4 + 0] = point.x
       mergedPointData[index * 4 + 1] = point.y
       mergedPointData[index * 4 + 2] = point.z
       mergedPointData[index * 4 + 3] = point.intensity
+      
+      // 收集坐标值用于重新计算范围（如果使用 Axis 颜色映射）
+      if (lastData.colorTransformer === 'Axis') {
+        let selectedValue: number
+        if (axisColor === 'X') {
+          selectedValue = point.x
+        } else if (axisColor === 'Y') {
+          selectedValue = point.y
+        } else {
+          selectedValue = point.z // 默认 Z
+        }
+        axisValues.push(selectedValue)
+      }
+      
+      // 收集 intensity 值用于重新计算范围（如果使用 Intensity 颜色映射）
+      if (lastData.colorTransformer === 'Intensity' && isFinite(point.intensity)) {
+        intensityValues.push(point.intensity)
+      }
+      
       index++
+    }
+    
+    // 重新计算 axisMin 和 axisMax（基于合并后的所有点）
+    // 使用循环而不是展开运算符，避免堆栈溢出（当数组很大时）
+    let mergedAxisMin = lastData.axisMin ?? 0
+    let mergedAxisMax = lastData.axisMax ?? 1
+    if (axisValues.length > 0) {
+      // 使用循环查找最小值和最大值，避免堆栈溢出
+      const firstVal = axisValues[0]
+      if (firstVal !== undefined && isFinite(firstVal)) {
+        mergedAxisMin = firstVal
+        mergedAxisMax = firstVal
+        for (let i = 1; i < axisValues.length; i++) {
+          const val = axisValues[i]
+          if (val !== undefined && isFinite(val)) {
+            if (val < mergedAxisMin) mergedAxisMin = val
+            if (val > mergedAxisMax) mergedAxisMax = val
+          }
+        }
+        if (mergedAxisMax === mergedAxisMin) {
+          mergedAxisMax = mergedAxisMin + 1 // 避免除零
+        }
+      }
+    }
+    
+    // 重新计算 intensityMin 和 intensityMax（基于合并后的所有点，如果使用自动计算）
+    // 使用循环而不是展开运算符，避免堆栈溢出（当数组很大时）
+    let mergedIntensityMin = lastData.minIntensity ?? 0
+    let mergedIntensityMax = lastData.maxIntensity ?? 1
+    if (intensityValues.length > 0 && lastData.colorTransformer === 'Intensity') {
+      // 使用循环查找最小值和最大值，避免堆栈溢出
+      const firstVal = intensityValues[0]
+      if (firstVal !== undefined && isFinite(firstVal)) {
+        mergedIntensityMin = firstVal
+        mergedIntensityMax = firstVal
+        for (let i = 1; i < intensityValues.length; i++) {
+          const val = intensityValues[i]
+          if (val !== undefined && isFinite(val)) {
+            if (val < mergedIntensityMin) mergedIntensityMin = val
+            if (val > mergedIntensityMax) mergedIntensityMax = val
+          }
+        }
+        if (mergedIntensityMax === mergedIntensityMin) {
+          mergedIntensityMax = mergedIntensityMin + 1 // 避免除零
+        }
+      }
     }
     
     return {
@@ -2778,11 +2848,11 @@ export class SceneManager {
       useRainbow: lastData.useRainbow,
       minColor: lastData.minColor,
       maxColor: lastData.maxColor,
-      minIntensity: lastData.minIntensity,
-      maxIntensity: lastData.maxIntensity,
+      minIntensity: mergedIntensityMin, // 使用重新计算的值
+      maxIntensity: mergedIntensityMax, // 使用重新计算的值
       axisColor: lastData.axisColor,
-      axisMin: lastData.axisMin,
-      axisMax: lastData.axisMax,
+      axisMin: mergedAxisMin, // 使用重新计算的值
+      axisMax: mergedAxisMax, // 使用重新计算的值
       flatColor: lastData.flatColor,
       alpha: lastData.alpha,
       hasIntensity: lastData.hasIntensity
