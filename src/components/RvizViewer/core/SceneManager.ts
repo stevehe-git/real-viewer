@@ -481,6 +481,14 @@ export class SceneManager {
                 intensityBuffer: buffers.intensityBuffer,
                 colorBuffer: buffers.colorBuffer
               }
+            } else if (import.meta.env.DEV && pointCount > 1000000) {
+              // 对于大规模点云，如果缓存未命中，记录警告
+              console.warn(`[PointCloud2] Cache miss for ${componentId} (${pointCount.toLocaleString()} points) - this will cause high CPU usage`, {
+                componentId,
+                pointCount,
+                hasBufferManager: !!this.pointCloudBufferManager,
+                dataHash: generateDataHash(pointData, pointCount, useGpuColorMapping)
+              })
             }
           }
           

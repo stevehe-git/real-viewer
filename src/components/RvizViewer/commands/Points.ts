@@ -320,8 +320,15 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
               }
               
               // 性能警告：如果没有缓存，每帧都会创建新数组（应该避免这种情况）
+              // 对于大规模点云（>100万点），这会严重影响性能
               if (import.meta.env.DEV && !props._cachedBuffers) {
-                console.warn('[Points] Creating position array without cache - this should be avoided for performance')
+                const memoryMB = (pointCount * 3 * 4) / (1024 * 1024)
+                console.warn(`[Points] Creating position array without cache (${pointCount.toLocaleString()} points, ${memoryMB.toFixed(2)}MB) - this should be avoided for performance`, {
+                  pointCount,
+                  memoryMB: memoryMB.toFixed(2),
+                  hasCachedBuffers: !!props._cachedBuffers,
+                  hasPointData: !!props.pointData
+                })
               }
               
               // 提取位置数据：每4个或7个float中取前3个
@@ -361,8 +368,10 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
               const pointCount = props.pointCount || Math.floor(pointData.length / stride)
               if (pointCount > 0) {
                 // 性能警告：如果没有缓存，每帧都会创建新数组（应该避免这种情况）
+                // 对于大规模点云（>100万点），这会严重影响性能
                 if (import.meta.env.DEV && !props._cachedBuffers) {
-                  console.warn('[Points] Creating intensity array without cache - this should be avoided for performance')
+                  const memoryMB = (pointCount * 4) / (1024 * 1024)
+                  console.warn(`[Points] Creating intensity array without cache (${pointCount.toLocaleString()} points, ${memoryMB.toFixed(2)}MB) - this should be avoided for performance`)
                 }
                 
                 // 提取intensity数据：每4个float中取第4个
