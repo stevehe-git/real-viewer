@@ -30,7 +30,23 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
         blend: {
           enable: (_context: any, props: any) => {
             // 只有当 alpha < 1.0 时才启用混合，alpha = 1.0 时禁用混合以获得清晰渲染
-            const alpha = props.useGpuColorMapping ? (props.alpha ?? 1.0) : 1.0
+            // 支持 GPU 颜色映射模式和旧格式（如 LaserScan）
+            let alpha = 1.0
+            if (props.alpha !== undefined) {
+              // 如果有明确的 alpha 属性，则使用它（适用于所有格式）
+              alpha = props.alpha
+            } else if (props.useGpuColorMapping) {
+              // GPU 颜色映射模式
+              alpha = props.alpha ?? 1.0
+            } else if (props.colors && Array.isArray(props.colors) && props.colors.length > 0) {
+              // 旧格式：尝试从颜色数据中提取 alpha
+              const firstColor = props.colors[0]
+              if (firstColor && typeof firstColor === 'object' && 'a' in firstColor) {
+                alpha = firstColor.a ?? 1.0
+              }
+            } else if (props.color && typeof props.color === 'object' && 'a' in props.color) {
+              alpha = props.color.a ?? 1.0
+            }
             return alpha < 0.999 // 使用 0.999 作为阈值，避免浮点数精度问题
           },
           func: defaultBlend.func,
@@ -491,7 +507,27 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
             return [flat.r / 255, flat.g / 255, flat.b / 255]
           },
           alpha: (_context: any, props: any) => {
-            return props.useGpuColorMapping ? (props.alpha ?? 1.0) : 1.0
+            // 优先使用明确的 alpha 属性（适用于所有格式，包括 LaserScan）
+            if (props.alpha !== undefined) {
+              return props.alpha
+            }
+            // 如果使用 GPU 颜色映射，alpha 应该在 props.alpha 中
+            if (props.useGpuColorMapping) {
+              return props.alpha ?? 1.0
+            }
+            // 旧格式：如果颜色数据是数组，尝试从第一个颜色中提取 alpha
+            if (props.colors && Array.isArray(props.colors) && props.colors.length > 0) {
+              const firstColor = props.colors[0]
+              if (firstColor && typeof firstColor === 'object' && 'a' in firstColor) {
+                return firstColor.a ?? 1.0
+              }
+            }
+            // 如果 color 是单个对象，尝试从中提取 alpha
+            if (props.color && typeof props.color === 'object' && 'a' in props.color) {
+              return props.color.a ?? 1.0
+            }
+            // 默认值
+            return 1.0
           },
           axisColor: (_context: any, props: any) => {
             if (!props.useGpuColorMapping) return 2 // Z

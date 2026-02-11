@@ -90,11 +90,13 @@ export class SceneManager {
   private mapMetadataMap = new Map<string, { width: number; height: number; resolution: number; origin: any }>() // 保存 costmap 的元信息
   private costmapUpdatesMap = new Map<string, string>() // key: updates componentId, value: costmap componentId
   private laserScanDataMap = new Map<string, any>() // 支持多个 LaserScan，key 为 componentId
+  private laserScanRawMessageMap = new Map<string, any>() // 保存原始消息，用于配置变化时重新处理
   private laserScanConfigMap = new Map<string, { 
     style?: string
     size?: number
     alpha?: number
     colorTransformer?: string
+    flatColor?: { r: number; g: number; b: number }
     useRainbow?: boolean
     minColor?: { r: number; g: number; b: number }
     maxColor?: { r: number; g: number; b: number }
@@ -628,11 +630,29 @@ export class SceneManager {
           this.laserScanInstances.set(componentId, { displayName: `LaserScan-${componentId}` })
         }
         const instance = this.laserScanInstances.get(componentId)
+        
+        // 获取配置，确保 alpha 和其他配置被传递到渲染层
+        const config = this.laserScanConfigMap.get(componentId) || {}
+        const defaultOptions: any = getDefaultOptions('laserscan')
+        const alpha = config.alpha ?? defaultOptions.alpha ?? 1.0
+        
+        // 将配置添加到渲染数据中，确保 Points 命令可以访问
+        const renderData = {
+          ...laserScanData,
+          alpha, // 确保 alpha 被传递
+          style: config.style || defaultOptions.style || 'Flat Squares',
+          scale: {
+            x: config.size ?? defaultOptions.size ?? 0.01,
+            y: config.size ?? defaultOptions.size ?? 0.01,
+            z: config.size ?? defaultOptions.size ?? 0.01
+          }
+        }
+        
         this.worldviewContext.onMount(instance, this.pointsCommandWithWorldSpace)
         this.worldviewContext.registerDrawCall({
           instance: instance,
           reglCommand: this.pointsCommandWithWorldSpace,
-          children: laserScanData,
+          children: renderData,
           layerIndex: 5
         })
         currentDrawCallInstances.add(instance)
@@ -2546,18 +2566,46 @@ export class SceneManager {
       const worker = getDataProcessorWorker()
 
       // 从 getDefaultOptions 获取默认值
-      const defaultOptions = getDefaultOptions('laserscan')
+      const defaultOptions: any = getDefaultOptions('laserscan')
+      const defaultFlatColor = defaultOptions?.flatColor || { r: 255, g: 0, b: 0 }
+      
+      // 确保 flatColor 是可序列化的纯对象（避免 DataCloneError）
+      const ensureSerializableColor = (color: any, defaultColor: { r: number; g: number; b: number }): { r: number; g: number; b: number } => {
+        if (!color || typeof color !== 'object') {
+          return { ...defaultColor }
+        }
+        return {
+          r: typeof color.r === 'number' ? color.r : defaultColor.r,
+          g: typeof color.g === 'number' ? color.g : defaultColor.g,
+          b: typeof color.b === 'number' ? color.b : defaultColor.b
+        }
+      }
+      
+      // 确保所有颜色对象都是可序列化的纯对象（避免 DataCloneError）
       const workerConfig = {
         style: config.style || defaultOptions.style || 'Flat Squares',
         size: config.size ?? defaultOptions.size ?? 0.01,
         alpha: config.alpha ?? defaultOptions.alpha ?? 1.0,
         colorTransformer: config.colorTransformer || defaultOptions.colorTransformer || 'Intensity',
+        flatColor: ensureSerializableColor(config.flatColor, defaultFlatColor), // 确保可序列化
         useRainbow: config.useRainbow ?? defaultOptions.useRainbow ?? true,
-        minColor: config.minColor || defaultOptions.minColor || { r: 0, g: 0, b: 0 },
-        maxColor: config.maxColor || defaultOptions.maxColor || { r: 255, g: 255, b: 255 },
+        minColor: ensureSerializableColor(config.minColor, defaultOptions.minColor || { r: 0, g: 0, b: 0 }),
+        maxColor: ensureSerializableColor(config.maxColor, defaultOptions.maxColor || { r: 255, g: 255, b: 255 }),
         autocomputeIntensityBounds: config.autocomputeIntensityBounds !== false,
         minIntensity: config.minIntensity ?? defaultOptions.minIntensity ?? 0,
         maxIntensity: config.maxIntensity ?? defaultOptions.maxIntensity ?? 0 // 0 表示自动计算
+      } as {
+        style?: string
+        size?: number
+        alpha?: number
+        colorTransformer?: string
+        flatColor?: { r: number; g: number; b: number }
+        useRainbow?: boolean
+        minColor?: { r: number; g: number; b: number }
+        maxColor?: { r: number; g: number; b: number }
+        autocomputeIntensityBounds?: boolean
+        minIntensity?: number
+        maxIntensity?: number
       }
       
       const result = await worker.processLaserScan({
@@ -2582,6 +2630,10 @@ export class SceneManager {
         console.warn('LaserScan data is null, skipping')
         return
       }
+
+      // 保存原始消息（用于配置变化时重新处理）
+      // 注意：只保存消息的引用，不深拷贝，避免内存开销
+      this.laserScanRawMessageMap.set(componentId, message)
 
       // 应用 TF 变换（如果有 frame_id）
       let transformedData = result.data
@@ -2664,7 +2716,20 @@ export class SceneManager {
       // }
 
       // 保存处理后的数据
-      this.laserScanDataMap.set(componentId, transformedData)
+      // 确保 alpha 和 style、size 等配置被添加到数据中，以便渲染时使用
+      const currentConfig = this.laserScanConfigMap.get(componentId) || {}
+      const defaultOptionsForData: any = getDefaultOptions('laserscan')
+      const finalData = {
+        ...transformedData,
+        alpha: currentConfig.alpha ?? defaultOptionsForData.alpha ?? 1.0,
+        style: currentConfig.style || defaultOptionsForData.style || 'Flat Squares',
+        scale: {
+          x: currentConfig.size ?? defaultOptionsForData.size ?? 0.01,
+          y: currentConfig.size ?? defaultOptionsForData.size ?? 0.01,
+          z: currentConfig.size ?? defaultOptionsForData.size ?? 0.01
+        }
+      }
+      this.laserScanDataMap.set(componentId, finalData)
 
       // 延迟注册绘制调用
       requestAnimationFrame(() => {
@@ -2690,6 +2755,7 @@ export class SceneManager {
     this.laserScanConfigMap.delete(componentId)
     this.laserScanInstances.delete(componentId)
     this.laserScanRequestIds.delete(componentId)
+    this.laserScanRawMessageMap.delete(componentId)
     requestAnimationFrame(() => {
       this.registerDrawCalls()
       this.worldviewContext.onDirty()
@@ -2704,6 +2770,7 @@ export class SceneManager {
     this.laserScanConfigMap.clear()
     this.laserScanInstances.clear()
     this.laserScanRequestIds.clear()
+    this.laserScanRawMessageMap.clear()
     this.registerDrawCalls()
   }
 
@@ -2715,6 +2782,7 @@ export class SceneManager {
     size?: number
     alpha?: number
     colorTransformer?: string
+    flatColor?: { r: number; g: number; b: number }
     useRainbow?: boolean
     minColor?: { r: number; g: number; b: number }
     maxColor?: { r: number; g: number; b: number }
@@ -2727,18 +2795,39 @@ export class SceneManager {
       return
     }
 
-    // 更新该 LaserScan 的配置
+    // 获取当前配置，检查哪些配置变化需要重新处理数据
     const currentConfig = this.laserScanConfigMap.get(componentId) || {}
+    
+    // 判断是否需要重新处理数据（配置变化会影响数据处理结果）
+    const needsReprocessing = 
+      options.colorTransformer !== undefined && options.colorTransformer !== currentConfig.colorTransformer ||
+      options.useRainbow !== undefined && options.useRainbow !== currentConfig.useRainbow ||
+      options.minColor !== undefined && JSON.stringify(options.minColor) !== JSON.stringify(currentConfig.minColor) ||
+      options.maxColor !== undefined && JSON.stringify(options.maxColor) !== JSON.stringify(currentConfig.maxColor) ||
+      options.autocomputeIntensityBounds !== undefined && options.autocomputeIntensityBounds !== currentConfig.autocomputeIntensityBounds ||
+      options.minIntensity !== undefined && options.minIntensity !== currentConfig.minIntensity ||
+      options.maxIntensity !== undefined && options.maxIntensity !== currentConfig.maxIntensity ||
+      options.flatColor !== undefined && JSON.stringify(options.flatColor) !== JSON.stringify(currentConfig.flatColor)
+
+    // 更新该 LaserScan 的配置
     this.laserScanConfigMap.set(componentId, {
       ...currentConfig,
       ...options
     })
 
-    // 如果该 LaserScan 已有数据，需要重新处理以应用新配置
-    // 这里只更新绘制调用，让外部调用者负责重新获取消息
-    if (this.laserScanDataMap.has(componentId)) {
-      this.registerDrawCalls()
-      this.worldviewContext.onDirty()
+    // 如果配置变化需要重新处理数据，且已有数据，则重新处理
+    if (needsReprocessing && this.laserScanDataMap.has(componentId)) {
+      const rawMessage = this.laserScanRawMessageMap.get(componentId)
+      if (rawMessage) {
+        // 使用保存的原始消息重新处理数据
+        this.updateLaserScan(rawMessage, componentId)
+      }
+    } else {
+      // 如果只是渲染相关的配置变化（如 style, size, alpha），只需要重新注册绘制调用
+      if (this.laserScanDataMap.has(componentId)) {
+        this.registerDrawCalls()
+        this.worldviewContext.onDirty()
+      }
     }
   }
 
@@ -2750,6 +2839,7 @@ export class SceneManager {
     size?: number
     alpha?: number
     colorTransformer?: string
+    flatColor?: { r: number; g: number; b: number }
     useRainbow?: boolean
     minColor?: { r: number; g: number; b: number }
     maxColor?: { r: number; g: number; b: number }

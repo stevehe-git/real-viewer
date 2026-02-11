@@ -1005,6 +1005,18 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
       })
       // 配置变化后，重新同步 LaserScan 数据以应用新配置
       syncLaserScanDisplay()
+      
+      // 配置变化后，重新处理数据以应用新配置
+      // 从 topicSubscriptionManager 重新获取最新消息并重新处理
+      laserScanConfigs.forEach((laserScanConfig) => {
+        if (laserScanConfig && laserScanConfig.enabled) {
+          const message = topicSubscriptionManager.getLatestMessage(laserScanConfig.id)
+          if (message) {
+            // 重新处理数据以应用新配置
+            context.updateLaserScan(message, laserScanConfig.id)
+          }
+        }
+      })
     },
     { deep: true }
   )

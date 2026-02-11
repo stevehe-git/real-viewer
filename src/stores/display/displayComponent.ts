@@ -110,7 +110,7 @@ export function getDefaultOptions(type: string): Record<string, any> {
       style: 'Flat Squares',
       size: 0.01,
       alpha: 1,
-      colorTransformer: 'Intensity',
+      colorTransformer: 'Flat', // 默认使用 Flat 模式，显示红色
       useRainbow: true,
       autocomputeIntensityBounds: true,
       minIntensity: 0,
