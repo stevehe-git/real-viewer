@@ -673,6 +673,20 @@ export class SceneManager {
             return
           }
           
+          // 性能优化：优先使用缓存的 GPU buffer（如果存在）
+          // 这样可以避免每帧重新创建 Float32Array，大幅提升渲染性能
+          let cachedBuffers: { positionBuffer?: any; intensityBuffer?: any; colorBuffer?: any } | undefined
+          if (this.pointCloudBufferManager) {
+            const buffers = this.pointCloudBufferManager.getBuffers(componentId)
+            if (buffers) {
+              cachedBuffers = {
+                positionBuffer: buffers.positionBuffer,
+                intensityBuffer: buffers.intensityBuffer,
+                colorBuffer: buffers.colorBuffer
+              }
+            }
+          }
+          
           // 直接传递Float32Array，Points命令会直接处理
           // 传递GPU端颜色映射配置
           renderData = {
@@ -698,7 +712,9 @@ export class SceneManager {
             axisMin: laserScanData.axisMin ?? 0,
             axisMax: laserScanData.axisMax ?? (laserScanData.axisMax === 0 && laserScanData.axisMin === 0 ? 1 : laserScanData.axisMax ?? 1),
             flatColor: laserScanData.flatColor || { r: 255, g: 0, b: 0 },
-            alpha: laserScanData.alpha ?? config.alpha ?? defaultOptions.alpha ?? 1.0
+            alpha: laserScanData.alpha ?? config.alpha ?? defaultOptions.alpha ?? 1.0,
+            // 性能优化：传递缓存的 GPU buffer（如果存在）
+            _cachedBuffers: cachedBuffers
           }
         } else if (laserScanData.points) {
           // 旧格式兼容：对象数组格式
@@ -2792,6 +2808,40 @@ export class SceneManager {
       // 保存处理后的数据（GPU 颜色映射格式）
       // transformedData 已经包含所有 GPU 颜色映射配置
       this.laserScanDataMap.set(componentId, transformedData)
+
+      // 更新 GPU Buffer 缓存（智能缓存机制）
+      // - 如果数据未变化（dataHash 相同），只更新引用，复用缓存的 buffer（零开销）
+      // - 如果数据变化，检查 buffer 缓存（通过 dataHash）
+      //   - 缓存命中：复用已存在的 buffer（多个组件可共享相同数据）
+      //   - 缓存未命中：创建新 buffer 并缓存
+      if (this.pointCloudBufferManager && transformedData.pointData && transformedData.pointData instanceof Float32Array) {
+        const useGpuColorMapping = transformedData.useGpuColorMapping ?? true
+        const pointCount = transformedData.pointCount || Math.floor(transformedData.pointData.length / (useGpuColorMapping ? 4 : 7))
+        const dataHash = generateDataHash(transformedData.pointData, pointCount, useGpuColorMapping)
+        
+        const compactData: CompactPointCloudData = {
+          data: transformedData.pointData,
+          count: pointCount,
+          pointSize: config.size ?? transformedData.scale?.x ?? 0.01,
+          dataHash,
+          useGpuColorMapping
+        }
+        this.pointCloudBufferManager.updatePointCloudData(componentId, compactData)
+        
+        // 更新实例配置（轻量参数，不触发 buffer 重建）
+        // 这些参数每帧都可能变化（如 pose），但不会触发 buffer 重建
+        this.pointCloudBufferManager.updateInstanceConfig(componentId, {
+          componentId,
+          pose: transformedData.pose || { position: { x: 0, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } },
+          pointSize: config.size ?? transformedData.scale?.x ?? 0.01,
+          colorTransformer: transformedData.colorTransformer || 'Flat',
+          useRainbow: transformedData.useRainbow ?? true,
+          minColor: transformedData.minColor || { r: 0, g: 0, b: 0 },
+          maxColor: transformedData.maxColor || { r: 255, g: 255, b: 255 },
+          minValue: transformedData.minIntensity ?? 0,
+          maxValue: transformedData.maxIntensity ?? 1
+        })
+      }
 
       // 延迟注册绘制调用
       requestAnimationFrame(() => {
