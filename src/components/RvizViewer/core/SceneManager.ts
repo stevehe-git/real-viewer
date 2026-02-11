@@ -3330,6 +3330,7 @@ export class SceneManager {
     alpha?: number
     colorTransformer?: string
     useRainbow?: boolean
+    invertRainbow?: boolean
     minColor?: { r: number; g: number; b: number }
     maxColor?: { r: number; g: number; b: number }
     minIntensity?: number
@@ -3380,6 +3381,7 @@ export class SceneManager {
       currentConfig.alpha !== options.alpha ||
       currentConfig.colorTransformer !== options.colorTransformer ||
       currentConfig.useRainbow !== options.useRainbow ||
+      currentConfig.invertRainbow !== options.invertRainbow ||
       !deepEqual(currentConfig.minColor, options.minColor) ||
       !deepEqual(currentConfig.maxColor, options.maxColor) ||
       currentConfig.minIntensity !== options.minIntensity ||
@@ -3477,6 +3479,7 @@ export class SceneManager {
     alpha?: number
     colorTransformer?: string
     useRainbow?: boolean
+    invertRainbow?: boolean
     minColor?: { r: number; g: number; b: number }
     maxColor?: { r: number; g: number; b: number }
     minIntensity?: number

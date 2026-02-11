@@ -63,6 +63,7 @@ export interface DisplaySyncContext {
     alpha?: number
     colorTransformer?: string
     useRainbow?: boolean
+    invertRainbow?: boolean
     minColor?: { r: number; g: number; b: number }
     maxColor?: { r: number; g: number; b: number }
     minIntensity?: number
@@ -392,6 +393,7 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
           alpha: options.alpha,
           colorTransformer: options.colorTransformer,
           useRainbow: options.useRainbow,
+          invertRainbow: options.invertRainbow,
           minColor: options.minColor,
           maxColor: options.maxColor,
           minIntensity: options.minIntensity,
@@ -1064,6 +1066,7 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
           alpha: pointCloud2Component.options?.alpha,
           colorTransformer: pointCloud2Component.options?.colorTransformer,
           useRainbow: pointCloud2Component.options?.useRainbow,
+          invertRainbow: pointCloud2Component.options?.invertRainbow,
           minColor: pointCloud2Component.options?.minColor,
           maxColor: pointCloud2Component.options?.maxColor,
           minIntensity: pointCloud2Component.options?.minIntensity,
@@ -1082,6 +1085,7 @@ export function useDisplaySync(options: UseDisplaySyncOptions) {
             alpha: pointCloud2Config.alpha,
             colorTransformer: pointCloud2Config.colorTransformer,
             useRainbow: pointCloud2Config.useRainbow,
+            invertRainbow: pointCloud2Config.invertRainbow,
             minColor: pointCloud2Config.minColor,
             maxColor: pointCloud2Config.maxColor,
             minIntensity: pointCloud2Config.minIntensity,

@@ -211,6 +211,44 @@
         <el-option label="Z" value="Z" />
       </el-select>
     </div>
+    <div class="config-row" v-if="options.colorTransformer === 'Axis'">
+      <span class="config-label">Use rainbow</span>
+      <el-checkbox
+        :model-value="options.useRainbow"
+        @update:model-value="update('useRainbow', $event)"
+        class="config-value"
+      />
+    </div>
+    <div class="config-row" v-if="options.colorTransformer === 'Axis' && options.useRainbow">
+      <span class="config-label">Invert Rainbow</span>
+      <el-checkbox
+        :model-value="options.invertRainbow"
+        @update:model-value="update('invertRainbow', $event)"
+        class="config-value"
+      />
+    </div>
+    <div class="config-row" v-if="options.colorTransformer === 'Axis' && !options.useRainbow">
+      <span class="config-label">Min Color</span>
+      <div class="config-value color-config">
+        <el-color-picker
+          :model-value="getColorString(options.minColor, defaultOptions.minColor)"
+          @update:model-value="updateColor('minColor', $event)"
+          size="small"
+        />
+        <span class="color-text">{{ formatColor(getColorString(options.minColor, defaultOptions.minColor)) }}</span>
+      </div>
+    </div>
+    <div class="config-row" v-if="options.colorTransformer === 'Axis' && !options.useRainbow">
+      <span class="config-label">Max Color</span>
+      <div class="config-value color-config">
+        <el-color-picker
+          :model-value="getColorString(options.maxColor, defaultOptions.maxColor)"
+          @update:model-value="updateColor('maxColor', $event)"
+          size="small"
+        />
+        <span class="color-text">{{ formatColor(getColorString(options.maxColor, defaultOptions.maxColor)) }}</span>
+      </div>
+    </div>
     <div class="config-row" v-if="options.colorTransformer === 'Flat'">
       <span class="config-label">Color</span>
       <div class="config-value color-config">
@@ -236,6 +274,14 @@
       <el-checkbox
         :model-value="options.useRainbow"
         @update:model-value="update('useRainbow', $event)"
+        class="config-value"
+      />
+    </div>
+    <div class="config-row" v-if="options.colorTransformer === 'Intensity' && options.useRainbow">
+      <span class="config-label">Invert Rainbow</span>
+      <el-checkbox
+        :model-value="options.invertRainbow"
+        @update:model-value="update('invertRainbow', $event)"
         class="config-value"
       />
     </div>
