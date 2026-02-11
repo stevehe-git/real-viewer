@@ -1798,40 +1798,15 @@ export class SceneManager {
       return
     }
 
-    // 性能优化：提前检测消息是否真的变化了
-    // 生成完整的消息哈希（包含数据内容）
+    // 性能优化：生成消息哈希用于缓存和调试
+    // 跳帧修复：完全信任 useDisplaySync 的判断，不再在 SceneManager 中二次过滤
+    // useDisplaySync 已经通过时间戳和哈希判断需要更新，说明确实有新消息到达
+    // 即使哈希相同，也可能是采样检测的漏检，应该允许更新，确保建图过程的连续性
     const messageHash = this.generateMapMessageHash(message)
-    const lastMessageHash = this.mapMessageHashMap.get(componentId)
-
-    // 调试日志：记录哈希检测（完整哈希值）
-    // console.log(`[Map Debug] SceneManager.updateMap called for ${componentId}:`, {
-    //   hasLastHash: !!lastMessageHash,
-    //   lastHash: lastMessageHash || '(none)',
-    //   newHash: messageHash || '(none)',
-    //   hashChanged: lastMessageHash !== messageHash,
-    //   hasTextureData: this.mapTextureDataMap.has(componentId),
-    //   willSkip: lastMessageHash === messageHash && this.mapTextureDataMap.has(componentId),
-    //   hashLength: {
-    //     last: lastMessageHash?.length || 0,
-    //     new: messageHash?.length || 0
-    //   }
-    // })
-
-    // 关键修复：对于建图场景，即使哈希相同，也应该允许更新
-    // 因为采样检测可能漏检局部变化，特别是建图过程中，地图数据可能只在非采样区域变化
-    // 如果消息哈希相同，说明采样区域数据没有变化，但非采样区域可能已经变化
-    // 对于建图场景，我们应该更宽松：如果哈希相同但这是第一次处理，或者距离上次处理时间较长，也应该更新
-    const shouldSkip = lastMessageHash === messageHash && this.mapTextureDataMap.has(componentId)
     
-    if (shouldSkip) {
-      // 关键修复：对于建图场景，即使哈希相同，也允许更新（信任 useDisplaySync 的时间戳判断）
-      // useDisplaySync 已经通过时间戳判断需要更新，说明确实有新消息到达
-      // 即使哈希相同，也可能是采样检测的漏检，应该允许更新
-      // console.log(`[Map Debug] SceneManager.updateMap: Hash unchanged, but allowing update for ${componentId} (trusting useDisplaySync timestamp check)`)
-      // console.log(`[Map Debug] SceneManager.updateMap: WARNING - Hash-based detection may have false negatives for mapping scenarios`)
-      // console.log(`[Map Debug] SceneManager.updateMap: Map data may have changed outside sampled areas (sampling only checks first/middle/last 100 points)`)
-      // 不返回，继续处理更新，因为 useDisplaySync 已经判断需要更新
-    }
+    // 保存消息哈希用于调试和缓存（不再用于跳过更新）
+    // 跳帧修复：移除哈希检测逻辑，确保所有通过 useDisplaySync 的消息都能更新
+    // 这样可以避免建图过程中的跳帧问题
     
     // console.log(`[Map Debug] SceneManager.updateMap: Processing update for ${componentId}`)
 
@@ -2136,23 +2111,27 @@ export class SceneManager {
 
   /**
    * 更新统一的地图渲染回调（参照 RViz：所有地图共享一次 camera.draw）
+   * 关键优化：避免频繁重新注册回调，只在必要时更新
    */
   private updateMapRenderCallback(): void {
-    // 移除旧的回调
-    if (this.mapRenderCallback) {
-      // console.log(`[Map Debug] updateMapRenderCallback: Unregistering old callback`)
-      this.worldviewContext.unregisterPaintCallback(this.mapRenderCallback)
-      this.mapRenderCallback = null
-    }
-    
-    // 如果没有地图，不需要注册回调
+    // 如果没有地图，移除回调（如果存在）
     if (this.mapPropsMap.size === 0) {
-      // console.log(`[Map Debug] updateMapRenderCallback: No maps, skipping callback registration`)
+      if (this.mapRenderCallback) {
+        this.worldviewContext.unregisterPaintCallback(this.mapRenderCallback)
+        this.mapRenderCallback = null
+      }
       return
     }
     
-    // console.log(`[Map Debug] updateMapRenderCallback: Registering callback for ${this.mapPropsMap.size} maps`)
+    // 如果回调已存在，只需要更新回调内容（闭包会自动捕获最新的 mapPropsMap）
+    // 关键优化：避免频繁重新注册回调，减少跳帧
+    if (this.mapRenderCallback) {
+      // 回调已存在，闭包会自动使用最新的 mapPropsMap，不需要重新注册
+      // 这样可以避免频繁的 unregister/register 操作，减少跳帧
+      return
+    }
     
+    // 只有在回调不存在时才创建并注册
     // 创建统一的地图渲染回调：所有地图共享一次 camera.draw 调用
     this.mapRenderCallback = () => {
       if (!this.worldviewContext.initializedData) return
@@ -2184,9 +2163,7 @@ export class SceneManager {
     }
     
     // 注册统一的地图渲染回调
-    // console.log(`[Map Debug] updateMapRenderCallback: Registering paint callback`)
     this.worldviewContext.registerPaintCallback(this.mapRenderCallback)
-    // console.log(`[Map Debug] updateMapRenderCallback: Callback registered successfully`)
   }
   
   /**
