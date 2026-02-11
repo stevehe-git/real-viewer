@@ -389,9 +389,12 @@ self.onmessage = (event: MessageEvent<PointCloud2ProcessRequest>) => {
 
 /**
  * 处理 PointCloud2 请求（独立函数，避免闭包内存泄漏）
+ * 参照 rviz 和工业级优化方案：彻底清理所有引用，防止内存泄漏
  */
 function handlePointCloud2Request(request: PointCloud2ProcessRequest): void {
   let response: PointCloud2ProcessResult | null = null
+  let pointDataArray: Float32Array | null = null
+  let arrayBuffer: ArrayBuffer | null = null
   
   try {
     if (request.type === 'processPointCloud2') {
@@ -400,8 +403,8 @@ function handlePointCloud2Request(request: PointCloud2ProcessRequest): void {
       // 使用 Transferable Objects 优化大数据传输，避免序列化开销
       if (response.data?.pointData && response.data.pointData instanceof Float32Array) {
         // 保存 pointData 和 buffer 引用（在传输前）
-        const pointDataArray = response.data.pointData
-        const arrayBuffer = pointDataArray.buffer
+        pointDataArray = response.data.pointData
+        arrayBuffer = pointDataArray.buffer
         
         // 确保 buffer 是 ArrayBuffer（不是 SharedArrayBuffer）
         if (arrayBuffer instanceof ArrayBuffer) {
@@ -413,17 +416,28 @@ function handlePointCloud2Request(request: PointCloud2ProcessRequest): void {
           ;(self.postMessage as any)(response, transferList)
           
           // 重要：传输后立即清理所有引用，帮助 GC 快速回收内存
+          // 参照 rviz 实现：彻底清理所有引用，防止内存泄漏
           // 1. 清理 response 中的 pointData 引用（虽然 buffer 已被传输，但对象引用仍存在）
           if (response.data) {
             response.data.pointData = null as any
+            // 清理其他可能的大对象引用
+            if (response.data.pointCount !== undefined) {
+              delete (response.data as any).pointCount
+            }
           }
           
-          // 2. 清理整个 response 引用
+          // 2. 清理局部变量引用
+          pointDataArray = null
+          arrayBuffer = null
+          
+          // 3. 清理整个 response 引用
           response = null
         } else {
           // 如果不是 ArrayBuffer（如 SharedArrayBuffer），使用普通序列化
           self.postMessage(response)
           response = null
+          pointDataArray = null
+          arrayBuffer = null
         }
       } else {
         // 没有 pointData 或不是 Float32Array，直接发送
@@ -450,7 +464,20 @@ function handlePointCloud2Request(request: PointCloud2ProcessRequest): void {
     }
     self.postMessage(errorResponse)
   } finally {
-    // 最终清理：确保所有引用都被释放
+    // 最终清理：确保所有引用都被释放（参照 rviz 的内存管理策略）
+    // 这是防止内存泄漏的关键步骤
     response = null
+    pointDataArray = null
+    arrayBuffer = null
+    
+    // 强制触发 GC（如果可用，某些浏览器支持）
+    // 注意：这不是标准 API，但可以帮助某些浏览器更快回收内存
+    if (typeof (self as any).gc === 'function') {
+      try {
+        (self as any).gc()
+      } catch (e) {
+        // 忽略错误，gc 可能不可用
+      }
+    }
   }
 }

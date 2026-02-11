@@ -3042,6 +3042,17 @@ export class SceneManager {
       return firstItem ? firstItem.data : null
     }
     
+    // 性能优化：对于大规模点云，直接返回最新数据，跳过合并（参照 rviz 实现）
+    // 合并操作对于大规模点云（>50万点）CPU开销过大，会导致卡顿
+    const firstData = historyDataArray[historyDataArray.length - 1]?.data
+    if (firstData) {
+      const pointCount = firstData.pointCount || (firstData.pointData?.length ? Math.floor(firstData.pointData.length / (firstData.useGpuColorMapping ? 4 : 7)) : 0)
+      if (pointCount > 500000) {
+        // 大规模点云：直接返回最新数据，跳过合并
+        return firstData
+      }
+    }
+    
     // 性能优化：使用更高效的去重算法
     // 精度：0.01单位（可以根据需要调整）
     const PRECISION = 0.01
@@ -3517,27 +3528,51 @@ export class SceneManager {
         // 更新历史数据队列（过滤后的数组会替换旧的，旧数组会被 GC 回收）
         this.pointCloud2HistoryMap.set(componentId, filteredHistory)
         
-        // 内存优化：如果历史数据过多，强制清理最旧的数据（防止内存泄漏）
-        // 即使 Decay Time 很大，也限制历史数据的最大数量（防止无限累积）
-        const MAX_HISTORY_FRAMES = 1000 // 最多保留 1000 帧历史数据
-        if (filteredHistory.length > MAX_HISTORY_FRAMES) {
-          console.warn(`[PointCloud2] History data exceeds ${MAX_HISTORY_FRAMES} frames for ${componentId}, removing oldest ${filteredHistory.length - MAX_HISTORY_FRAMES} frames to prevent memory leak`)
-          // 只保留最新的 MAX_HISTORY_FRAMES 帧
-          const trimmedHistory = filteredHistory.slice(-MAX_HISTORY_FRAMES)
+        // 内存优化：基于内存大小和点数量智能限制历史数据（防止内存泄漏）
+        // 参照 rviz 实现：对于大规模点云，严格限制历史数据
+        const pointCount = result.data?.pointCount || (result.data?.pointData?.length / (result.data?.useGpuColorMapping ? 4 : 7) || 0)
+        const bytesPerPoint = result.data?.useGpuColorMapping ? 16 : 28 // 4个float或7个float
+        const estimatedMemoryPerFrame = pointCount * bytesPerPoint
+        
+        // 动态计算最大历史帧数：基于内存限制（最大500MB历史数据）
+        const MAX_HISTORY_MEMORY_MB = 500
+        const MAX_HISTORY_MEMORY_BYTES = MAX_HISTORY_MEMORY_MB * 1024 * 1024
+        const maxHistoryFrames = Math.max(1, Math.floor(MAX_HISTORY_MEMORY_BYTES / estimatedMemoryPerFrame))
+        
+        // 对于大规模点云（>100万点），进一步限制历史帧数
+        const isLargePointCloud = pointCount > 1000000
+        const isVeryLargePointCloud = pointCount > 5000000
+        const finalMaxFrames = isVeryLargePointCloud 
+          ? 1  // 千万级点云：只保留最新帧，完全禁用历史
+          : isLargePointCloud 
+            ? Math.min(10, maxHistoryFrames)  // 百万级点云：最多10帧
+            : Math.min(100, maxHistoryFrames)  // 其他：最多100帧或基于内存限制
+        
+        if (filteredHistory.length > finalMaxFrames) {
+          const removedCount = filteredHistory.length - finalMaxFrames
+          const removedMemoryMB = (removedCount * estimatedMemoryPerFrame) / (1024 * 1024)
+          console.warn(`[PointCloud2] History data exceeds limit for ${componentId}:`, {
+            currentFrames: filteredHistory.length,
+            maxFrames: finalMaxFrames,
+            pointCount: pointCount.toLocaleString(),
+            memoryPerFrameMB: (estimatedMemoryPerFrame / (1024 * 1024)).toFixed(2),
+            removedFrames: removedCount,
+            freedMemoryMB: removedMemoryMB.toFixed(2)
+          })
+          // 只保留最新的 finalMaxFrames 帧
+          const trimmedHistory = filteredHistory.slice(-finalMaxFrames)
           this.pointCloud2HistoryMap.set(componentId, trimmedHistory)
-          // 更新 filteredHistory 引用，用于后续处理
           historyDataArray = trimmedHistory
         } else {
           historyDataArray = filteredHistory
         }
         
         // 合并历史数据（如果 Decay Time > 0）
-        // 优化：对于大规模点云（>50万点），禁用历史合并以提高性能
+        // 优化：对于大规模点云（>100万点），完全禁用历史合并以提高性能
         let finalData: any
-        const pointCount = result.data?.pointCount || (result.data?.pointData?.length / 7 || 0)
-        const isLargePointCloud = pointCount > 500000
+        const shouldMergeHistory = decayTime > 0 && historyDataArray.length > 1 && !isLargePointCloud
         
-        if (decayTime > 0 && historyDataArray.length > 1 && !isLargePointCloud) {
+        if (shouldMergeHistory) {
           // 需要合并多个时间点的数据（仅对小规模点云）
           finalData = this.mergePointCloud2Data(historyDataArray)
         } else {
