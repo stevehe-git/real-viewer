@@ -122,7 +122,7 @@ export function getDefaultOptions(type: string): Record<string, any> {
     pointcloud2: {
       topic: '/pointcloud',
       unreliable: false,
-      queueSize: 10,
+      queueSize: 1,
       selectable: true,
       style: 'Squares',
       size: 0.01,
