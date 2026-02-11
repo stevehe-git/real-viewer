@@ -114,37 +114,11 @@ export interface LaserScanProcessResult {
   error?: string
 }
 
-export interface PointCloud2ProcessRequest {
-  type: 'processPointCloud2'
-  componentId: string
-  message: any
-  config: {
-    size?: number
-    alpha?: number
-    colorTransformer?: string
-    useRainbow?: boolean
-    invertRainbow?: boolean // 反转彩虹色谱方向
-    minColor?: { r: number; g: number; b: number }
-    maxColor?: { r: number; g: number; b: number }
-    minIntensity?: number
-    maxIntensity?: number
-    axisColor?: string // 'X' | 'Y' | 'Z'，用于 Axis 模式
-    flatColor?: { r: number; g: number; b: number } // 用于 Flat 模式的颜色
-    autocomputeIntensityBounds?: boolean
-  }
-  // TF 变换信息（从主线程传递，避免 Worker 中访问 tfManager）
-  frameInfo?: {
-    position: { x: number; y: number; z: number } | null
-    orientation: { x: number; y: number; z: number; w: number } | null
-  } | null
-}
-
-export interface PointCloud2ProcessResult {
-  type: 'pointCloud2Processed'
-  componentId: string
-  data: any
-  error?: string
-}
+/**
+ * PointCloud2ProcessRequest 和 PointCloud2ProcessResult 已移至 pointCloud2Processor.worker.ts
+ * 保留此注释以说明迁移历史
+ * 如需使用这些类型，请从 pointCloud2Processor.worker.ts 导入
+ */
 
 export interface OdometryProcessRequest {
   type: 'processOdometry'
@@ -175,8 +149,11 @@ export interface OdometryProcessResult {
   error?: string
 }
 
-type WorkerRequest = MapProcessRequest | PointCloudProcessRequest | ImageProcessRequest | PathProcessRequest | TFProcessRequest | LaserScanProcessRequest | PointCloud2ProcessRequest | OdometryProcessRequest
-type WorkerResponse = MapProcessResult | PointCloudProcessResult | ImageProcessResult | PathProcessResult | TFProcessResult | LaserScanProcessResult | PointCloud2ProcessResult | OdometryProcessResult
+// 注意：PointCloud2ProcessRequest 和 PointCloud2ProcessResult 已移至 pointCloud2Processor.worker.ts
+// 如需使用这些类型，请从 pointCloud2Processor.worker.ts 导入
+
+type WorkerRequest = MapProcessRequest | PointCloudProcessRequest | ImageProcessRequest | PathProcessRequest | TFProcessRequest | LaserScanProcessRequest | OdometryProcessRequest
+type WorkerResponse = MapProcessResult | PointCloudProcessResult | ImageProcessResult | PathProcessResult | TFProcessResult | LaserScanProcessResult | OdometryProcessResult
 
 /**
  * 处理地图数据（OccupancyGrid 转纹理数据）
@@ -1090,12 +1067,11 @@ function processLaserScan(request: LaserScanProcessRequest): LaserScanProcessRes
 
 /**
  * 处理 PointCloud2 数据（3D点云）
- * 将 ROS PointCloud2 消息转换为点云数据
+ * 已移至 pointCloud2Processor.worker.ts
+ * 保留此注释以说明迁移历史
  */
-function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2ProcessResult {
-  const { componentId } = request
-  try {
-    const { message, config, componentId } = request
+
+/**
     const {
       size = 3, // 点大小（像素或世界空间单位）
       alpha = 1.0,
@@ -1447,11 +1423,6 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       type: 'pointCloud2Processed',
       componentId,
       data: null,
-      error: error?.message || 'Unknown error'
-    }
-  }
-}
-
 /**
  * HSL 转 RGB（用于彩虹色映射）
  */
@@ -1508,9 +1479,6 @@ self.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
       case 'processLaserScan':
         response = processLaserScan(request)
         break
-      case 'processPointCloud2':
-        response = processPointCloud2(request)
-        break
       default:
         throw new Error(`Unknown request type: ${(request as any).type}`)
     }
@@ -1521,16 +1489,6 @@ self.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
       if (imageResult.imageData) {
         // ImageData.data 是 Uint8ClampedArray，可以作为 Transferable 传输
         const transferList = [imageResult.imageData.data.buffer]
-        ;(self.postMessage as any)(response, transferList)
-      } else {
-        self.postMessage(response)
-      }
-    } else if (response.type === 'pointCloud2Processed') {
-      const pointCloudResult = response as PointCloud2ProcessResult
-      if (pointCloudResult.data?.pointData && pointCloudResult.data.pointData instanceof Float32Array) {
-        // Float32Array 可以作为 Transferable 传输，避免大数据序列化
-        // 这对于百万/千万级点云非常重要，可以避免内存复制和崩溃
-        const transferList = [pointCloudResult.data.pointData.buffer]
         ;(self.postMessage as any)(response, transferList)
       } else {
         self.postMessage(response)
@@ -1565,10 +1523,6 @@ self.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
     } else if (request.type === 'processLaserScan') {
       errorResponse.type = 'laserScanProcessed'
       errorResponse.componentId = (request as LaserScanProcessRequest).componentId
-      errorResponse.data = null
-    } else if (request.type === 'processPointCloud2') {
-      errorResponse.type = 'pointCloud2Processed'
-      errorResponse.componentId = (request as PointCloud2ProcessRequest).componentId
       errorResponse.data = null
     }
     

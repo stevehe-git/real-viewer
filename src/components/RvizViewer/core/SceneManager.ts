@@ -10,6 +10,7 @@ import { tfManager } from '@/services/tfManager'
 import { PointCloudBufferManager, generateDataHash, type CompactPointCloudData } from '../commands/PointCloudBufferManager'
 import { getDataProcessorWorker } from '@/workers/dataProcessorWorker'
 import type { TFProcessRequest } from '@/workers/dataProcessor.worker'
+import { pointCloud2ProcessorWorker } from '@/workers/pointCloud2ProcessorWorker'
 import { tfDebugger, pointCloud2Debugger } from '@/utils/debug'
 import { getDefaultOptions } from '@/stores/display/displayComponent'
 
@@ -3008,9 +3009,6 @@ export class SceneManager {
     const workerProcessStartTime = pointCloud2Debugger.recordWorkerProcessStart()
 
     try {
-      const { getDataProcessorWorker } = await import('@/workers/dataProcessorWorker')
-      const worker = getDataProcessorWorker()
-
       // 从 getDefaultOptions 获取默认值
       const defaultOptions = getDefaultOptions('pointcloud2')
       // 对于 Axis 模式，支持 useRainbow 和 invertRainbow 配置
@@ -3099,7 +3097,8 @@ export class SceneManager {
       //   config: workerConfig
       // })
 
-      const result = await worker.processPointCloud2({
+      // 使用专门的 PointCloud2 处理器 Worker
+      const result = await pointCloud2ProcessorWorker.processPointCloud2({
         type: 'processPointCloud2',
         componentId,
         message: cleanMessage,
