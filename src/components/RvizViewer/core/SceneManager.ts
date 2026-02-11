@@ -132,6 +132,7 @@ export class SceneManager {
   private tfDataHash: string = '' // 用于检测数据是否变化
   private mapRequestIds = new Map<string, number>() // 每个地图的当前请求 ID，用于取消过时的请求
   private mapRequestIdCounter = 0 // 请求 ID 计数器
+  private mapLastProcessedTimestamp = new Map<string, number>() // 每个地图最后处理的消息时间戳，用于防止旧消息覆盖新消息
   
   
   // 性能优化：复用mapProps对象池（按componentId缓存）
@@ -1769,6 +1770,7 @@ export class SceneManager {
       this.mapDataHashMap.delete(componentId)
       this.mapMessageHashMap.delete(componentId)
       this.mapRequestIds.delete(componentId)
+      this.mapLastProcessedTimestamp.delete(componentId)
       // 只有之前有数据时才触发渲染更新
       if (hadData) {
         this.registerDrawCalls()
@@ -1790,6 +1792,7 @@ export class SceneManager {
       this.mapDataHashMap.delete(componentId)
       this.mapMessageHashMap.delete(componentId)
       this.mapRequestIds.delete(componentId)
+      this.mapLastProcessedTimestamp.delete(componentId)
       // 只有之前有数据时才触发渲染更新
       if (hadData) {
         this.registerDrawCalls()
@@ -1803,6 +1806,55 @@ export class SceneManager {
     // useDisplaySync 已经通过时间戳和哈希判断需要更新，说明确实有新消息到达
     // 即使哈希相同，也可能是采样检测的漏检，应该允许更新，确保建图过程的连续性
     const messageHash = this.generateMapMessageHash(message)
+    
+    // 关键修复：提取消息时间戳，用于防止旧消息覆盖新消息
+    // 优先使用消息的 header.stamp（ROS 标准格式），如果没有则使用消息序列号或消息计数
+    // 如果都没有，使用单调递增的本地时间戳（确保时间戳总是递增）
+    let messageTimestamp: number
+    if (message.header?.stamp?.sec !== undefined) {
+      // 使用 ROS 标准时间戳
+      messageTimestamp = message.header.stamp.sec * 1000 + (message.header.stamp.nsec || 0) / 1000000
+    } else if (message.header?.seq !== undefined) {
+      // 如果没有时间戳，使用序列号（假设序列号是递增的）
+      messageTimestamp = message.header.seq * 1000 // 转换为毫秒单位
+    } else {
+      // 最后的后备方案：使用单调递增的本地时间戳
+      // 关键：使用 performance.now() 而不是 Date.now()，确保时间戳单调递增
+      messageTimestamp = performance.now()
+    }
+    
+    // 检查消息时间戳，防止旧消息覆盖新消息（解决"前进时突然后退"的问题）
+    // 关键修复：使用严格的小于比较，并且允许相等（相同时间戳的消息可以更新）
+    const lastProcessedTimestamp = this.mapLastProcessedTimestamp.get(componentId)
+    if (lastProcessedTimestamp !== undefined && messageTimestamp <= lastProcessedTimestamp) {
+      // 旧消息或相同时间戳的消息，忽略（防止乱序消息导致渲染后退）
+      // 注意：使用 <= 而不是 <，确保相同时间戳的消息不会重复处理
+      if (import.meta.env.DEV) {
+        console.warn(`[Map Debug] Ignoring out-of-order message for ${componentId}:`, {
+          messageTimestamp,
+          lastProcessedTimestamp,
+          diff: messageTimestamp - lastProcessedTimestamp,
+          hasHeader: !!message.header,
+          hasStamp: !!message.header?.stamp,
+          seq: message.header?.seq,
+          willSkip: true
+        })
+      }
+      return
+    }
+    
+    // 调试日志：记录接受的消息
+    if (import.meta.env.DEV) {
+      console.log(`[Map Debug] Accepting message for ${componentId}:`, {
+        messageTimestamp,
+        lastProcessedTimestamp: lastProcessedTimestamp ?? 'none',
+        diff: lastProcessedTimestamp !== undefined ? messageTimestamp - lastProcessedTimestamp : 'N/A',
+        hasHeader: !!message.header,
+        hasStamp: !!message.header?.stamp,
+        seq: message.header?.seq,
+        requestId: this.mapRequestIdCounter + 1
+      })
+    }
     
     // 保存消息哈希用于调试和缓存（不再用于跳过更新）
     // 跳帧修复：移除哈希检测逻辑，确保所有通过 useDisplaySync 的消息都能更新
@@ -1878,6 +1930,23 @@ export class SceneManager {
         // 请求已被取消，忽略结果
         return
       }
+      
+      // 再次检查消息时间戳（Worker 处理期间可能收到更新的消息）
+      // 关键修复：使用严格的小于等于比较，确保旧消息的结果不会覆盖新消息
+      const lastProcessedTimestamp = this.mapLastProcessedTimestamp.get(componentId)
+      if (lastProcessedTimestamp !== undefined && messageTimestamp <= lastProcessedTimestamp) {
+        // 在处理期间收到了更新的消息，忽略这个旧消息的结果
+        if (import.meta.env.DEV) {
+          console.warn(`[Map Debug] Ignoring stale result for ${componentId}:`, {
+            messageTimestamp,
+            lastProcessedTimestamp,
+            diff: messageTimestamp - lastProcessedTimestamp,
+            requestId,
+            currentRequestId
+          })
+        }
+        return
+      }
 
       // 保存处理后的纹理数据
       if (result.textureData) {
@@ -1915,6 +1984,8 @@ export class SceneManager {
         this.mapDataHashMap.set(componentId, dataHash)
         // 保存完整的消息哈希，用于下次变化检测
         this.mapMessageHashMap.set(componentId, messageHash)
+        // 关键修复：保存消息时间戳，用于防止旧消息覆盖新消息
+        this.mapLastProcessedTimestamp.set(componentId, messageTimestamp)
         
         // 如果是 costmap topic（支持 global_costmap 和 local_costmap），保存完整数据用于增量更新
         // 例如：/move_base/global_costmap/costmap 或 /move_base/local_costmap/costmap
@@ -2484,6 +2555,7 @@ export class SceneManager {
     this.mapDataHashMap.clear()
     this.mapMessageHashMap.clear() // 清理所有消息哈希
     this.mapRequestIds.clear() // 清理所有请求 ID
+    this.mapLastProcessedTimestamp.clear() // 清理所有时间戳记录
     this.mapTopicMap.clear() // 清理所有话题映射
     this._mapPropsCache.clear() // 性能优化：清理所有mapProps缓存
     
