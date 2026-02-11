@@ -108,7 +108,7 @@ export function getDefaultOptions(type: string): Record<string, any> {
       topic: '/scan',
       queueSize: 10,
       style: 'Flat Squares',
-      size: 0.01,
+      size: 0.05,
       alpha: 1,
       colorTransformer: 'Flat', // 默认使用 Flat 模式，显示红色
       useRainbow: true,

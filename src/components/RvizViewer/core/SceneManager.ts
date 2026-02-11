@@ -625,27 +625,101 @@ export class SceneManager {
     // 注册所有 LaserScan（单个实例渲染）
     this.laserScanDataMap.forEach((laserScanData, componentId) => {
       if (this.pointsCommandWithWorldSpace && laserScanData) {
+        // 检查 Transform 是否有效（如果 Transform 无效，不注册绘制调用）
+        if (laserScanData.pose === null || laserScanData.pose === undefined) {
+          // Transform 无效，跳过渲染
+          return
+        }
+        
         // 获取或创建单个实例
         if (!this.laserScanInstances.has(componentId)) {
           this.laserScanInstances.set(componentId, { displayName: `LaserScan-${componentId}` })
         }
         const instance = this.laserScanInstances.get(componentId)
         
-        // 获取配置，确保 alpha 和其他配置被传递到渲染层
+        // 获取配置
         const config = this.laserScanConfigMap.get(componentId) || {}
         const defaultOptions: any = getDefaultOptions('laserscan')
-        const alpha = config.alpha ?? defaultOptions.alpha ?? 1.0
         
-        // 将配置添加到渲染数据中，确保 Points 命令可以访问
-        const renderData = {
-          ...laserScanData,
-          alpha, // 确保 alpha 被传递
-          style: config.style || defaultOptions.style || 'Flat Squares',
-          scale: {
-            x: config.size ?? defaultOptions.size ?? 0.01,
-            y: config.size ?? defaultOptions.size ?? 0.01,
-            z: config.size ?? defaultOptions.size ?? 0.01
+        // 优化：直接使用Float32Array格式，避免转换开销
+        let renderData: any
+        if (laserScanData.pointData && laserScanData.pointData instanceof Float32Array) {
+          // GPU端颜色映射格式：Float32Array [x1, y1, z1, intensity1, x2, y2, z2, intensity2, ...]
+          // 每个点占用4个float（16字节）
+          const pointData = laserScanData.pointData
+          const useGpuColorMapping = laserScanData.useGpuColorMapping ?? true
+          const stride = useGpuColorMapping ? 4 : 7 // GPU端颜色映射：4个float/点，旧格式：7个float/点
+          
+          // 如果数据长度不是stride的倍数，截断到最近的完整点
+          const validDataLength = Math.floor(pointData.length / stride) * stride
+          const pointCount = laserScanData.pointCount || Math.floor(pointData.length / stride)
+          
+          // 验证数据格式：确保数据长度是stride的倍数
+          if (pointData.length % stride !== 0) {
+            if (import.meta.env.DEV) {
+              console.warn(`[LaserScan] Invalid data length for ${componentId}:`, {
+                dataLength: pointData.length,
+                stride,
+                remainder: pointData.length % stride,
+                validDataLength,
+                pointCount,
+                useGpuColorMapping
+              })
+            }
           }
+          
+          if (pointCount === 0) {
+            console.warn(`[LaserScan] No points in data for ${componentId}`)
+            return
+          }
+          
+          // 直接传递Float32Array，Points命令会直接处理
+          // 传递GPU端颜色映射配置
+          renderData = {
+            pose: laserScanData.pose,
+            pointData, // 直接传递Float32Array（GPU端颜色映射格式：[x, y, z, intensity, ...]）
+            pointCount, // 点的数量
+            scale: {
+              x: config.size ?? laserScanData.scale?.x ?? 0.01,
+              y: config.size ?? laserScanData.scale?.y ?? 0.01,
+              z: config.size ?? laserScanData.scale?.z ?? 0.01
+            },
+            style: config.style || defaultOptions.style || 'Flat Squares',
+            // GPU端颜色映射配置
+            useGpuColorMapping: laserScanData.useGpuColorMapping ?? true,
+            colorTransformer: laserScanData.colorTransformer || 'Flat',
+            useRainbow: laserScanData.useRainbow ?? true,
+            invertRainbow: laserScanData.invertRainbow ?? false,
+            minColor: laserScanData.minColor || { r: 0, g: 0, b: 0 },
+            maxColor: laserScanData.maxColor || { r: 255, g: 255, b: 255 },
+            minIntensity: laserScanData.minIntensity ?? 0,
+            maxIntensity: laserScanData.maxIntensity ?? (laserScanData.maxIntensity === 0 && laserScanData.minIntensity === 0 ? 1 : laserScanData.maxIntensity ?? 1),
+            axisColor: laserScanData.axisColor || 'X',
+            axisMin: laserScanData.axisMin ?? 0,
+            axisMax: laserScanData.axisMax ?? (laserScanData.axisMax === 0 && laserScanData.axisMin === 0 ? 1 : laserScanData.axisMax ?? 1),
+            flatColor: laserScanData.flatColor || { r: 255, g: 0, b: 0 },
+            alpha: laserScanData.alpha ?? config.alpha ?? defaultOptions.alpha ?? 1.0
+          }
+        } else if (laserScanData.points) {
+          // 旧格式兼容：对象数组格式
+          if (laserScanData.points.length === 0) {
+            console.warn(`[LaserScan] No points in data for ${componentId}`, laserScanData)
+            return
+          }
+          
+          renderData = {
+            ...laserScanData,
+            scale: {
+              x: config.size ?? laserScanData.scale?.x ?? 0.01,
+              y: config.size ?? laserScanData.scale?.y ?? 0.01,
+              z: config.size ?? laserScanData.scale?.z ?? 0.01
+            },
+            style: config.style || defaultOptions.style || 'Flat Squares',
+            useGpuColorMapping: false // 旧格式不使用 GPU 颜色映射
+          }
+        } else {
+          console.warn(`[LaserScan] Invalid data format for ${componentId}`, laserScanData)
+          return
         }
         
         this.worldviewContext.onMount(instance, this.pointsCommandWithWorldSpace)
@@ -2715,21 +2789,9 @@ export class SceneManager {
       //   console.warn(`LaserScan ${componentId}: No points in processed data`)
       // }
 
-      // 保存处理后的数据
-      // 确保 alpha 和 style、size 等配置被添加到数据中，以便渲染时使用
-      const currentConfig = this.laserScanConfigMap.get(componentId) || {}
-      const defaultOptionsForData: any = getDefaultOptions('laserscan')
-      const finalData = {
-        ...transformedData,
-        alpha: currentConfig.alpha ?? defaultOptionsForData.alpha ?? 1.0,
-        style: currentConfig.style || defaultOptionsForData.style || 'Flat Squares',
-        scale: {
-          x: currentConfig.size ?? defaultOptionsForData.size ?? 0.01,
-          y: currentConfig.size ?? defaultOptionsForData.size ?? 0.01,
-          z: currentConfig.size ?? defaultOptionsForData.size ?? 0.01
-        }
-      }
-      this.laserScanDataMap.set(componentId, finalData)
+      // 保存处理后的数据（GPU 颜色映射格式）
+      // transformedData 已经包含所有 GPU 颜色映射配置
+      this.laserScanDataMap.set(componentId, transformedData)
 
       // 延迟注册绘制调用
       requestAnimationFrame(() => {

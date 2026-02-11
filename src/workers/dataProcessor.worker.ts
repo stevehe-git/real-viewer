@@ -968,9 +968,17 @@ function processLaserScan(request: LaserScanProcessRequest): LaserScanProcessRes
       }
     }
 
-    const points: any[] = []
-    const colors: any[] = []
-    const defaultColor = { r: 1, g: 1, b: 1, a: alpha }
+    // GPU端颜色映射：使用 Float32Array 格式，类似 pointcloud2
+    // 格式：[x1, y1, z1, intensity1, x2, y2, z2, intensity2, ...]
+    // 每个点占用4个float（16字节）
+    const maxPoints = ranges.length
+    const pointDataArray = new Float32Array(maxPoints * 4)
+    let validPointCount = 0
+    
+    // 计算 Axis 模式的范围（如果需要）
+    let axisMin = Infinity
+    let axisMax = -Infinity
+    let hasAxisValues = false
 
     // 转换 ranges 为 3D 点（2D 点云，z=0）
     for (let i = 0; i < ranges.length; i++) {
@@ -989,63 +997,84 @@ function processLaserScan(request: LaserScanProcessRequest): LaserScanProcessRes
       const y = range * Math.sin(angle)
       const z = 0 // LaserScan 是 2D 的，z=0
 
-      points.push({ x, y, z })
+      // 跳过无效点（NaN 或 Infinity）
+      if (!isFinite(x) || !isFinite(y) || !isFinite(z)) {
+        continue
+      }
 
-      // 计算颜色
-      let color = defaultColor
+      // 计算强度值（用于 Intensity 模式）
+      let intensityValue = 0.0
       if (colorTransformer === 'Intensity' && intensities.length > i) {
         const intensity = intensities[i]
         if (intensity !== undefined && intensity !== null && isFinite(intensity)) {
-          // 归一化强度值
-          const normalizedIntensity = intensityMax > intensityMin
-            ? (intensity - intensityMin) / (intensityMax - intensityMin)
-            : 0
-
-          if (useRainbow) {
-            // 彩虹色映射
-            const hue = normalizedIntensity * 240 // 0-240 (blue to red)
-            const rgb = hslToRgb(hue / 360, 1.0, 0.5)
-            color = { ...rgb, a: alpha }
-          } else {
-            // 线性插值颜色
-            color = {
-              r: (minColor.r + (maxColor.r - minColor.r) * normalizedIntensity) / 255,
-              g: (minColor.g + (maxColor.g - minColor.g) * normalizedIntensity) / 255,
-              b: (minColor.b + (maxColor.b - minColor.b) * normalizedIntensity) / 255,
-              a: alpha
-            }
+          intensityValue = intensity
+          // 同时计算intensity范围（如果启用自动计算）
+          if (autocomputeIntensityBounds) {
+            if (intensityValue < intensityMin) intensityMin = intensityValue
+            if (intensityValue > intensityMax) intensityMax = intensityValue
           }
-        } else {
-          // 强度数据无效，使用 Flat 颜色
-          color = { r: 1, g: 0, b: 0, a: alpha } // 默认红色
         }
-      } else if (colorTransformer === 'Flat') {
-        // Flat 颜色模式：使用配置的 flatColor
-        color = {
-          r: (flatColor.r || 255) / 255,
-          g: (flatColor.g || 0) / 255,
-          b: (flatColor.b || 0) / 255,
-          a: alpha
-        }
-      } else {
-        // 其他情况，使用默认颜色（白色）
-        color = defaultColor
-      }
-      
-      // 确保 color 有 alpha 属性
-      if (!color.a) {
-        color.a = alpha
       }
 
-      colors.push(color)
+      // 计算 Axis 模式的范围（如果需要）
+      if (colorTransformer === 'Axis') {
+        // LaserScan 是 2D 的，Axis 模式使用 X 或 Y 坐标
+        // 默认使用 X 轴（可以扩展为配置项）
+        const axisValue = x // 或 y，取决于配置
+        if (axisValue < axisMin) axisMin = axisValue
+        if (axisValue > axisMax) axisMax = axisValue
+        hasAxisValues = true
+      }
+
+      // 直接写入预分配的Float32Array（避免push操作的开销）
+      const arrayIndex = validPointCount * 4
+      pointDataArray[arrayIndex] = x
+      pointDataArray[arrayIndex + 1] = y
+      pointDataArray[arrayIndex + 2] = z
+      pointDataArray[arrayIndex + 3] = intensityValue
+      
+      validPointCount++
     }
 
-    if (points.length === 0) {
+    // 处理范围计算的边界情况
+    if (hasAxisValues) {
+      if (!isFinite(axisMin) || !isFinite(axisMax)) {
+        axisMin = 0
+        axisMax = 1
+      } else if (axisMax === axisMin) {
+        axisMax = axisMin + 1 // 避免除零
+      }
+    } else {
+      axisMin = 0
+      axisMax = 1
+    }
+
+    if (autocomputeIntensityBounds && intensities.length > 0) {
+      if (!isFinite(intensityMin) || !isFinite(intensityMax)) {
+        intensityMin = minIntensity
+        intensityMax = maxIntensity
+      } else if (intensityMax === intensityMin) {
+        intensityMax = intensityMin + 1 // 避免除零
+      }
+    } else {
+      intensityMin = minIntensity
+      intensityMax = maxIntensity
+    }
+
+    if (validPointCount === 0) {
       return {
         type: 'laserScanProcessed',
         componentId,
         data: null
       }
+    }
+
+    // 如果实际处理的点数少于预分配的大小，创建精确大小的数组（节省内存）
+    let finalPointDataArray: Float32Array
+    if (validPointCount < maxPoints) {
+      finalPointDataArray = pointDataArray.slice(0, validPointCount * 4)
+    } else {
+      finalPointDataArray = pointDataArray
     }
 
     return {
@@ -1056,10 +1085,24 @@ function processLaserScan(request: LaserScanProcessRequest): LaserScanProcessRes
           position: { x: 0, y: 0, z: 0 },
           orientation: { x: 0, y: 0, z: 0, w: 1 }
         },
-        points,
-        colors: colors.length > 0 ? colors : undefined,
-        color: colors.length === 0 ? defaultColor : undefined,
-        scale: { x: size, y: size, z: size }
+        // GPU端颜色映射格式：Float32Array [x, y, z, intensity, ...]
+        pointData: finalPointDataArray,
+        pointCount: validPointCount,
+        scale: { x: size, y: size, z: size },
+        // GPU端颜色映射配置
+        useGpuColorMapping: true,
+        colorTransformer,
+        useRainbow,
+        invertRainbow: false, // LaserScan 暂不支持 invertRainbow
+        minColor,
+        maxColor,
+        minIntensity: intensityMin,
+        maxIntensity: intensityMax,
+        axisColor: 'X', // LaserScan 默认使用 X 轴（可以扩展为配置项）
+        axisMin,
+        axisMax,
+        flatColor,
+        alpha
       }
     }
   } catch (error: any) {
@@ -1071,33 +1114,7 @@ function processLaserScan(request: LaserScanProcessRequest): LaserScanProcessRes
     }
   }
 }
-/**
- * HSL 转 RGB（用于彩虹色映射）
- */
-function hslToRgb(h: number, s: number, l: number): { r: number; g: number; b: number } {
-  let r: number, g: number, b: number
-
-  if (s === 0) {
-    r = g = b = l
-  } else {
-    const hue2rgb = (p: number, q: number, t: number) => {
-      if (t < 0) t += 1
-      if (t > 1) t -= 1
-      if (t < 1/6) return p + (q - p) * 6 * t
-      if (t < 1/2) return q
-      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6
-      return p
-    }
-
-    const q = l < 0.5 ? l * (1 + s) : l + s - l * s
-    const p = 2 * l - q
-    r = hue2rgb(p, q, h + 1/3)
-    g = hue2rgb(p, q, h)
-    b = hue2rgb(p, q, h - 1/3)
-  }
-
-  return { r, g, b }
-}
+// HSL 转 RGB 函数已移除，因为 LaserScan 现在使用 GPU 端颜色映射
 
 // Worker 消息处理
 self.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
