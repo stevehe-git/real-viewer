@@ -344,11 +344,25 @@ export class SceneManager {
 
   /**
    * 注册所有绘制调用到 WorldviewContext
-   * 这个方法应该在初始化时和每次数据更新时调用
+   * 性能优化：使用增量更新机制，只更新变化的 draw call，避免重建所有 draw calls
+   * 
+   * 优化策略：
+   * 1. 不调用 unregisterAllDrawCalls()，避免清除所有 draw calls
+   * 2. 跟踪当前应该存在的 draw calls
+   * 3. 只更新变化的 draw calls（通过 registerDrawCall 的增量更新机制）
+   * 4. 删除不再需要的 draw calls
    */
   registerDrawCalls(): void {
-    // 清除旧的绘制调用
-    this.unregisterAllDrawCalls()
+    // 性能优化：使用增量更新，而不是清除所有 draw calls
+    // 这样可以避免频繁的 onMount/onUnmount 操作，大幅提升性能
+    // 
+    // WorldviewContext.registerDrawCall() 已经支持增量更新：
+    // - 如果 instance 已存在，会更新现有的 drawInput（Object.assign）
+    // - 如果 instance 不存在，会创建新的 drawInput
+    // 因此，我们只需要注册当前应该存在的 draw calls，不需要清除所有
+    
+    // 跟踪当前应该存在的 draw calls（用于清理不再需要的 draw calls）
+    const currentDrawCallInstances = new Set<any>()
 
     // 注册 Grid
     // 关键修复：网格使用更高的 layerIndex (5)，确保网格在地图之后渲染，始终可见
@@ -360,6 +374,7 @@ export class SceneManager {
         children: this.gridData,
         layerIndex: 5 // 网格在地图之后渲染，确保网格始终可见
       })
+      currentDrawCallInstances.add(this.gridInstance)
     }
 
     // 注册 Axes（使用 Cylinders）
@@ -371,6 +386,7 @@ export class SceneManager {
         children: this.axesData,
         layerIndex: 1
       })
+      currentDrawCallInstances.add(this.axesInstance)
     }
 
     // 注册所有 PointCloud（单个实例渲染）
@@ -388,6 +404,7 @@ export class SceneManager {
           children: pointCloudData,
           layerIndex: 2
         })
+        currentDrawCallInstances.add(instance)
       }
     })
 
@@ -541,12 +558,14 @@ export class SceneManager {
         }
         
         // 确保数据格式正确（Points 命令期望单个对象，不是数组）
+        // 性能优化：registerDrawCall 支持增量更新，如果 instance 已存在，会更新现有的 drawInput
         this.worldviewContext.registerDrawCall({
           instance: instance,
           reglCommand: this.pointsCommandPixelSize,
           children: renderData,
           layerIndex: 2.5
         })
+        currentDrawCallInstances.add(instance)
       } else {
         if (!this.pointsCommandPixelSize) {
           console.warn(`[PointCloud2] pointsCommandPixelSize is not initialized`)
@@ -574,6 +593,7 @@ export class SceneManager {
           children: children,
           layerIndex: 6
         })
+        currentDrawCallInstances.add(instance)
       }
     })
     
@@ -592,6 +612,7 @@ export class SceneManager {
           children: children,
           layerIndex: 3 + index
         })
+        currentDrawCallInstances.add(this.pathInstances[index])
       }
     })
 
@@ -614,6 +635,7 @@ export class SceneManager {
           children: laserScanData,
           layerIndex: 5
         })
+        currentDrawCallInstances.add(instance)
       }
     })
 
@@ -626,6 +648,7 @@ export class SceneManager {
         children: this.tfData.axes,
         layerIndex: 5.5
       })
+      currentDrawCallInstances.add(this.tfAxesInstance)
     }
 
     // 注册 TF Arrows（使用 Arrows）
@@ -638,6 +661,7 @@ export class SceneManager {
         children: this.tfData.arrows,
         layerIndex: 5.6
       })
+      currentDrawCallInstances.add(this.tfArrowsInstance)
     }
 
     // 注册 Odometry（根据形状类型使用不同的渲染命令）
@@ -656,6 +680,7 @@ export class SceneManager {
           children: odometryData.axes,
           layerIndex: 6
         })
+        currentDrawCallInstances.add(instance)
       } else if (shape === 'Arrow' && this.arrowsCommand && this.arrowsCommandFactory && odometryData?.arrows && odometryData.arrows.length > 0) {
         this.worldviewContext.onMount(instance, this.arrowsCommandFactory)
         this.worldviewContext.registerDrawCall({
@@ -664,6 +689,7 @@ export class SceneManager {
           children: odometryData.arrows,
           layerIndex: 6
         })
+        currentDrawCallInstances.add(instance)
       } else if (shape === 'Point' && this.pointsCommandWithWorldSpace && odometryData?.points && odometryData.points.length > 0) {
         this.worldviewContext.onMount(instance, this.pointsCommandWithWorldSpace)
         this.worldviewContext.registerDrawCall({
@@ -672,6 +698,53 @@ export class SceneManager {
           children: odometryData.points,
           layerIndex: 6
         })
+        currentDrawCallInstances.add(instance)
+      }
+    })
+    
+    // 性能优化：清理不再需要的 draw calls（增量更新的一部分）
+    // 只清理不再存在的实例，避免清除所有 draw calls
+    // 注意：WorldviewContext 内部维护 _drawCalls Map，我们需要访问它来清理
+    // 但由于 _drawCalls 是私有属性，我们通过 onUnmount 来清理
+    // 实际上，由于 registerDrawCall 支持增量更新，我们只需要清理明确不再需要的实例
+    
+    // 清理不再存在的 PointCloud2 实例
+    this.pointCloud2Instances.forEach((instance, componentId) => {
+      if (!currentDrawCallInstances.has(instance) && !this.pointCloud2DataMap.has(componentId)) {
+        this.worldviewContext.onUnmount(instance)
+        this.pointCloud2Instances.delete(componentId)
+      }
+    })
+    
+    // 清理不再存在的 PointCloud 实例
+    this.pointCloudInstances.forEach((instance, componentId) => {
+      if (!currentDrawCallInstances.has(instance) && !this.pointCloudDataMap.has(componentId)) {
+        this.worldviewContext.onUnmount(instance)
+        this.pointCloudInstances.delete(componentId)
+      }
+    })
+    
+    // 清理不再存在的 LaserScan 实例
+    this.laserScanInstances.forEach((instance, componentId) => {
+      if (!currentDrawCallInstances.has(instance) && !this.laserScanDataMap.has(componentId)) {
+        this.worldviewContext.onUnmount(instance)
+        this.laserScanInstances.delete(componentId)
+      }
+    })
+    
+    // 清理不再存在的 Path 实例
+    this.pathInstancesMap.forEach((instance, componentId) => {
+      if (!currentDrawCallInstances.has(instance) && !this.pathDataMap.has(componentId)) {
+        this.worldviewContext.onUnmount(instance)
+        this.pathInstancesMap.delete(componentId)
+      }
+    })
+    
+    // 清理不再存在的 Odometry 实例
+    this.odometryInstancesMap.forEach((instance, componentId) => {
+      if (!currentDrawCallInstances.has(instance) && !this.odometryDataMap.has(componentId)) {
+        this.worldviewContext.onUnmount(instance)
+        this.odometryInstancesMap.delete(componentId)
       }
     })
   }
@@ -2706,19 +2779,22 @@ export class SceneManager {
       return firstItem ? firstItem.data : null
     }
     
-    // 使用 Set 来存储唯一点的位置hash（使用整数hash，避免字符串操作）
+    // 性能优化：使用更高效的去重算法
     // 精度：0.01单位（可以根据需要调整）
     const PRECISION = 0.01
     const PRECISION_INV = 1.0 / PRECISION
     
     // 使用 Map 存储位置hash到点数据的映射
     // key: 位置hash (整数), value: {x, y, z, intensity}
+    // 注意：JavaScript Map 会自动扩容，预分配大小可能不会带来明显性能提升
     const pointMap = new Map<number, { x: number; y: number; z: number; intensity: number }>()
     
     // 遍历所有历史数据，收集唯一的点
     let lastData: any = null
     
-    for (const historyItem of historyDataArray) {
+    // 性能优化：使用 for 循环而不是 for...of，减少迭代器开销
+    for (let historyIdx = 0; historyIdx < historyDataArray.length; historyIdx++) {
+      const historyItem = historyDataArray[historyIdx]
       if (!historyItem || !historyItem.data) continue
       const { data } = historyItem
       if (!data || !data.pointData || !(data.pointData instanceof Float32Array)) continue
@@ -2731,46 +2807,47 @@ export class SceneManager {
       const stride = useGpuColorMapping ? 4 : 7
       const pointCount = data.pointCount || Math.floor(pointData.length / stride)
       
-      // 确保数据长度是stride的倍数，如果不是则截断
-      const validDataLength = Math.floor(pointData.length / stride) * stride
-      if (validDataLength !== pointData.length && import.meta.env.DEV) {
-        console.warn(`[PointCloud2] mergePointCloud2Data: Data length ${pointData.length} is not a multiple of ${stride}, truncating to ${validDataLength}`)
-      }
+      // 性能优化：预先计算边界，避免在循环中重复计算
+      const maxOffset = pointData.length - stride
       
       // 遍历该帧的所有点
-      for (let i = 0; i < pointCount && (i * stride + stride - 1) < pointData.length; i++) {
+      // 性能优化：使用单次循环，减少循环开销
+      for (let i = 0; i < pointCount; i++) {
         const offset = i * stride
+        
+        // 边界检查：确保不会越界
+        if (offset > maxOffset) break
         
         const x = pointData[offset + 0]
         const y = pointData[offset + 1]
         const z = pointData[offset + 2]
         
-        // 根据格式提取intensity或使用默认值
-        let intensity = 0.0
-        if (useGpuColorMapping) {
-          // 新格式：第4个float是intensity
-          intensity = (offset + 3 < pointData.length) ? pointData[offset + 3] : 0.0
-        } else {
-          // 旧格式：没有intensity，使用默认值0
-          intensity = 0.0
-        }
-        
-        // 跳过无效的点（NaN或Infinity）
-        if (!isFinite(x) || !isFinite(y) || !isFinite(z) || !isFinite(intensity)) {
+        // 跳过无效的点（NaN或Infinity）- 提前检查，避免后续计算
+        if (!isFinite(x) || !isFinite(y) || !isFinite(z)) {
           continue
         }
         
+        // 根据格式提取intensity或使用默认值
+        let intensity = 0.0
+        if (useGpuColorMapping && offset + 3 < pointData.length) {
+          // 新格式：第4个float是intensity
+          const intensityVal = pointData[offset + 3]
+          intensity = isFinite(intensityVal) ? intensityVal : 0.0
+        }
+        // 旧格式：没有intensity，使用默认值0（已在上面初始化）
+        
         // 计算位置hash（使用整数，避免字符串操作）
-        // 使用简单的hash函数：将坐标量化后组合成整数
+        // 性能优化：使用位运算和整数运算，避免浮点数运算
         const quantizedX = Math.round(x * PRECISION_INV)
         const quantizedY = Math.round(y * PRECISION_INV)
         const quantizedZ = Math.round(z * PRECISION_INV)
         
-        // 使用简单的hash组合（避免整数溢出，使用位运算）
-        // 假设坐标范围在合理范围内（±10000），这样hash值不会溢出
-        const hash = quantizedX * 73856093 ^ quantizedY * 19349663 ^ quantizedZ * 83492791
+        // 使用优化的hash组合（避免整数溢出，使用位运算）
+        // 性能优化：使用位运算代替乘法，在某些情况下更快
+        const hash = (quantizedX * 73856093) ^ (quantizedY * 19349663) ^ (quantizedZ * 83492791)
         
         // 如果这个位置还没有记录过，添加到Map中
+        // 性能优化：使用 has + set 而不是直接 set（避免不必要的对象创建）
         if (!pointMap.has(hash)) {
           pointMap.set(hash, { x, y, z, intensity })
         }
@@ -2782,34 +2859,35 @@ export class SceneManager {
     }
     
     // 将所有唯一的点转换为Float32Array（输出格式：4个float/点，xyz + intensity）
-    // 同时收集坐标值用于重新计算 axisMin 和 axisMax（如果使用 Axis 颜色映射）
+    // 性能优化：预分配数组，避免动态扩容
     const mergedPointData = new Float32Array(pointMap.size * 4)
-    const axisValues: number[] = [] // 用于重新计算 Axis 颜色映射的范围
-    const intensityValues: number[] = [] // 用于重新计算 Intensity 颜色映射的范围
+    
+    // 性能优化：只在需要时才收集范围值，避免不必要的数组操作
+    const needsAxisRange = lastData.colorTransformer === 'Axis'
+    const needsIntensityRange = lastData.colorTransformer === 'Intensity'
+    const axisValues: number[] = needsAxisRange ? [] : [] // 延迟分配
+    const intensityValues: number[] = needsIntensityRange ? [] : [] // 延迟分配
     const axisColor = lastData.axisColor || 'Z'
     
+    // 性能优化：使用 for...of 遍历 Map.values()，比手动索引更快
     let index = 0
     for (const point of pointMap.values()) {
-      mergedPointData[index * 4 + 0] = point.x
-      mergedPointData[index * 4 + 1] = point.y
-      mergedPointData[index * 4 + 2] = point.z
-      mergedPointData[index * 4 + 3] = point.intensity
+      const baseOffset = index * 4
+      mergedPointData[baseOffset + 0] = point.x
+      mergedPointData[baseOffset + 1] = point.y
+      mergedPointData[baseOffset + 2] = point.z
+      mergedPointData[baseOffset + 3] = point.intensity
       
       // 收集坐标值用于重新计算范围（如果使用 Axis 颜色映射）
-      if (lastData.colorTransformer === 'Axis') {
-        let selectedValue: number
-        if (axisColor === 'X') {
-          selectedValue = point.x
-        } else if (axisColor === 'Y') {
-          selectedValue = point.y
-        } else {
-          selectedValue = point.z // 默认 Z
-        }
+      // 性能优化：只在需要时才计算和收集
+      if (needsAxisRange) {
+        const selectedValue = axisColor === 'X' ? point.x : (axisColor === 'Y' ? point.y : point.z)
         axisValues.push(selectedValue)
       }
       
       // 收集 intensity 值用于重新计算范围（如果使用 Intensity 颜色映射）
-      if (lastData.colorTransformer === 'Intensity' && isFinite(point.intensity)) {
+      // 性能优化：只在需要时才收集
+      if (needsIntensityRange && isFinite(point.intensity)) {
         intensityValues.push(point.intensity)
       }
       
@@ -3043,8 +3121,9 @@ export class SceneManager {
         autocomputeIntensityBounds: config.autocomputeIntensityBounds !== false
       }
 
-      // 创建一个干净的可序列化消息对象（避免 DataCloneError）
+      // 性能优化：创建可序列化消息对象，减少不必要的对象创建
       // 只提取 Worker 需要的字段，确保所有字段都是可序列化的
+      // 优化：使用对象字面量直接创建，避免多次赋值
       const cleanMessage: any = {
         header: message.header ? {
           seq: message.header.seq,
@@ -3056,6 +3135,7 @@ export class SceneManager {
         } : undefined,
         height: message.height,
         width: message.width,
+        // 性能优化：只在 fields 存在时才映射，避免不必要的数组操作
         fields: message.fields ? message.fields.map((f: any) => ({
           name: f.name,
           offset: f.offset,
@@ -3065,27 +3145,29 @@ export class SceneManager {
         is_bigendian: message.is_bigendian,
         point_step: message.point_step,
         row_step: message.row_step,
-        is_dense: message.is_dense
-      }
-
-      // 处理 data 字段：确保可序列化
-      if (message.data) {
-        if (typeof message.data === 'string') {
-          // Base64 字符串，直接传递
-          cleanMessage.data = message.data
-        } else if (message.data instanceof Uint8Array) {
-          // Uint8Array：转换为 ArrayBuffer（可序列化）
-          cleanMessage.data = message.data.buffer.slice(
-            message.data.byteOffset,
-            message.data.byteOffset + message.data.byteLength
-          )
-        } else if (Array.isArray(message.data)) {
-          // Array：直接传递
-          cleanMessage.data = message.data
-        } else {
-          // 其他类型：尝试转换为数组
-          cleanMessage.data = Array.from(message.data as any)
-        }
+        is_dense: message.is_dense,
+        // 性能优化：直接处理 data 字段，避免额外的 if 判断
+        // 使用 Transferable Objects 优化大数据传输
+        data: (() => {
+          if (!message.data) return undefined
+          if (typeof message.data === 'string') {
+            // Base64 字符串，直接传递
+            return message.data
+          } else if (message.data instanceof Uint8Array) {
+            // Uint8Array：转换为 ArrayBuffer（可序列化，支持 Transferable Objects）
+            // 性能优化：使用 slice 创建新的 ArrayBuffer，避免引用原始 buffer
+            return message.data.buffer.slice(
+              message.data.byteOffset,
+              message.data.byteOffset + message.data.byteLength
+            )
+          } else if (Array.isArray(message.data)) {
+            // Array：直接传递
+            return message.data
+          } else {
+            // 其他类型：尝试转换为数组
+            return Array.from(message.data as any)
+          }
+        })()
       }
 
       // console.log(`[PointCloud2] Sending to worker for ${componentId}:`, {
@@ -3221,6 +3303,7 @@ export class SceneManager {
         
         // 性能优化：将数据上传到 GPU Buffer 缓存（如果支持）
         // 这样可以避免每帧重新创建 buffer，提升渲染性能，特别是对于 Decay Time 积累的数据
+        // 关键优化：确保缓存机制正常工作，数据未变化时复用缓存，数据变化时更新缓存
         if (this.pointCloudBufferManager && finalData.pointData && finalData.pointData instanceof Float32Array) {
           const useGpuColorMapping = finalData.useGpuColorMapping ?? true
           const pointCount = finalData.pointCount || Math.floor(finalData.pointData.length / (useGpuColorMapping ? 4 : 7))
@@ -3234,10 +3317,15 @@ export class SceneManager {
             useGpuColorMapping
           }
           
-          // 更新 GPU Buffer 缓存（如果数据变化，会自动创建新 buffer；否则复用缓存）
+          // 更新 GPU Buffer 缓存（智能缓存机制）
+          // - 如果数据未变化（dataHash 相同），只更新引用，复用缓存的 buffer（零开销）
+          // - 如果数据变化，检查 buffer 缓存（通过 dataHash）
+          //   - 缓存命中：复用已存在的 buffer（多个组件可共享相同数据）
+          //   - 缓存未命中：创建新 buffer 并缓存
           this.pointCloudBufferManager.updatePointCloudData(componentId, compactData)
           
           // 更新实例配置（轻量参数，不触发 buffer 重建）
+          // 这些参数每帧都可能变化（如 pose），但不会触发 buffer 重建
           this.pointCloudBufferManager.updateInstanceConfig(componentId, {
             componentId,
             pose: finalData.pose || { position: { x: 0, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } },

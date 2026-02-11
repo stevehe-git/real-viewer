@@ -284,10 +284,13 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
           point: (_context: any, props: any) => {
             // 性能优化：优先使用缓存的 GPU buffer（如果存在）
             // 这样可以避免每帧重新创建 Float32Array，大幅提升性能
+            // 这是最关键的优化：有缓存时直接返回，零 CPU 开销
             if (props._cachedBuffers?.positionBuffer) {
               return props._cachedBuffers.positionBuffer
             }
             
+            // 如果没有缓存，需要从 pointData 提取数据
+            // 这种情况应该很少发生（只在首次渲染或数据变化时）
             // 优化：支持Float32Array二进制格式
             // GPU端颜色映射：格式为 [x1, y1, z1, intensity1, x2, y2, z2, intensity2, ...] (4个float/点)
             // 或旧格式：[x1, y1, z1, r1, g1, b1, a1, ...] (7个float/点，向后兼容)
@@ -299,7 +302,14 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
                 // 如果没有点，返回至少1个元素的数组（regl要求）
                 return new Float32Array(3).fill(0)
               }
+              
+              // 性能警告：如果没有缓存，每帧都会创建新数组（应该避免这种情况）
+              if (import.meta.env.DEV && !props._cachedBuffers) {
+                console.warn('[Points] Creating position array without cache - this should be avoided for performance')
+              }
+              
               // 提取位置数据：每4个或7个float中取前3个
+              // 使用 TypedArray 的 set 方法可能更快，但需要先创建目标数组
               const positions = new Float32Array(pointCount * 3)
               for (let i = 0; i < pointCount; i++) {
                 const srcOffset = i * stride
@@ -321,10 +331,12 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
           },
           intensity: (_context: any, props: any) => {
             // 性能优化：优先使用缓存的 GPU buffer（如果存在）
+            // 这是最关键的优化：有缓存时直接返回，零 CPU 开销
             if (props._cachedBuffers?.intensityBuffer) {
               return props._cachedBuffers.intensityBuffer
             }
             
+            // 如果没有缓存，需要从 pointData 提取数据
             // GPU端颜色映射：提取intensity数据
             // 注意：regl要求attribute必须始终提供有效的Float32Array，且长度必须与point属性匹配
             if (props.pointData && props.pointData instanceof Float32Array && props.useGpuColorMapping) {
@@ -332,6 +344,11 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
               const stride = 4
               const pointCount = props.pointCount || Math.floor(pointData.length / stride)
               if (pointCount > 0) {
+                // 性能警告：如果没有缓存，每帧都会创建新数组（应该避免这种情况）
+                if (import.meta.env.DEV && !props._cachedBuffers) {
+                  console.warn('[Points] Creating intensity array without cache - this should be avoided for performance')
+                }
+                
                 // 提取intensity数据：每4个float中取第4个
                 const intensities = new Float32Array(pointCount)
                 for (let i = 0; i < pointCount; i++) {
@@ -355,16 +372,21 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
           },
           color: (_context: any, props: any) => {
             // 性能优化：优先使用缓存的 GPU buffer（如果存在，且是旧格式）
+            // 这是最关键的优化：有缓存时直接返回，零 CPU 开销
             if (props._cachedBuffers?.colorBuffer && !props.useGpuColorMapping) {
               return props._cachedBuffers.colorBuffer
             }
             
             // 向后兼容：如果使用GPU颜色映射，不需要color属性（但regl要求attribute必须存在）
+            // 这种情况下，返回一个占位数组，不会被使用（颜色在GPU着色器中计算）
             if (props.useGpuColorMapping) {
               const pointCount = props.pointCount || (props.pointData?.length ? Math.floor(props.pointData.length / 4) : 0)
               const count = Math.max(1, pointCount) // 至少1个元素
+              // 优化：如果数据未变化，可以复用同一个占位数组（但 regl 可能不支持，所以每次都创建）
+              // 这个数组很小，开销可以接受
               return new Float32Array(count * 4).fill(1.0) // 占位，不会被使用
             }
+            
             // 旧格式：支持Float32Array二进制格式
             if (props.pointData && props.pointData instanceof Float32Array) {
               const pointData = props.pointData
@@ -372,6 +394,12 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
               if (pointCount <= 0) {
                 return new Float32Array(4).fill(1.0) // 至少1个元素
               }
+              
+              // 性能警告：如果没有缓存，每帧都会创建新数组（应该避免这种情况）
+              if (import.meta.env.DEV && !props._cachedBuffers) {
+                console.warn('[Points] Creating color array without cache - this should be avoided for performance')
+              }
+              
               // 提取颜色数据：每7个float中取后4个
               const colors = new Float32Array(pointCount * 4)
               for (let i = 0; i < pointCount; i++) {
