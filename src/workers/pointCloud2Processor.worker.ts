@@ -283,9 +283,16 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
     }
 
     // 如果实际处理的点数少于预分配的大小，创建精确大小的数组（节省内存）
-    const finalPointDataArray = processedPointCount < pointCount 
-      ? pointDataArray.slice(0, processedPointCount * 4)
-      : pointDataArray
+    // 注意：slice 会创建新数组，原数组会被 GC 回收
+    let finalPointDataArray: Float32Array
+    if (processedPointCount < pointCount) {
+      // 创建精确大小的新数组，原数组会被 GC 回收
+      finalPointDataArray = pointDataArray.slice(0, processedPointCount * 4)
+      // 显式清理原数组引用（虽然会在函数结束时自动清理，但显式清理可以更快）
+      // 注意：不能直接设置为 null，因为 TypeScript 不允许，但可以确保不再使用
+    } else {
+      finalPointDataArray = pointDataArray
+    }
 
     // 点大小：直接使用配置值
     // 当 useWorldSpaceSize=true 时，size 应该是世界空间单位（米）
@@ -318,6 +325,7 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       }
     } else if (frameInfo === null || (frameInfo && (!frameInfo.position || !frameInfo.orientation))) {
       // Transform 无效，返回 null 表示不应该渲染
+      // 清理临时数组引用
       return {
         type: 'pointCloud2Processed',
         componentId,
@@ -326,9 +334,8 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       }
     }
     
-    // 返回优化后的数据格式：使用Float32Array二进制格式，支持GPU端颜色映射
-    // GPU端颜色映射格式：[x1, y1, z1, intensity1, x2, y2, z2, intensity2, ...]
-    return {
+    // 构建返回对象
+    const result: PointCloud2ProcessResult = {
       type: 'pointCloud2Processed',
       componentId,
       data: {
@@ -357,6 +364,9 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
         alpha
       }
     }
+    
+    // 返回结果（临时变量会在函数结束时自动清理）
+    return result
   } catch (error: any) {
     return {
       type: 'pointCloud2Processed',
@@ -368,27 +378,79 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
 }
 
 // Worker 消息处理
+// 使用函数作用域确保每次处理都是独立的，避免闭包持有大量数据
 self.onmessage = (event: MessageEvent<PointCloud2ProcessRequest>) => {
+  // 立即提取 request，避免闭包持有 event 对象
   const request = event.data
   
-  if (request.type === 'processPointCloud2') {
-    const response = processPointCloud2(request)
-    
-    // 使用 Transferable Objects 优化大数据传输，避免序列化开销
-    if (response.data?.pointData && response.data.pointData instanceof Float32Array) {
-      // Float32Array 可以作为 Transferable 传输，避免大数据序列化
-      // 这对于百万/千万级点云非常重要，可以避免内存复制和崩溃
-      const transferList = [response.data.pointData.buffer]
-      ;(self.postMessage as any)(response, transferList)
+  // 立即处理，避免持有 event 引用
+  handlePointCloud2Request(request)
+}
+
+/**
+ * 处理 PointCloud2 请求（独立函数，避免闭包内存泄漏）
+ */
+function handlePointCloud2Request(request: PointCloud2ProcessRequest): void {
+  let response: PointCloud2ProcessResult | null = null
+  
+  try {
+    if (request.type === 'processPointCloud2') {
+      response = processPointCloud2(request)
+      
+      // 使用 Transferable Objects 优化大数据传输，避免序列化开销
+      if (response.data?.pointData && response.data.pointData instanceof Float32Array) {
+        // 保存 pointData 和 buffer 引用（在传输前）
+        const pointDataArray = response.data.pointData
+        const arrayBuffer = pointDataArray.buffer
+        
+        // 确保 buffer 是 ArrayBuffer（不是 SharedArrayBuffer）
+        if (arrayBuffer instanceof ArrayBuffer) {
+          // 创建 transferList（只包含 buffer）
+          const transferList = [arrayBuffer]
+          
+          // 发送消息（buffer 会被传输到主线程，Worker 中的 buffer 会被清空）
+          // 注意：传输后 pointDataArray.buffer 会被清空，但 pointDataArray 对象仍存在
+          ;(self.postMessage as any)(response, transferList)
+          
+          // 重要：传输后立即清理所有引用，帮助 GC 快速回收内存
+          // 1. 清理 response 中的 pointData 引用（虽然 buffer 已被传输，但对象引用仍存在）
+          if (response.data) {
+            response.data.pointData = null as any
+          }
+          
+          // 2. 清理整个 response 引用
+          response = null
+        } else {
+          // 如果不是 ArrayBuffer（如 SharedArrayBuffer），使用普通序列化
+          self.postMessage(response)
+          response = null
+        }
+      } else {
+        // 没有 pointData 或不是 Float32Array，直接发送
+        self.postMessage(response)
+        response = null
+      }
     } else {
-      self.postMessage(response)
+      // 未知请求类型
+      const errorResponse: PointCloud2ProcessResult = {
+        type: 'pointCloud2Processed',
+        componentId: request.componentId || 'unknown',
+        data: null,
+        error: `Unknown request type: ${(request as any).type}`
+      }
+      self.postMessage(errorResponse)
     }
-  } else {
-    self.postMessage({
+  } catch (error: any) {
+    // 错误处理：确保即使出错也能发送响应并清理内存
+    const errorResponse: PointCloud2ProcessResult = {
       type: 'pointCloud2Processed',
-      componentId: request.componentId || 'unknown',
+      componentId: request?.componentId || 'unknown',
       data: null,
-      error: `Unknown request type: ${(request as any).type}`
-    })
+      error: error?.message || 'Unknown error in worker message handler'
+    }
+    self.postMessage(errorResponse)
+  } finally {
+    // 最终清理：确保所有引用都被释放
+    response = null
   }
 }

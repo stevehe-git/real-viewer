@@ -3127,10 +3127,23 @@ export class SceneManager {
         return
       }
 
-      // 保存处理后的数据（TF 变换已在 Worker 中处理）
+        // 保存处理后的数据（TF 变换已在 Worker 中处理）
       if (result.data) {
         // 保存原始消息，用于配置变化时重新处理
-        this.pointCloud2RawMessageMap.set(componentId, message)
+        // 注意：只保存必要的元数据，避免保存大量二进制数据导致内存泄漏
+        // 如果原始消息包含大量数据，只保存轻量级的元数据
+        const rawMessageSize = message.data?.byteLength || message.data?.length || 0
+        if (rawMessageSize > 0) {
+          // 只保存消息的元数据，不保存完整的 data（避免内存泄漏）
+          // 如果需要重新处理，应该从消息源重新获取
+          this.pointCloud2RawMessageMap.set(componentId, {
+            ...message,
+            // 不保存 data 字段，避免内存泄漏
+            data: undefined
+          })
+        } else {
+          this.pointCloud2RawMessageMap.set(componentId, message)
+        }
         
         // 提取时间戳（从消息的 header.stamp 获取）
         const timestamp = message.header?.stamp?.sec 
@@ -3149,15 +3162,29 @@ export class SceneManager {
           timestamp
         })
         
-        // 根据 Decay Time 过滤历史数据
+        // 根据 Decay Time 过滤历史数据（这会清理过期的历史数据）
         const filteredHistory = this.filterPointCloud2HistoryByDecayTime(
           historyDataArray,
           decayTime,
           timestamp
         )
         
-        // 更新历史数据队列
+        // 更新历史数据队列（过滤后的数组会替换旧的，旧数组会被 GC 回收）
         this.pointCloud2HistoryMap.set(componentId, filteredHistory)
+        
+        // 内存优化：如果历史数据过多，强制清理最旧的数据（防止内存泄漏）
+        // 即使 Decay Time 很大，也限制历史数据的最大数量（防止无限累积）
+        const MAX_HISTORY_FRAMES = 1000 // 最多保留 1000 帧历史数据
+        if (filteredHistory.length > MAX_HISTORY_FRAMES) {
+          console.warn(`[PointCloud2] History data exceeds ${MAX_HISTORY_FRAMES} frames for ${componentId}, removing oldest ${filteredHistory.length - MAX_HISTORY_FRAMES} frames to prevent memory leak`)
+          // 只保留最新的 MAX_HISTORY_FRAMES 帧
+          const trimmedHistory = filteredHistory.slice(-MAX_HISTORY_FRAMES)
+          this.pointCloud2HistoryMap.set(componentId, trimmedHistory)
+          // 更新 filteredHistory 引用，用于后续处理
+          historyDataArray = trimmedHistory
+        } else {
+          historyDataArray = filteredHistory
+        }
         
         // 合并历史数据（如果 Decay Time > 0）
         // 优化：对于大规模点云（>50万点），禁用历史合并以提高性能
@@ -3165,15 +3192,15 @@ export class SceneManager {
         const pointCount = result.data?.pointCount || (result.data?.pointData?.length / 7 || 0)
         const isLargePointCloud = pointCount > 500000
         
-        if (decayTime > 0 && filteredHistory.length > 1 && !isLargePointCloud) {
+        if (decayTime > 0 && historyDataArray.length > 1 && !isLargePointCloud) {
           // 需要合并多个时间点的数据（仅对小规模点云）
-          finalData = this.mergePointCloud2Data(filteredHistory)
+          finalData = this.mergePointCloud2Data(historyDataArray)
         } else {
           // Decay Time 为 0、只有一条数据、或大规模点云：直接使用最新数据
           finalData = result.data
           
           // 对于大规模点云，如果启用了Decay Time，给出提示
-          if (isLargePointCloud && decayTime > 0 && filteredHistory.length > 1) {
+          if (isLargePointCloud && decayTime > 0 && historyDataArray.length > 1) {
             console.warn(`[PointCloud2] Decay Time disabled for large point cloud (${pointCount.toLocaleString()} points) to improve performance. Consider reducing Decay Time or point cloud size.`)
           }
         }
