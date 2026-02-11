@@ -13,6 +13,7 @@ import type { TFProcessRequest } from '@/workers/dataProcessor.worker'
 import { pointCloud2ProcessorWorker } from '@/workers/pointCloud2ProcessorWorker'
 import { tfDebugger, pointCloud2Debugger } from '@/utils/debug'
 import { getDefaultOptions } from '@/stores/display/displayComponent'
+import { topicSubscriptionManager } from '@/services/topicSubscriptionManager'
 
 export class SceneManager {
   private reglContext: Regl
@@ -1827,20 +1828,12 @@ export class SceneManager {
     const messageHash = this.generateMapMessageHash(message)
     
     // 关键修复：提取消息时间戳，用于防止旧消息覆盖新消息
-    // 优先使用消息的 header.stamp（ROS 标准格式），如果没有则使用消息序列号或消息计数
-    // 如果都没有，使用单调递增的本地时间戳（确保时间戳总是递增）
-    let messageTimestamp: number
-    if (message.header?.stamp?.sec !== undefined) {
-      // 使用 ROS 标准时间戳
-      messageTimestamp = message.header.stamp.sec * 1000 + (message.header.stamp.nsec || 0) / 1000000
-    } else if (message.header?.seq !== undefined) {
-      // 如果没有时间戳，使用序列号（假设序列号是递增的）
-      messageTimestamp = message.header.seq * 1000 // 转换为毫秒单位
-    } else {
-      // 最后的后备方案：使用单调递增的本地时间戳
-      // 关键：使用 performance.now() 而不是 Date.now()，确保时间戳单调递增
-      messageTimestamp = performance.now()
-    }
+    // 参照 rviz 实现：统一使用消息接收时的时间戳（从 topicSubscriptionManager 获取）
+    // 这样可以确保时间戳的一致性，避免时间基准不一致导致的乱序问题
+    // 统一使用系统时间（消息接收时的时间戳），无论消息是否有 header.stamp
+    // 这样可以避免 ROS 时间戳与接收时间戳不一致导致的跳动问题
+    const status = topicSubscriptionManager.getStatus(componentId)
+    const messageTimestamp = status?.lastMessageTime || Date.now()
     
     // 检查消息时间戳，防止旧消息覆盖新消息（解决"前进时突然后退"的问题）
     // 关键修复：使用严格的小于比较，并且允许相等（相同时间戳的消息可以更新）
