@@ -368,26 +368,29 @@ export class SceneManager {
     const currentDrawCallInstances = new Set<any>()
 
     // 注册 Grid
-    // 关键修复：网格使用更高的 layerIndex (5)，确保网格在地图之后渲染，始终可见
+    // 参照 RViz：网格在地图之上，但在其他显示之下
+    // layerIndex: 1 - 网格是基础显示，应该在地图之后、其他显示之前渲染
     if (this.gridVisible && this.gridCommand && this.gridData) {
       this.worldviewContext.onMount(this.gridInstance, grid)
       this.worldviewContext.registerDrawCall({
         instance: this.gridInstance,
         reglCommand: grid,
         children: this.gridData,
-        layerIndex: 5 // 网格在地图之后渲染，确保网格始终可见
+        layerIndex: 1 // 网格在地图之上，但在其他显示之下
       })
       currentDrawCallInstances.add(this.gridInstance)
     }
 
     // 注册 Axes（使用 Cylinders）
+    // 参照 RViz：坐标轴应该在点云和路径之上，但在 TF 和 Odometry 之下
+    // layerIndex: 4 - 坐标轴是辅助显示，应该在主要数据之上
     if (this.axesVisible && this.cylindersCommand && this.axesData) {
       this.worldviewContext.onMount(this.axesInstance, cylinders)
       this.worldviewContext.registerDrawCall({
         instance: this.axesInstance,
         reglCommand: cylinders,
         children: this.axesData,
-        layerIndex: 1
+        layerIndex: 4 // 坐标轴在点云和路径之上
       })
       currentDrawCallInstances.add(this.axesInstance)
     }
@@ -401,11 +404,13 @@ export class SceneManager {
         }
         const instance = this.pointCloudInstances.get(componentId)
         this.worldviewContext.onMount(instance, this.pointsCommandWithWorldSpace)
+        // 参照 RViz：PointCloud2 应该在网格之上，但在路径和坐标轴之下
+        // layerIndex: 2 - 点云是主要数据，应该在基础显示之上
         this.worldviewContext.registerDrawCall({
           instance: instance,
           reglCommand: this.pointsCommandWithWorldSpace,
           children: pointCloudData,
-          layerIndex: 2
+          layerIndex: 2 // PointCloud2 在网格之上，但在路径和坐标轴之下
         })
         currentDrawCallInstances.add(instance)
       }
@@ -562,11 +567,13 @@ export class SceneManager {
         
         // 确保数据格式正确（Points 命令期望单个对象，不是数组）
         // 性能优化：registerDrawCall 支持增量更新，如果 instance 已存在，会更新现有的 drawInput
+        // 参照 RViz：PointCloud2 应该在网格之上，但在路径和坐标轴之下
+        // layerIndex: 2 - 点云是主要数据，应该在基础显示之上
         this.worldviewContext.registerDrawCall({
           instance: instance,
           reglCommand: this.pointsCommandPixelSize,
           children: renderData,
-          layerIndex: 2.5
+          layerIndex: 2 // PointCloud2 在网格之上，但在路径和坐标轴之下
         })
         currentDrawCallInstances.add(instance)
       } else {
@@ -590,11 +597,13 @@ export class SceneManager {
         // 确保 pathData 被包装成数组格式（lines 命令可以接受单个对象或数组）
         // 但为了确保兼容性，我们将其包装成数组
         const children = Array.isArray(pathData) ? pathData : [pathData]
+        // 参照 RViz：Path 应该在点云之上，但在坐标轴和 TF 之下
+        // layerIndex: 3 - 路径是导航数据，应该在点云之上
         this.worldviewContext.registerDrawCall({
           instance: instance,
           reglCommand: lines,
           children: children,
-          layerIndex: 6
+          layerIndex: 3 // Path 在点云之上，但在坐标轴和 TF 之下
         })
         currentDrawCallInstances.add(instance)
       }
@@ -609,11 +618,13 @@ export class SceneManager {
         this.worldviewContext.onMount(this.pathInstances[index], lines)
         // 确保 pathData 被包装成数组格式
         const children = Array.isArray(pathData) ? pathData : [pathData]
+        // 参照 RViz：多个 Path 按索引递增 layerIndex，确保不重叠
+        // layerIndex: 3 + index - 路径是导航数据，应该在点云之上
         this.worldviewContext.registerDrawCall({
           instance: this.pathInstances[index],
           reglCommand: lines,
           children: children,
-          layerIndex: 3 + index
+          layerIndex: 3 + index * 0.1 // 多个路径按索引递增，间隔 0.1
         })
         currentDrawCallInstances.add(this.pathInstances[index])
       }
@@ -740,29 +751,35 @@ export class SceneManager {
         }
         
         this.worldviewContext.onMount(instance, this.pointsCommandWithWorldSpace)
+        // 参照 RViz：LaserScan 应该在网格之上，与 PointCloud2 同一层
+        // layerIndex: 2.5 - 激光扫描与点云类似，但稍后渲染以确保可见性
         this.worldviewContext.registerDrawCall({
           instance: instance,
           reglCommand: this.pointsCommandWithWorldSpace,
           children: renderData,
-          layerIndex: 5
+          layerIndex: 2.5 // LaserScan 在网格之上，与 PointCloud2 同一层但稍后渲染
         })
         currentDrawCallInstances.add(instance)
       }
     })
 
     // 注册 TF Axes（使用 Cylinders）
+    // 参照 RViz：TF 坐标轴应该在所有数据之上，但在 Odometry 之下
+    // layerIndex: 5 - TF 是辅助显示，应该在主要数据之上
     if (this.tfVisible && this.cylindersCommand && this.tfData && this.tfData.axes && this.tfData.axes.length > 0) {
       this.worldviewContext.onMount(this.tfAxesInstance, cylinders)
       this.worldviewContext.registerDrawCall({
         instance: this.tfAxesInstance,
         reglCommand: cylinders,
         children: this.tfData.axes,
-        layerIndex: 5.5
+        layerIndex: 5 // TF Axes 在所有数据之上，但在 Odometry 之下
       })
       currentDrawCallInstances.add(this.tfAxesInstance)
     }
 
     // 注册 TF Arrows（使用 Arrows）
+    // 参照 RViz：TF 箭头应该在 TF 坐标轴之后渲染
+    // layerIndex: 5.5 - TF 箭头在 TF 坐标轴之上
     if (this.tfVisible && this.arrowsCommand && this.arrowsCommandFactory && this.tfData && this.tfData.arrows && this.tfData.arrows.length > 0) {
       // 使用同一个命令工厂函数引用，确保编译和注册使用相同的函数
       this.worldviewContext.onMount(this.tfArrowsInstance, this.arrowsCommandFactory)
@@ -770,7 +787,7 @@ export class SceneManager {
         instance: this.tfArrowsInstance,
         reglCommand: this.arrowsCommandFactory,
         children: this.tfData.arrows,
-        layerIndex: 5.6
+        layerIndex: 5.5 // TF Arrows 在 TF Axes 之上
       })
       currentDrawCallInstances.add(this.tfArrowsInstance)
     }
@@ -783,13 +800,15 @@ export class SceneManager {
       const instance = this.odometryInstancesMap.get(componentId)
       const shape = odometryData?.shape || 'Axes'
 
+      // 参照 RViz：Odometry 应该在所有其他显示之上，是最上层的显示
+      // layerIndex: 6 - Odometry 是最上层的显示，应该在所有其他显示之上
       if (shape === 'Axes' && this.cylindersCommand && odometryData?.axes && odometryData.axes.length > 0) {
         this.worldviewContext.onMount(instance, cylinders)
         this.worldviewContext.registerDrawCall({
           instance: instance,
           reglCommand: cylinders,
           children: odometryData.axes,
-          layerIndex: 6
+          layerIndex: 6 // Odometry 在所有其他显示之上
         })
         currentDrawCallInstances.add(instance)
       } else if (shape === 'Arrow' && this.arrowsCommand && this.arrowsCommandFactory && odometryData?.arrows && odometryData.arrows.length > 0) {
@@ -798,7 +817,7 @@ export class SceneManager {
           instance: instance,
           reglCommand: this.arrowsCommandFactory,
           children: odometryData.arrows,
-          layerIndex: 6
+          layerIndex: 6 // Odometry 在所有其他显示之上
         })
         currentDrawCallInstances.add(instance)
       } else if (shape === 'Point' && this.pointsCommandWithWorldSpace && odometryData?.points && odometryData.points.length > 0) {
@@ -807,7 +826,7 @@ export class SceneManager {
           instance: instance,
           reglCommand: this.pointsCommandWithWorldSpace,
           children: odometryData.points,
-          layerIndex: 6
+          layerIndex: 6 // Odometry 在所有其他显示之上
         })
         currentDrawCallInstances.add(instance)
       }
