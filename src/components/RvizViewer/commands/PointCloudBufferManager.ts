@@ -137,6 +137,12 @@ export class PointCloudBufferManager {
   private cacheMisses = 0
   /** 性能统计：buffer 创建次数 */
   private bufferCreations = 0
+  /** 定期清理：上次清理时间（用于定期清理长时间未使用的 buffer） */
+  private lastCleanupTime = 0
+  /** 定期清理间隔（毫秒）：每 30 秒清理一次长时间未使用的 buffer */
+  private readonly CLEANUP_INTERVAL_MS = 30000
+  /** Buffer 过期时间（毫秒）：超过 5 分钟未使用的 buffer 将被清理 */
+  private readonly BUFFER_EXPIRY_MS = 300000
 
   /**
    * 创建点云 Buffer 管理器
@@ -187,12 +193,19 @@ export class PointCloudBufferManager {
    *    - 缓存命中：复用已存在的 buffer（多个组件可共享相同数据）
    *    - 缓存未命中：创建新 buffer 并缓存
    * 4. LRU 清理：如果缓存超过最大大小，自动清理最久未使用的 buffer
+   * 5. 定期清理：定期清理长时间未使用的 buffer，防止内存泄漏
    * 
    * @param componentId 组件ID
    * @param data 点云数据（CompactPointCloudData）
    */
   updatePointCloudData(componentId: string, data: CompactPointCloudData): void {
     this.currentFrameTime = performance.now()
+    
+    // 定期清理：每 30 秒清理一次长时间未使用的 buffer
+    if (this.currentFrameTime - this.lastCleanupTime > this.CLEANUP_INTERVAL_MS) {
+      this.cleanupExpiredBuffers()
+      this.lastCleanupTime = this.currentFrameTime
+    }
     
     // 检查数据是否变化
     const existingData = this.pointCloudDataMap.get(componentId)
@@ -218,7 +231,8 @@ export class PointCloudBufferManager {
       this.bufferCreations++
       
       // LRU 清理：如果缓存超过最大大小，删除最久未使用的
-      if (this.bufferCache.size > this.maxCacheSize) {
+      // 内存优化：批量清理，确保缓存大小在合理范围内
+      while (this.bufferCache.size > this.maxCacheSize) {
         this.evictOldestBuffer()
       }
     } else {
@@ -367,17 +381,72 @@ export class PointCloudBufferManager {
   }
 
   /**
+   * 定期清理：删除长时间未使用的 buffer（防止内存泄漏）
+   * 
+   * 内存优化：
+   * - 定期清理超过 BUFFER_EXPIRY_MS 未使用的 buffer
+   * - 检查 buffer 是否仍被使用，避免误删正在使用的 buffer
+   * - 这可以防止在缓存未满时，长时间未使用的 buffer 占用内存
+   */
+  private cleanupExpiredBuffers(): void {
+    const expiredBuffers: string[] = []
+    const currentTime = this.currentFrameTime
+
+    // 找出所有过期的 buffer
+    for (const [hash, item] of this.bufferCache.entries()) {
+      if (currentTime - item.lastUsed > this.BUFFER_EXPIRY_MS) {
+        // 检查该 buffer 是否仍被使用
+        let isStillInUse = false
+        for (const [, data] of this.pointCloudDataMap.entries()) {
+          if (data.dataHash === hash) {
+            isStillInUse = true
+            break
+          }
+        }
+        
+        // 只有在 buffer 不再被使用时才标记为过期
+        if (!isStillInUse) {
+          expiredBuffers.push(hash)
+        }
+      }
+    }
+
+    // 销毁所有过期的 buffer
+    for (const hash of expiredBuffers) {
+      const item = this.bufferCache.get(hash)
+      if (item) {
+        try {
+          item.positionBuffer.destroy?.()
+          item.colorBuffer?.destroy?.()
+          item.intensityBuffer?.destroy?.()
+        } catch (error) {
+          if (import.meta.env.DEV) {
+            console.warn(`[PointCloudBufferManager] Error destroying expired buffer:`, error)
+          }
+        }
+        this.bufferCache.delete(hash)
+      }
+    }
+
+    if (expiredBuffers.length > 0 && import.meta.env.DEV) {
+      console.log(`[PointCloudBufferManager] Cleaned up ${expiredBuffers.length} expired buffer(s)`)
+    }
+  }
+
+  /**
    * LRU 清理：删除最久未使用的 buffer
    * 
    * 性能优化：
    * - 自动清理最久未使用的 buffer，防止内存泄漏
    * - 调用 buffer.destroy() 释放 GPU 内存
    * - 当缓存超过 maxCacheSize 时自动触发
+   * - 内存优化：检查 buffer 是否仍被使用，避免误删正在使用的 buffer
    */
   private evictOldestBuffer(): void {
     let oldestHash: string | null = null
     let oldestTime = Infinity
 
+    // 找出最久未使用的 buffer
     for (const [hash, item] of this.bufferCache.entries()) {
       if (item.lastUsed < oldestTime) {
         oldestTime = item.lastUsed
@@ -388,11 +457,38 @@ export class PointCloudBufferManager {
     if (oldestHash) {
       const item = this.bufferCache.get(oldestHash)
       if (item) {
-        // 销毁buffer释放GPU内存
-        item.positionBuffer.destroy?.()
-        item.colorBuffer?.destroy?.()
-        item.intensityBuffer?.destroy?.()
-        this.bufferCache.delete(oldestHash)
+        // 内存优化：检查该 buffer 是否仍被使用（通过 dataHash）
+        // 如果仍被使用，不应该删除（虽然理论上不应该发生，但作为安全检查）
+        let isStillInUse = false
+        for (const [, data] of this.pointCloudDataMap.entries()) {
+          if (data.dataHash === oldestHash) {
+            isStillInUse = true
+            break
+          }
+        }
+        
+        // 只有在 buffer 不再被使用时才销毁
+        if (!isStillInUse) {
+          // 销毁buffer释放GPU内存
+          try {
+            item.positionBuffer.destroy?.()
+            item.colorBuffer?.destroy?.()
+            item.intensityBuffer?.destroy?.()
+          } catch (error) {
+            // 忽略销毁错误（buffer 可能已经被销毁）
+            if (import.meta.env.DEV) {
+              console.warn(`[PointCloudBufferManager] Error destroying buffer in evictOldestBuffer:`, error)
+            }
+          }
+          this.bufferCache.delete(oldestHash)
+        } else {
+          // 如果 buffer 仍被使用，更新其 lastUsed 时间，避免重复检查
+          // 这种情况理论上不应该发生，但作为安全检查
+          if (import.meta.env.DEV) {
+            console.warn(`[PointCloudBufferManager] Attempted to evict buffer that is still in use (hash: ${oldestHash})`)
+          }
+          item.lastUsed = this.currentFrameTime
+        }
       }
     }
   }

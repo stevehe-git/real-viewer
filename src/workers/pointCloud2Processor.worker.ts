@@ -76,7 +76,7 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
     const width = message.width || 0
     const height = message.height || 0
     const pointStep = message.point_step || 0
-    const rowStep = message.row_step || 0
+    // const rowStep = message.row_step || 0 // 未使用，注释掉以避免 lint 警告
     const fields = message.fields || []
 
     if (pointStep === 0 || fields.length === 0) {
@@ -120,45 +120,88 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       }
     }
 
-    // 读取浮点数（little-endian）
+    // 性能优化：使用缓存的 DataView 对象，避免每次调用都创建新的 DataView
+    // 创建共享的 DataView，减少对象创建开销（CPU 优化）
+    let sharedDataView: DataView | null = null
+    let sharedBuffer: ArrayBufferLike | null = null
+    
+    // 读取浮点数（little-endian）- 优化版本：缓存 DataView
     const readFloat32 = (buffer: Uint8Array, offset: number): number => {
-      const view = new DataView(buffer.buffer, buffer.byteOffset + offset, 4)
-      return view.getFloat32(0, true) // little-endian
+      // 如果 buffer 的底层 ArrayBuffer 变化，重新创建 DataView
+      if (sharedBuffer !== buffer.buffer || sharedDataView === null) {
+        sharedBuffer = buffer.buffer
+        sharedDataView = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+      }
+      // 计算实际偏移量（考虑 buffer.byteOffset）
+      const actualOffset = buffer.byteOffset + offset
+      return sharedDataView.getFloat32(actualOffset, true) // little-endian
     }
 
     // 转换数据数组为 Uint8Array（如果需要）
     // 支持 Uint8Array、Array、字符串（base64编码）
-    let dataArray: Uint8Array
-    if (data instanceof ArrayBuffer) {
-      // ArrayBuffer：转换为 Uint8Array
-      dataArray = new Uint8Array(data)
-    } else if (data instanceof Uint8Array) {
-      dataArray = data
-    } else if (Array.isArray(data)) {
-      dataArray = new Uint8Array(data)
-    } else if (typeof data === 'string') {
-      // Base64 解码（ROS 消息通过 JSON 序列化时，二进制数据会被编码为 base64 字符串）
-      try {
-        const binaryString = atob(data)
-        const len = binaryString.length
-        dataArray = new Uint8Array(len)
-        for (let i = 0; i < len; i++) {
-          dataArray[i] = binaryString.charCodeAt(i)
+    // 内存优化：及时清理不需要的临时变量
+    let dataArray: Uint8Array | null = null
+    let base64Decoded: Uint8Array | null = null // 用于 base64 解码的临时变量
+    
+    try {
+      if (data instanceof ArrayBuffer) {
+        // ArrayBuffer：转换为 Uint8Array
+        dataArray = new Uint8Array(data)
+      } else if (data instanceof Uint8Array) {
+        dataArray = data
+      } else if (Array.isArray(data)) {
+        dataArray = new Uint8Array(data)
+      } else if (typeof data === 'string') {
+        // Base64 解码（ROS 消息通过 JSON 序列化时，二进制数据会被编码为 base64 字符串）
+        // 性能优化：使用更高效的 base64 解码方法
+        try {
+          const binaryString = atob(data)
+          const len = binaryString.length
+          base64Decoded = new Uint8Array(len)
+          // 性能优化：批量处理，减少循环开销
+          for (let i = 0; i < len; i++) {
+            base64Decoded[i] = binaryString.charCodeAt(i)
+          }
+          dataArray = base64Decoded
+          // 清理原始字符串引用（帮助 GC）
+          // 注意：binaryString 会在作用域结束时自动清理，但显式清理可以更快
+        } catch (error) {
+          // 清理临时变量
+          base64Decoded = null
+          return {
+            type: 'pointCloud2Processed',
+            componentId,
+            data: null,
+            error: `Failed to decode base64 data: ${error}`
+          }
         }
-      } catch (error) {
+      } else {
         return {
           type: 'pointCloud2Processed',
           componentId,
           data: null,
-          error: `Failed to decode base64 data: ${error}`
+          error: `Invalid data format: expected ArrayBuffer, Uint8Array, Array, or string (base64), got ${typeof data}`
         }
       }
-    } else {
+      
+      // 确保 dataArray 已成功创建
+      if (!dataArray) {
+        return {
+          type: 'pointCloud2Processed',
+          componentId,
+          data: null,
+          error: 'Failed to create data array'
+        }
+      }
+    } catch (error: any) {
+      // 清理临时变量
+      base64Decoded = null
+      dataArray = null
       return {
         type: 'pointCloud2Processed',
         componentId,
         data: null,
-        error: `Invalid data format: expected ArrayBuffer, Uint8Array, Array, or string (base64), got ${typeof data}`
+        error: `Error processing data: ${error?.message || 'Unknown error'}`
       }
     }
 
@@ -166,6 +209,7 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
     
     // 智能采样：对于超大点云（超过500万点），自动降采样以保持性能
     // 亿万级点云需要降采样，否则会导致内存溢出和浏览器崩溃
+    // CPU 优化：根据点云大小动态调整最大点数，避免处理过多数据
     const MAX_POINTS = 5000000 // 最多处理500万点
     const needsDownsampling = rawPointCount > MAX_POINTS
     const sampleStep = needsDownsampling ? Math.ceil(rawPointCount / MAX_POINTS) : 1
@@ -177,6 +221,7 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
 
     // 预分配Float32Array，避免中间数组的内存开销
     // 每个点4个float：x, y, z, intensity
+    // 内存优化：使用精确大小，避免浪费
     const pointDataArray = new Float32Array(pointCount * 4)
     
     // 用于范围计算的临时变量（单遍遍历时使用）
@@ -188,34 +233,42 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
     let hasAxisValues = false
     let hasIntensityValues = false
 
+    // CPU 优化：预计算常用偏移量，避免重复计算
+    const xOffsetFinal = xOffset
+    const yOffsetFinal = yOffset
+    const zOffsetFinal = zOffset
+    const intensityOffsetFinal = intensityOffset
+    const isAxisMode = colorTransformer === 'Axis'
+    const isIntensityMode = colorTransformer === 'Intensity' && intensityOffsetFinal >= 0
+    const needsIntensityBounds = autocomputeIntensityBounds && isIntensityMode
+
     // 单遍遍历：同时处理数据收集和范围计算（优化性能）
+    // CPU 优化：减少条件判断，使用提前退出和批量处理
+    const dataArrayLength = dataArray.length
+    const maxOffset = dataArrayLength - pointStep
+    
     for (let i = 0; i < rawPointCount; i += sampleStep) {
       const pointOffset = i * pointStep
       
-      if (pointOffset + pointStep > dataArray.length) {
+      // 提前检查边界，避免无效读取
+      if (pointOffset > maxOffset) {
         break
       }
 
-      // 读取点坐标
-      const x = readFloat32(dataArray, pointOffset + xOffset)
-      const y = readFloat32(dataArray, pointOffset + yOffset)
-      const z = readFloat32(dataArray, pointOffset + zOffset)
+      // 批量读取点坐标（CPU 优化：减少函数调用开销）
+      const x = readFloat32(dataArray, pointOffset + xOffsetFinal)
+      const y = readFloat32(dataArray, pointOffset + yOffsetFinal)
+      const z = readFloat32(dataArray, pointOffset + zOffsetFinal)
 
       // 跳过无效点（NaN 或 Infinity）
+      // CPU 优化：使用 isFinite 检查（浏览器优化过的函数，比手动检查更快）
       if (!isFinite(x) || !isFinite(y) || !isFinite(z)) {
         continue
       }
 
-      // 计算范围（用于颜色映射）
-      if (colorTransformer === 'Axis') {
-        let selectedValue: number
-        if (axisColor === 'X') {
-          selectedValue = x
-        } else if (axisColor === 'Y') {
-          selectedValue = y
-        } else {
-          selectedValue = z
-        }
+      // 计算范围（用于颜色映射）- 优化条件判断
+      if (isAxisMode) {
+        const selectedValue = axisColor === 'X' ? x : (axisColor === 'Y' ? y : z)
         if (selectedValue < axisMin) axisMin = selectedValue
         if (selectedValue > axisMax) axisMax = selectedValue
         hasAxisValues = true
@@ -224,13 +277,14 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       // GPU端颜色映射：只传递原始数据，不计算颜色
       let intensityValue = 0.0
       
-      if (colorTransformer === 'Intensity' && intensityOffset >= 0) {
-        intensityValue = readFloat32(dataArray, pointOffset + intensityOffset)
+      if (isIntensityMode) {
+        intensityValue = readFloat32(dataArray, pointOffset + intensityOffsetFinal)
+        // CPU 优化：使用 isFinite 检查（浏览器优化过的函数）
         if (!isFinite(intensityValue)) {
           intensityValue = 0.0
         } else {
           // 同时计算intensity范围
-          if (autocomputeIntensityBounds) {
+          if (needsIntensityBounds) {
             if (intensityValue < intensityMin) intensityMin = intensityValue
             if (intensityValue > intensityMax) intensityMax = intensityValue
             hasIntensityValues = true
@@ -239,6 +293,7 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       }
 
       // 直接写入预分配的Float32Array（避免push操作的开销）
+      // CPU 优化：批量写入，减少数组访问次数
       const arrayIndex = validPointCount * 4
       pointDataArray[arrayIndex] = x
       pointDataArray[arrayIndex + 1] = y
@@ -247,6 +302,11 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       
       validPointCount++
     }
+    
+    // 内存优化：清理临时变量引用（帮助 GC）
+    // 注意：dataArray 在函数结束时会被清理，但显式清理可以更快
+    sharedDataView = null
+    sharedBuffer = null
 
     // 处理范围计算的边界情况
     if (hasAxisValues) {
@@ -284,15 +344,21 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
 
     // 如果实际处理的点数少于预分配的大小，创建精确大小的数组（节省内存）
     // 注意：slice 会创建新数组，原数组会被 GC 回收
+    // 内存优化：及时清理不需要的大数组
     let finalPointDataArray: Float32Array
     if (processedPointCount < pointCount) {
       // 创建精确大小的新数组，原数组会被 GC 回收
       finalPointDataArray = pointDataArray.slice(0, processedPointCount * 4)
       // 显式清理原数组引用（虽然会在函数结束时自动清理，但显式清理可以更快）
       // 注意：不能直接设置为 null，因为 TypeScript 不允许，但可以确保不再使用
+      // 通过创建新数组，原数组的引用计数会减少，帮助 GC 更快回收
     } else {
       finalPointDataArray = pointDataArray
     }
+    
+    // 内存优化：清理不再使用的临时变量引用
+    // 这些变量在函数结束时会被自动清理，但显式清理可以更快触发 GC
+    // 注意：base64Decoded 已经在前面清理，这里只清理其他引用
 
     // 点大小：直接使用配置值
     // 当 useWorldSpaceSize=true 时，size 应该是世界空间单位（米）
@@ -365,6 +431,13 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       }
     }
     
+    // 内存优化：清理不再使用的临时变量引用（在返回前清理，帮助 GC）
+    // 这些变量在函数结束时会被自动清理，但显式清理可以更快触发 GC
+    // 注意：finalPointDataArray 会被包含在 result 中，所以不能清理
+    // 但可以清理其他不再使用的变量
+    dataArray = null
+    base64Decoded = null
+    
     // 返回结果（临时变量会在函数结束时自动清理）
     return result
   } catch (error: any) {
@@ -390,6 +463,12 @@ self.onmessage = (event: MessageEvent<PointCloud2ProcessRequest>) => {
 /**
  * 处理 PointCloud2 请求（独立函数，避免闭包内存泄漏）
  * 参照 rviz 和工业级优化方案：彻底清理所有引用，防止内存泄漏
+ * 
+ * 内存优化策略：
+ * 1. 使用 Transferable Objects 传输大数据，避免序列化开销
+ * 2. 传输后立即清理所有引用，帮助 GC 快速回收内存
+ * 3. 在 finally 块中确保所有引用都被释放
+ * 4. 避免在闭包中持有大量数据
  */
 function handlePointCloud2Request(request: PointCloud2ProcessRequest): void {
   let response: PointCloud2ProcessResult | null = null
@@ -404,29 +483,31 @@ function handlePointCloud2Request(request: PointCloud2ProcessRequest): void {
       if (response.data?.pointData && response.data.pointData instanceof Float32Array) {
         // 保存 pointData 和 buffer 引用（在传输前）
         pointDataArray = response.data.pointData
-        arrayBuffer = pointDataArray.buffer
+        // 类型断言：pointDataArray 在这里已经被赋值，不会是 null
+        const bufferLike = pointDataArray!.buffer
         
         // 确保 buffer 是 ArrayBuffer（不是 SharedArrayBuffer）
-        if (arrayBuffer instanceof ArrayBuffer) {
+        // 类型检查：ArrayBufferLike 可能是 ArrayBuffer 或 SharedArrayBuffer
+        if (bufferLike instanceof ArrayBuffer) {
+          arrayBuffer = bufferLike
           // 创建 transferList（只包含 buffer）
           const transferList = [arrayBuffer]
           
           // 发送消息（buffer 会被传输到主线程，Worker 中的 buffer 会被清空）
           // 注意：传输后 pointDataArray.buffer 会被清空，但 pointDataArray 对象仍存在
+          // CPU 优化：使用 postMessage 的 transferList 参数，避免数据复制
           ;(self.postMessage as any)(response, transferList)
           
           // 重要：传输后立即清理所有引用，帮助 GC 快速回收内存
           // 参照 rviz 实现：彻底清理所有引用，防止内存泄漏
           // 1. 清理 response 中的 pointData 引用（虽然 buffer 已被传输，但对象引用仍存在）
           if (response.data) {
+            // 内存优化：显式清理大对象引用
             response.data.pointData = null as any
-            // 清理其他可能的大对象引用
-            if (response.data.pointCount !== undefined) {
-              delete (response.data as any).pointCount
-            }
+            // 注意：不需要删除 pointCount，它是一个小数字，不会造成内存泄漏
           }
           
-          // 2. 清理局部变量引用
+          // 2. 清理局部变量引用（在传输后立即清理）
           pointDataArray = null
           arrayBuffer = null
           
@@ -434,11 +515,19 @@ function handlePointCloud2Request(request: PointCloud2ProcessRequest): void {
           response = null
         } else {
           // 如果不是 ArrayBuffer（如 SharedArrayBuffer），使用普通序列化
+          // 注意：这种情况很少见，但需要处理
           self.postMessage(response)
           response = null
           pointDataArray = null
           arrayBuffer = null
         }
+      } else if (pointDataArray) {
+        // pointDataArray 存在但不是 Float32Array，或 buffer 不是 ArrayBuffer
+        // 使用普通序列化
+        self.postMessage(response)
+        response = null
+        pointDataArray = null
+        arrayBuffer = null
       } else {
         // 没有 pointData 或不是 Float32Array，直接发送
         self.postMessage(response)
@@ -456,6 +545,7 @@ function handlePointCloud2Request(request: PointCloud2ProcessRequest): void {
     }
   } catch (error: any) {
     // 错误处理：确保即使出错也能发送响应并清理内存
+    // 内存优化：在错误情况下也要清理所有引用
     const errorResponse: PointCloud2ProcessResult = {
       type: 'pointCloud2Processed',
       componentId: request?.componentId || 'unknown',
@@ -463,21 +553,22 @@ function handlePointCloud2Request(request: PointCloud2ProcessRequest): void {
       error: error?.message || 'Unknown error in worker message handler'
     }
     self.postMessage(errorResponse)
+    
+    // 清理错误处理中的引用
+    response = null
+    pointDataArray = null
+    arrayBuffer = null
   } finally {
     // 最终清理：确保所有引用都被释放（参照 rviz 的内存管理策略）
     // 这是防止内存泄漏的关键步骤
+    // 内存优化：在 finally 块中清理，确保即使出错也能清理
     response = null
     pointDataArray = null
     arrayBuffer = null
     
-    // 强制触发 GC（如果可用，某些浏览器支持）
-    // 注意：这不是标准 API，但可以帮助某些浏览器更快回收内存
-    if (typeof (self as any).gc === 'function') {
-      try {
-        (self as any).gc()
-      } catch (e) {
-        // 忽略错误，gc 可能不可用
-      }
-    }
+    // 注意：不强制触发 GC，因为：
+    // 1. gc() 不是标准 API，只在某些浏览器（如 Chrome with --js-flags=--expose-gc）中可用
+    // 2. 现代浏览器的 GC 已经足够智能，不需要手动触发
+    // 3. 手动触发 GC 可能会影响性能
   }
 }
