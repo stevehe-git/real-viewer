@@ -1859,36 +1859,36 @@ export class SceneManager {
     
     // 检查消息时间戳，防止旧消息覆盖新消息（解决"前进时突然后退"的问题）
     // 关键修复：使用严格的小于比较，并且允许相等（相同时间戳的消息可以更新）
-    const lastProcessedTimestamp = this.mapLastProcessedTimestamp.get(componentId)
-    if (lastProcessedTimestamp !== undefined && messageTimestamp <= lastProcessedTimestamp) {
-      // 旧消息或相同时间戳的消息，忽略（防止乱序消息导致渲染后退）
-      // 注意：使用 <= 而不是 <，确保相同时间戳的消息不会重复处理
-      if (import.meta.env.DEV) {
-        console.warn(`[Map Debug] Ignoring out-of-order message for ${componentId}:`, {
-          messageTimestamp,
-          lastProcessedTimestamp,
-          diff: messageTimestamp - lastProcessedTimestamp,
-          hasHeader: !!message.header,
-          hasStamp: !!message.header?.stamp,
-          seq: message.header?.seq,
-          willSkip: true
-        })
-      }
-      return
-    }
+    // const lastProcessedTimestamp = this.mapLastProcessedTimestamp.get(componentId)
+    // if (lastProcessedTimestamp !== undefined && messageTimestamp <= lastProcessedTimestamp) {
+    //   // 旧消息或相同时间戳的消息，忽略（防止乱序消息导致渲染后退）
+    //   // 注意：使用 <= 而不是 <，确保相同时间戳的消息不会重复处理
+    //   if (import.meta.env.DEV) {
+    //     console.warn(`[Map Debug] Ignoring out-of-order message for ${componentId}:`, {
+    //       messageTimestamp,
+    //       lastProcessedTimestamp,
+    //       diff: messageTimestamp - lastProcessedTimestamp,
+    //       hasHeader: !!message.header,
+    //       hasStamp: !!message.header?.stamp,
+    //       seq: message.header?.seq,
+    //       willSkip: true
+    //     })
+    //   }
+    //   return
+    // }
     
-    // 调试日志：记录接受的消息
-    if (import.meta.env.DEV) {
-      console.log(`[Map Debug] Accepting message for ${componentId}:`, {
-        messageTimestamp,
-        lastProcessedTimestamp: lastProcessedTimestamp ?? 'none',
-        diff: lastProcessedTimestamp !== undefined ? messageTimestamp - lastProcessedTimestamp : 'N/A',
-        hasHeader: !!message.header,
-        hasStamp: !!message.header?.stamp,
-        seq: message.header?.seq,
-        requestId: this.mapRequestIdCounter + 1
-      })
-    }
+    // // 调试日志：记录接受的消息
+    // if (import.meta.env.DEV) {
+    //   console.log(`[Map Debug] Accepting message for ${componentId}:`, {
+    //     messageTimestamp,
+    //     lastProcessedTimestamp: lastProcessedTimestamp ?? 'none',
+    //     diff: lastProcessedTimestamp !== undefined ? messageTimestamp - lastProcessedTimestamp : 'N/A',
+    //     hasHeader: !!message.header,
+    //     hasStamp: !!message.header?.stamp,
+    //     seq: message.header?.seq,
+    //     requestId: this.mapRequestIdCounter + 1
+    //   })
+    // }
     
     // 保存消息哈希用于调试和缓存（不再用于跳过更新）
     // 跳帧修复：移除哈希检测逻辑，确保所有通过 useDisplaySync 的消息都能更新
