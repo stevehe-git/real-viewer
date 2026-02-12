@@ -3343,16 +3343,40 @@ export class SceneManager {
 
     // PointCloud2 消息的 data 字段是 Uint8Array 或 Array，需要检查长度
     // Uint8Array 也是数组类型，但 Array.isArray() 可能返回 false
-    if (!message || !message.data || message.data.length === 0) {
+    // CPU 优化：更健壮的数据验证，避免访问 undefined 属性
+    const hasMessage = !!message
+    const hasData = message && (message.data !== null && message.data !== undefined)
+    let dataLength: number | undefined
+    let dataType: string | undefined
+    
+    if (hasData) {
+      try {
+        // 安全地获取 data 长度和类型
+        dataLength = message.data.length
+        dataType = message.data.constructor?.name
+      } catch (error) {
+        // 如果访问 length 或 constructor 失败，说明 data 无效
+        dataLength = undefined
+        dataType = undefined
+      }
+    }
+    
+    // 检查数据是否有效：data 必须存在且长度 > 0
+    const isValidData = hasData && dataLength !== undefined && dataLength > 0
+    
+    if (!hasMessage || !isValidData) {
       console.warn(`[PointCloud2] Invalid message for ${componentId}:`, {
-        hasMessage: !!message,
-        hasData: !!message?.data,
-        dataLength: message?.data?.length,
-        dataType: message?.data?.constructor?.name
+        hasMessage,
+        hasData,
+        dataLength,
+        dataType,
+        messageKeys: message ? Object.keys(message) : [],
+        messageDataValue: message?.data
       })
       this.pointCloud2DataMap.delete(componentId)
       this.pointCloud2ConfigMap.delete(componentId)
       this.pointCloud2RequestIds.delete(componentId)
+      // CPU 优化：只在数据真正变化时才重新注册
       this.registerDrawCalls()
       this.worldviewContext.onDirty()
       return
@@ -3799,6 +3823,8 @@ export class SceneManager {
       })
     }
     
+    // CPU 优化：axisColor 变化不需要重新处理数据，因为颜色映射在 GPU 着色器中完成
+    // 只需要更新配置即可，不需要重新处理整个点云数据
     const needsReprocessing = 
       currentConfig.alpha !== options.alpha ||
       currentConfig.colorTransformer !== options.colorTransformer ||
@@ -3808,7 +3834,8 @@ export class SceneManager {
       !deepEqual(currentConfig.maxColor, options.maxColor) ||
       currentConfig.minIntensity !== options.minIntensity ||
       currentConfig.maxIntensity !== options.maxIntensity ||
-      (currentConfig.axisColor !== options.axisColor) || // axisColor 变化需要重新处理数据
+      // axisColor 变化不需要重新处理数据（GPU 着色器处理）
+      // (currentConfig.axisColor !== options.axisColor) || // 移除：axisColor 不需要重新处理
       !deepEqual(currentConfig.flatColor, options.flatColor) // flatColor 变化需要重新处理数据
     
     const decayTimeChanged = currentConfig.decayTime !== options.decayTime
@@ -3821,10 +3848,19 @@ export class SceneManager {
 
     // 如果该 PointCloud2 已有数据，需要根据配置变化类型决定处理方式
     if (this.pointCloud2DataMap.has(componentId)) {
+      // CPU 优化：检查 axisColor 是否变化（不需要重新处理数据）
+      const axisColorChanged = currentConfig.axisColor !== options.axisColor && options.axisColor !== undefined
+      
       if (needsReprocessing) {
         // 需要重新处理数据（alpha、colorTransformer 等变化）
         const rawMessage = this.pointCloud2RawMessageMap.get(componentId)
-        if (rawMessage) {
+        // CPU 优化：检查 rawMessage 是否有有效的 data 字段
+        const hasValidRawMessage = rawMessage && 
+          rawMessage.data !== null && 
+          rawMessage.data !== undefined && 
+          (rawMessage.data.length > 0 || rawMessage.data.byteLength > 0)
+        
+        if (hasValidRawMessage) {
           // console.log(`[PointCloud2] Re-processing data for ${componentId} due to config change:`, {
           //   alpha: options.alpha,
           //   colorTransformer: options.colorTransformer,
@@ -3835,55 +3871,100 @@ export class SceneManager {
             console.error(`[PointCloud2] Failed to re-process data for ${componentId}:`, error)
           })
         } else {
-          // 如果没有原始消息，只更新绘制调用
+          // 如果没有有效的原始消息，只更新绘制调用和 BufferManager 配置
+          // CPU 优化：更新 BufferManager 配置（axisColor 等变化只需要更新配置）
+          if (this.pointCloudBufferManager && axisColorChanged) {
+            const currentData = this.pointCloud2DataMap.get(componentId)
+            if (currentData && currentData.pointData) {
+              // 更新 BufferManager 配置，不需要重新处理数据
+              this.pointCloudBufferManager.updateInstanceConfig(componentId, {
+                componentId,
+                pose: currentData.pose || { position: { x: 0, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } },
+                pointSize: options.size ?? currentData.scale?.x ?? 3,
+                colorTransformer: (options.colorTransformer ?? currentData.colorTransformer) || 'Flat',
+                useRainbow: options.useRainbow ?? currentData.useRainbow ?? true,
+                minColor: (options.minColor ?? currentData.minColor) || { r: 0, g: 0, b: 0 },
+                maxColor: (options.maxColor ?? currentData.maxColor) || { r: 255, g: 255, b: 255 },
+                minValue: options.minIntensity ?? currentData.minIntensity ?? 0,
+                maxValue: options.maxIntensity ?? currentData.maxIntensity ?? 1
+              })
+            }
+          }
           this.registerDrawCalls()
           this.worldviewContext.onDirty()
         }
-      } else if (decayTimeChanged) {
-        // Decay Time 变化，需要重新合并历史数据
-        const historyDataArray = this.pointCloud2HistoryMap.get(componentId) || []
-        if (historyDataArray.length > 0) {
-          const currentTimestamp = Date.now()
-          const decayTime = options.decayTime ?? 0
-          
-          // 根据新的 Decay Time 过滤历史数据
-          const filteredHistory = this.filterPointCloud2HistoryByDecayTime(
-            historyDataArray,
-            decayTime,
-            currentTimestamp
-          )
-          
-          // 更新历史数据队列
-          this.pointCloud2HistoryMap.set(componentId, filteredHistory)
-          
-          // 合并历史数据
-          let finalData: any
-          // 优化：对于大规模点云（>50万点），禁用历史合并以提高性能
-          const lastHistoryItem = filteredHistory.length > 0 ? filteredHistory[filteredHistory.length - 1] : undefined
-          const pointCount = lastHistoryItem?.data 
-            ? (lastHistoryItem.data.pointCount || (lastHistoryItem.data.pointData?.length / 7 || 0))
-            : 0
-          const isLargePointCloud = pointCount > 500000
-          
-          if (decayTime > 0 && filteredHistory.length > 1 && !isLargePointCloud) {
-            // 需要合并多个时间点的数据（仅对小规模点云）
-            finalData = this.mergePointCloud2Data(filteredHistory)
-          } else {
-            // Decay Time 为 0、只有一条数据、或大规模点云：直接使用最新数据
-            const lastItem = filteredHistory.length > 0 ? filteredHistory[filteredHistory.length - 1] : undefined
-            finalData = lastItem ? lastItem.data : null
+      } else if (axisColorChanged || decayTimeChanged) {
+        // CPU 优化：axisColor 变化只需要更新配置，不需要重新处理数据
+        if (axisColorChanged && this.pointCloudBufferManager) {
+          const currentData = this.pointCloud2DataMap.get(componentId)
+          if (currentData && currentData.pointData) {
+            // 更新 BufferManager 配置（axisColor 变化）
+            this.pointCloudBufferManager.updateInstanceConfig(componentId, {
+              componentId,
+              pose: currentData.pose || { position: { x: 0, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } },
+              pointSize: options.size ?? currentData.scale?.x ?? 3,
+              colorTransformer: (options.colorTransformer ?? currentData.colorTransformer) || 'Flat',
+              useRainbow: options.useRainbow ?? currentData.useRainbow ?? true,
+              minColor: (options.minColor ?? currentData.minColor) || { r: 0, g: 0, b: 0 },
+              maxColor: (options.maxColor ?? currentData.maxColor) || { r: 255, g: 255, b: 255 },
+              minValue: options.minIntensity ?? currentData.minIntensity ?? 0,
+              maxValue: options.maxIntensity ?? currentData.maxIntensity ?? 1
+            })
+          }
+        }
+        
+        if (decayTimeChanged) {
+          // Decay Time 变化，需要重新合并历史数据
+          const historyDataArray = this.pointCloud2HistoryMap.get(componentId) || []
+          if (historyDataArray.length > 0) {
+            const currentTimestamp = Date.now()
+            const decayTime = options.decayTime ?? 0
             
-            // 对于大规模点云，如果启用了Decay Time，给出提示
-            if (isLargePointCloud && decayTime > 0 && filteredHistory.length > 1) {
-              console.warn(`[PointCloud2] Decay Time disabled for large point cloud (${pointCount.toLocaleString()} points) to improve performance.`)
+            // 根据新的 Decay Time 过滤历史数据
+            const filteredHistory = this.filterPointCloud2HistoryByDecayTime(
+              historyDataArray,
+              decayTime,
+              currentTimestamp
+            )
+            
+            // 更新历史数据队列
+            this.pointCloud2HistoryMap.set(componentId, filteredHistory)
+            
+            // 合并历史数据
+            let finalData: any
+            // 优化：对于大规模点云（>50万点），禁用历史合并以提高性能
+            const lastHistoryItem = filteredHistory.length > 0 ? filteredHistory[filteredHistory.length - 1] : undefined
+            const pointCount = lastHistoryItem?.data 
+              ? (lastHistoryItem.data.pointCount || (lastHistoryItem.data.pointData?.length / 7 || 0))
+              : 0
+            const isLargePointCloud = pointCount > 500000
+            
+            if (decayTime > 0 && filteredHistory.length > 1 && !isLargePointCloud) {
+              // 需要合并多个时间点的数据（仅对小规模点云）
+              finalData = this.mergePointCloud2Data(filteredHistory)
+            } else {
+              // Decay Time 为 0、只有一条数据、或大规模点云：直接使用最新数据
+              const lastItem = filteredHistory.length > 0 ? filteredHistory[filteredHistory.length - 1] : undefined
+              finalData = lastItem ? lastItem.data : null
+              
+              // 对于大规模点云，如果启用了Decay Time，给出提示
+              if (isLargePointCloud && decayTime > 0 && filteredHistory.length > 1) {
+                console.warn(`[PointCloud2] Decay Time disabled for large point cloud (${pointCount.toLocaleString()} points) to improve performance.`)
+              }
+            }
+            
+            if (finalData) {
+              this.pointCloud2DataMap.set(componentId, finalData)
+              this.registerDrawCalls()
+              this.worldviewContext.onDirty()
             }
           }
-          
-          if (finalData) {
-            this.pointCloud2DataMap.set(componentId, finalData)
-            this.registerDrawCalls()
-            this.worldviewContext.onDirty()
-          }
+        }
+        
+        // axisColor 变化或 decayTime 变化后，都需要更新绘制调用
+        if (axisColorChanged || decayTimeChanged) {
+          this.registerDrawCalls()
+          this.worldviewContext.onDirty()
         }
       } else {
         // 只影响渲染的配置变化（size、style等），只需更新绘制调用
