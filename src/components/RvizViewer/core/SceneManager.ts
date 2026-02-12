@@ -888,6 +888,18 @@ export class SceneManager {
         this.odometryInstancesMap.delete(componentId)
       }
     })
+    
+    // 清理不再存在的 TF 实例（当 TF 不可见时）
+    // 关键修复：删除 TF display 后，清理历史渲染数据
+    if (!this.tfVisible) {
+      // TF 不可见时，清理 TF Axes 和 Arrows 实例
+      if (!currentDrawCallInstances.has(this.tfAxesInstance)) {
+        this.worldviewContext.onUnmount(this.tfAxesInstance)
+      }
+      if (!currentDrawCallInstances.has(this.tfArrowsInstance)) {
+        this.worldviewContext.onUnmount(this.tfArrowsInstance)
+      }
+    }
   }
 
   /**
@@ -4067,6 +4079,15 @@ export class SceneManager {
       }
       // 更新 TF 数据
       this.updateTFData().catch(err => console.error('Failed to update TF data:', err))
+    } else {
+      // TF 隐藏时，清理 TF 数据和 draw calls
+      // 关键修复：删除 TF display 后，清理历史渲染数据
+      this.tfData = null
+      this.tfDataHash = ''
+      
+      // 取消注册 TF 的 draw calls，确保历史渲染被删除
+      this.worldviewContext.onUnmount(this.tfAxesInstance)
+      this.worldviewContext.onUnmount(this.tfArrowsInstance)
     }
     
     this.registerDrawCalls()
