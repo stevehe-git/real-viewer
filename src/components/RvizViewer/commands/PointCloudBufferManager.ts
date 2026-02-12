@@ -255,9 +255,9 @@ export class PointCloudBufferManager {
           }
           this.bufferCache.delete(oldDataHash)
           
-          if (import.meta.env.DEV) {
-            console.log(`[PointCloudBufferManager] Destroyed old buffer for ${componentId} (oldDataHash: ${oldDataHash}, newDataHash: ${data.dataHash})`)
-          }
+          // if (import.meta.env.DEV) {
+          //   console.log(`[PointCloudBufferManager] Destroyed old buffer for ${componentId} (oldDataHash: ${oldDataHash}, newDataHash: ${data.dataHash})`)
+          // }
         }
       }
     }

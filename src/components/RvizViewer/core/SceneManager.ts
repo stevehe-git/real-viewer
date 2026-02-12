@@ -3536,44 +3536,10 @@ export class SceneManager {
         // 更新历史数据队列（过滤后的数组会替换旧的，旧数组会被 GC 回收）
         this.pointCloud2HistoryMap.set(componentId, filteredHistory)
         
-        // 内存优化：基于内存大小和点数量智能限制历史数据（防止内存泄漏）
-        // 参照 rviz 实现：对于大规模点云，严格限制历史数据
+        // 计算点数量（用于后续判断是否需要合并历史数据）
         const pointCount = result.data?.pointCount || (result.data?.pointData?.length / (result.data?.useGpuColorMapping ? 4 : 7) || 0)
-        const bytesPerPoint = result.data?.useGpuColorMapping ? 16 : 28 // 4个float或7个float
-        const estimatedMemoryPerFrame = pointCount * bytesPerPoint
-        
-        // 动态计算最大历史帧数：基于内存限制（最大500MB历史数据）
-        const MAX_HISTORY_MEMORY_MB = 500
-        const MAX_HISTORY_MEMORY_BYTES = MAX_HISTORY_MEMORY_MB * 1024 * 1024
-        const maxHistoryFrames = Math.max(1, Math.floor(MAX_HISTORY_MEMORY_BYTES / estimatedMemoryPerFrame))
-        
-        // 对于大规模点云（>100万点），进一步限制历史帧数
         const isLargePointCloud = pointCount > 1000000
-        const isVeryLargePointCloud = pointCount > 5000000
-        const finalMaxFrames = isVeryLargePointCloud 
-          ? 1  // 千万级点云：只保留最新帧，完全禁用历史
-          : isLargePointCloud 
-            ? Math.min(10, maxHistoryFrames)  // 百万级点云：最多10帧
-            : Math.min(100, maxHistoryFrames)  // 其他：最多100帧或基于内存限制
-        
-        if (filteredHistory.length > finalMaxFrames) {
-          const removedCount = filteredHistory.length - finalMaxFrames
-          const removedMemoryMB = (removedCount * estimatedMemoryPerFrame) / (1024 * 1024)
-          console.warn(`[PointCloud2] History data exceeds limit for ${componentId}:`, {
-            currentFrames: filteredHistory.length,
-            maxFrames: finalMaxFrames,
-            pointCount: pointCount.toLocaleString(),
-            memoryPerFrameMB: (estimatedMemoryPerFrame / (1024 * 1024)).toFixed(2),
-            removedFrames: removedCount,
-            freedMemoryMB: removedMemoryMB.toFixed(2)
-          })
-          // 只保留最新的 finalMaxFrames 帧
-          const trimmedHistory = filteredHistory.slice(-finalMaxFrames)
-          this.pointCloud2HistoryMap.set(componentId, trimmedHistory)
-          historyDataArray = trimmedHistory
-        } else {
-          historyDataArray = filteredHistory
-        }
+        historyDataArray = filteredHistory
         
         // 合并历史数据（如果 Decay Time > 0）
         // 优化：对于大规模点云（>100万点），完全禁用历史合并以提高性能
