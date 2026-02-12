@@ -203,6 +203,8 @@ export class PointCloudBufferManager {
     }
 
     // 数据变化，需要更新buffer
+    // 关键修复：在更新前，检查旧的 buffer 是否还有其他引用
+    const oldDataHash = existingData?.dataHash
     this.pointCloudDataMap.set(componentId, data)
 
     // 检查buffer缓存
@@ -223,6 +225,41 @@ export class PointCloudBufferManager {
       // 缓存命中，复用已存在的 buffer（零开销）
       bufferItem.lastUsed = this.currentFrameTime
       this.cacheHits++
+    }
+    
+    // 关键修复：如果数据变化（dataHash 不同），检查旧的 buffer 是否还有其他引用
+    // 如果没有其他引用，销毁旧的 buffer 释放 GPU 内存（防止内存泄漏）
+    if (oldDataHash && oldDataHash !== data.dataHash) {
+      // 检查是否还有其他 componentId 使用相同的旧 buffer
+      let hasOtherReferences = false
+      for (const [otherComponentId, otherData] of this.pointCloudDataMap.entries()) {
+        if (otherComponentId !== componentId && otherData.dataHash === oldDataHash) {
+          hasOtherReferences = true
+          break
+        }
+      }
+      
+      // 如果没有其他引用，销毁旧的 buffer
+      if (!hasOtherReferences) {
+        const oldBufferItem = this.bufferCache.get(oldDataHash)
+        if (oldBufferItem) {
+          try {
+            oldBufferItem.positionBuffer.destroy?.()
+            oldBufferItem.colorBuffer?.destroy?.()
+            oldBufferItem.intensityBuffer?.destroy?.()
+          } catch (error) {
+            // 忽略销毁错误（buffer 可能已经被销毁）
+            if (import.meta.env.DEV) {
+              console.warn(`[PointCloudBufferManager] Error destroying old buffer for ${componentId}:`, error)
+            }
+          }
+          this.bufferCache.delete(oldDataHash)
+          
+          if (import.meta.env.DEV) {
+            console.log(`[PointCloudBufferManager] Destroyed old buffer for ${componentId} (oldDataHash: ${oldDataHash}, newDataHash: ${data.dataHash})`)
+          }
+        }
+      }
     }
   }
 
@@ -478,16 +515,78 @@ export class PointCloudBufferManager {
 
   /**
    * 移除点云实例
+   * 
+   * 关键修复：检查并销毁不再使用的 GPU buffer，防止内存泄漏
+   * 参照 rviz 实现：当组件被移除时，如果 buffer 没有其他引用，立即销毁
    */
   removeInstance(componentId: string): void {
+    const data = this.pointCloudDataMap.get(componentId)
+    
+    // 删除实例数据
     this.pointCloudDataMap.delete(componentId)
     this.instanceConfigs.delete(componentId)
+    
+    // 关键修复：检查该 componentId 使用的 buffer 是否还有其他引用
+    // 如果没有其他引用，销毁 buffer 释放 GPU 内存
+    if (data) {
+      const dataHash = data.dataHash
+      
+      // 检查是否还有其他 componentId 使用相同的 buffer（通过 dataHash）
+      let hasOtherReferences = false
+      for (const [otherComponentId, otherData] of this.pointCloudDataMap.entries()) {
+        if (otherComponentId !== componentId && otherData.dataHash === dataHash) {
+          hasOtherReferences = true
+          break
+        }
+      }
+      
+      // 如果没有其他引用，销毁 buffer
+      if (!hasOtherReferences) {
+        const bufferItem = this.bufferCache.get(dataHash)
+        if (bufferItem) {
+          // 销毁 buffer 释放 GPU 内存（关键：防止内存泄漏）
+          try {
+            bufferItem.positionBuffer.destroy?.()
+            bufferItem.colorBuffer?.destroy?.()
+            bufferItem.intensityBuffer?.destroy?.()
+          } catch (error) {
+            // 忽略销毁错误（buffer 可能已经被销毁）
+            if (import.meta.env.DEV) {
+              console.warn(`[PointCloudBufferManager] Error destroying buffer for ${componentId}:`, error)
+            }
+          }
+          this.bufferCache.delete(dataHash)
+          
+          if (import.meta.env.DEV) {
+            console.log(`[PointCloudBufferManager] Destroyed buffer for ${componentId} (dataHash: ${dataHash})`)
+          }
+        }
+      }
+    }
   }
 
   /**
    * 清除所有实例
+   * 
+   * 关键修复：销毁所有 GPU buffer，防止内存泄漏
    */
   clearAll(): void {
+    // 关键修复：销毁所有 buffer 释放 GPU 内存
+    for (const item of this.bufferCache.values()) {
+      try {
+        item.positionBuffer.destroy?.()
+        item.colorBuffer?.destroy?.()
+        item.intensityBuffer?.destroy?.()
+      } catch (error) {
+        // 忽略销毁错误（buffer 可能已经被销毁）
+        if (import.meta.env.DEV) {
+          console.warn('[PointCloudBufferManager] Error destroying buffer in clearAll:', error)
+        }
+      }
+    }
+    
+    // 清除所有数据
+    this.bufferCache.clear()
     this.pointCloudDataMap.clear()
     this.instanceConfigs.clear()
   }
