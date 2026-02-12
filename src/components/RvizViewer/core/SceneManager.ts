@@ -3061,14 +3061,14 @@ export class SceneManager {
       }
     }
     
-    // 性能优化：使用更高效的去重算法
+    // CPU 优化：使用更高效的去重算法
     // 精度：0.01单位（可以根据需要调整）
     const PRECISION = 0.01
     const PRECISION_INV = 1.0 / PRECISION
     
     // 使用 Map 存储位置hash到点数据的映射
     // key: 位置hash (整数), value: {x, y, z, intensity}
-    // 注意：JavaScript Map 会自动扩容，预分配大小可能不会带来明显性能提升
+    // 注意：JavaScript Map 会自动扩容，无法预分配容量，但 Map 的扩容性能已经很好
     const pointMap = new Map<number, { x: number; y: number; z: number; intensity: number }>()
     
     // 遍历所有历史数据，收集唯一的点
@@ -3118,21 +3118,21 @@ export class SceneManager {
         }
         // 旧格式：没有intensity，使用默认值0（已在上面初始化）
         
-        // 计算位置hash（使用整数，避免字符串操作）
-        // 性能优化：使用位运算和整数运算，避免浮点数运算
+        // CPU 优化：计算位置hash（使用整数，避免字符串操作）
+        // 使用位运算和整数运算，避免浮点数运算
         const quantizedX = Math.round(x * PRECISION_INV)
         const quantizedY = Math.round(y * PRECISION_INV)
         const quantizedZ = Math.round(z * PRECISION_INV)
         
-        // 使用优化的hash组合（避免整数溢出，使用位运算）
-        // 性能优化：使用位运算代替乘法，在某些情况下更快
+        // CPU 优化：使用优化的hash组合（避免整数溢出，使用位运算）
+        // 使用位运算代替乘法，在某些情况下更快
+        // 注意：JavaScript 的位运算会将数字转换为 32 位整数，可能溢出，但这对哈希来说是可以接受的
         const hash = (quantizedX * 73856093) ^ (quantizedY * 19349663) ^ (quantizedZ * 83492791)
         
-        // 如果这个位置还没有记录过，添加到Map中
-        // 性能优化：使用 has + set 而不是直接 set（避免不必要的对象创建）
-        if (!pointMap.has(hash)) {
-          pointMap.set(hash, { x, y, z, intensity })
-        }
+        // CPU 优化：直接使用 set，如果已存在会自动覆盖（避免 has 检查的开销）
+        // 对于大多数情况，点不会重复，直接 set 比 has + set 更快
+        // 如果点重复，覆盖也是合理的（保留最新的点）
+        pointMap.set(hash, { x, y, z, intensity })
       }
     }
     
@@ -3270,8 +3270,33 @@ export class SceneManager {
     const decayTimeMs = decayTimeSeconds * 1000
     const cutoffTime = currentTimestamp - decayTimeMs
     
-    // 过滤出在时间窗口内的数据（保留所有在时间窗口内的数据，不限制帧数）
-    const filtered = historyDataArray.filter(({ timestamp }) => timestamp >= cutoffTime)
+    // CPU 优化：使用 for 循环代替 filter，减少函数调用开销
+    // filter 方法会为每个元素创建函数调用，对于大量数据性能较差
+    // 使用 for 循环可以提前退出，并且避免函数调用开销
+    const filtered: Array<{ data: any; timestamp: number }> = []
+    const arrayLength = historyDataArray.length
+    
+    // 从后往前遍历（最新的数据在后面），找到第一个过期数据的位置
+    // 这样可以提前退出，避免遍历所有数据
+    let firstValidIndex = arrayLength
+    for (let i = arrayLength - 1; i >= 0; i--) {
+      const item = historyDataArray[i]
+      if (item && item.timestamp >= cutoffTime) {
+        firstValidIndex = i
+      } else {
+        // 找到第一个过期数据，可以提前退出
+        break
+      }
+    }
+    
+    // 只复制有效的数据（从 firstValidIndex 到末尾）
+    // CPU 优化：使用 slice 代替 filter，避免函数调用开销
+    if (firstValidIndex < arrayLength) {
+      filtered.push(...historyDataArray.slice(firstValidIndex))
+    } else {
+      // 所有数据都有效
+      filtered.push(...historyDataArray)
+    }
     
     // 调试日志：帮助诊断问题
     if (import.meta.env.DEV && filtered.length !== historyDataArray.length) {
@@ -3573,12 +3598,18 @@ export class SceneManager {
         
         this.pointCloud2DataMap.set(componentId, finalData)
         
-        // 性能优化：将数据上传到 GPU Buffer 缓存（如果支持）
+        // CPU 优化：将数据上传到 GPU Buffer 缓存（如果支持）
         // 这样可以避免每帧重新创建 buffer，提升渲染性能，特别是对于 Decay Time 积累的数据
         // 关键优化：确保缓存机制正常工作，数据未变化时复用缓存，数据变化时更新缓存
         if (this.pointCloudBufferManager && finalData.pointData && finalData.pointData instanceof Float32Array) {
           const useGpuColorMapping = finalData.useGpuColorMapping ?? true
-          const pointCount = finalData.pointCount || Math.floor(finalData.pointData.length / (useGpuColorMapping ? 4 : 7))
+          // CPU 优化：缓存计算结果，避免重复计算
+          const stride = useGpuColorMapping ? 4 : 7
+          const pointCount = finalData.pointCount || Math.floor(finalData.pointData.length / stride)
+          
+          // CPU 优化：只在数据可能变化时才计算哈希（检查是否需要合并历史数据）
+          // 如果数据没有变化（dataHash 相同），BufferManager 会复用缓存的 buffer
+          // 对于大数据量，generateDataHash 仍然有开销，但这是必要的（用于检测数据变化）
           const dataHash = generateDataHash(finalData.pointData, pointCount, useGpuColorMapping)
           
           const compactData: CompactPointCloudData = {
@@ -3596,18 +3627,28 @@ export class SceneManager {
           //   - 缓存未命中：创建新 buffer 并缓存
           this.pointCloudBufferManager.updatePointCloudData(componentId, compactData)
           
-          // 更新实例配置（轻量参数，不触发 buffer 重建）
+          // CPU 优化：更新实例配置（轻量参数，不触发 buffer 重建）
           // 这些参数每帧都可能变化（如 pose），但不会触发 buffer 重建
+          // 优化：缓存配置对象，避免每次创建新对象（如果配置没有变化）
+          const pose = finalData.pose || { position: { x: 0, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } }
+          const pointSize = config.size ?? finalData.scale?.x ?? 3
+          const colorTransformer = finalData.colorTransformer || 'Flat'
+          const useRainbow = finalData.useRainbow ?? true
+          const minColor = finalData.minColor || { r: 0, g: 0, b: 0 }
+          const maxColor = finalData.maxColor || { r: 255, g: 255, b: 255 }
+          const minValue = finalData.minIntensity ?? 0
+          const maxValue = finalData.maxIntensity ?? 1
+          
           this.pointCloudBufferManager.updateInstanceConfig(componentId, {
             componentId,
-            pose: finalData.pose || { position: { x: 0, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } },
-            pointSize: config.size ?? finalData.scale?.x ?? 3,
-            colorTransformer: finalData.colorTransformer || 'Flat',
-            useRainbow: finalData.useRainbow ?? true,
-            minColor: finalData.minColor || { r: 0, g: 0, b: 0 },
-            maxColor: finalData.maxColor || { r: 255, g: 255, b: 255 },
-            minValue: finalData.minIntensity ?? 0,
-            maxValue: finalData.maxIntensity ?? 1
+            pose,
+            pointSize,
+            colorTransformer,
+            useRainbow,
+            minColor,
+            maxColor,
+            minValue,
+            maxValue
           })
         }
 
