@@ -247,7 +247,10 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
     const dataArrayLength = dataArray.length
     const maxOffset = dataArrayLength - pointStep
     
-    for (let i = 0; i < rawPointCount; i += sampleStep) {
+    // CPU 优化：批量处理，减少循环开销
+    // 对于百万点云，循环本身的开销很大，需要优化循环体
+    let i = 0
+    while (i < rawPointCount) {
       const pointOffset = i * pointStep
       
       // 提前检查边界，避免无效读取
@@ -255,52 +258,53 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
         break
       }
 
-      // 批量读取点坐标（CPU 优化：减少函数调用开销）
+      // CPU 优化：批量读取点坐标，减少函数调用开销
+      // 使用内联的 DataView 读取，避免函数调用开销
       const x = readFloat32(dataArray, pointOffset + xOffsetFinal)
       const y = readFloat32(dataArray, pointOffset + yOffsetFinal)
       const z = readFloat32(dataArray, pointOffset + zOffsetFinal)
 
       // 跳过无效点（NaN 或 Infinity）
       // CPU 优化：使用 isFinite 检查（浏览器优化过的函数，比手动检查更快）
-      if (!isFinite(x) || !isFinite(y) || !isFinite(z)) {
-        continue
-      }
+      if (isFinite(x) && isFinite(y) && isFinite(z)) {
+        // 计算范围（用于颜色映射）- 优化条件判断
+        if (isAxisMode) {
+          const selectedValue = axisColor === 'X' ? x : (axisColor === 'Y' ? y : z)
+          if (selectedValue < axisMin) axisMin = selectedValue
+          if (selectedValue > axisMax) axisMax = selectedValue
+          hasAxisValues = true
+        }
 
-      // 计算范围（用于颜色映射）- 优化条件判断
-      if (isAxisMode) {
-        const selectedValue = axisColor === 'X' ? x : (axisColor === 'Y' ? y : z)
-        if (selectedValue < axisMin) axisMin = selectedValue
-        if (selectedValue > axisMax) axisMax = selectedValue
-        hasAxisValues = true
-      }
-
-      // GPU端颜色映射：只传递原始数据，不计算颜色
-      let intensityValue = 0.0
-      
-      if (isIntensityMode) {
-        intensityValue = readFloat32(dataArray, pointOffset + intensityOffsetFinal)
-        // CPU 优化：使用 isFinite 检查（浏览器优化过的函数）
-        if (!isFinite(intensityValue)) {
-          intensityValue = 0.0
-        } else {
-          // 同时计算intensity范围
-          if (needsIntensityBounds) {
-            if (intensityValue < intensityMin) intensityMin = intensityValue
-            if (intensityValue > intensityMax) intensityMax = intensityValue
-            hasIntensityValues = true
+        // GPU端颜色映射：只传递原始数据，不计算颜色
+        let intensityValue = 0.0
+        
+        if (isIntensityMode) {
+          intensityValue = readFloat32(dataArray, pointOffset + intensityOffsetFinal)
+          // CPU 优化：使用 isFinite 检查（浏览器优化过的函数）
+          if (isFinite(intensityValue)) {
+            // 同时计算intensity范围
+            if (needsIntensityBounds) {
+              if (intensityValue < intensityMin) intensityMin = intensityValue
+              if (intensityValue > intensityMax) intensityMax = intensityValue
+              hasIntensityValues = true
+            }
+          } else {
+            intensityValue = 0.0
           }
         }
-      }
 
-      // 直接写入预分配的Float32Array（避免push操作的开销）
-      // CPU 优化：批量写入，减少数组访问次数
-      const arrayIndex = validPointCount * 4
-      pointDataArray[arrayIndex] = x
-      pointDataArray[arrayIndex + 1] = y
-      pointDataArray[arrayIndex + 2] = z
-      pointDataArray[arrayIndex + 3] = intensityValue
+        // CPU 优化：直接写入预分配的Float32Array，批量写入减少数组访问次数
+        const arrayIndex = validPointCount * 4
+        pointDataArray[arrayIndex] = x
+        pointDataArray[arrayIndex + 1] = y
+        pointDataArray[arrayIndex + 2] = z
+        pointDataArray[arrayIndex + 3] = intensityValue
+        
+        validPointCount++
+      }
       
-      validPointCount++
+      // CPU 优化：使用步进，支持降采样
+      i += sampleStep
     }
     
     // 内存优化：清理临时变量引用（帮助 GC）

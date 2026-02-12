@@ -110,6 +110,8 @@ export class SceneManager {
   private laserScanRequestIdCounter = 0
   private pointCloud2RequestIdCounter = 0
   private pointCloudBufferManager: PointCloudBufferManager | null = null // GPU Buffer 缓存管理器（用于性能优化）
+  // CPU 优化：跟踪每个 PointCloud2 的数据哈希，只在数据变化时才重新注册 draw calls
+  private pointCloud2DataHashMap = new Map<string, string>() // componentId -> dataHash
 
   private options: Required<Omit<RenderOptions, 'gridColor'>> & { gridColor: [number, number, number, number] }
   private gridVisible = true
@@ -3601,16 +3603,22 @@ export class SceneManager {
         // CPU 优化：将数据上传到 GPU Buffer 缓存（如果支持）
         // 这样可以避免每帧重新创建 buffer，提升渲染性能，特别是对于 Decay Time 积累的数据
         // 关键优化：确保缓存机制正常工作，数据未变化时复用缓存，数据变化时更新缓存
+        let dataHash: string | null = null
+        let dataChanged = false
+        
         if (this.pointCloudBufferManager && finalData.pointData && finalData.pointData instanceof Float32Array) {
           const useGpuColorMapping = finalData.useGpuColorMapping ?? true
           // CPU 优化：缓存计算结果，避免重复计算
           const stride = useGpuColorMapping ? 4 : 7
           const pointCount = finalData.pointCount || Math.floor(finalData.pointData.length / stride)
           
-          // CPU 优化：只在数据可能变化时才计算哈希（检查是否需要合并历史数据）
+          // CPU 优化：计算数据哈希，用于检测数据是否变化
           // 如果数据没有变化（dataHash 相同），BufferManager 会复用缓存的 buffer
-          // 对于大数据量，generateDataHash 仍然有开销，但这是必要的（用于检测数据变化）
-          const dataHash = generateDataHash(finalData.pointData, pointCount, useGpuColorMapping)
+          dataHash = generateDataHash(finalData.pointData, pointCount, useGpuColorMapping)
+          
+          // CPU 优化：检查数据是否真正变化，只在变化时才更新和重新注册
+          const previousDataHash = this.pointCloud2DataHashMap.get(componentId)
+          dataChanged = previousDataHash !== dataHash
           
           const compactData: CompactPointCloudData = {
             data: finalData.pointData,
@@ -3629,7 +3637,6 @@ export class SceneManager {
           
           // CPU 优化：更新实例配置（轻量参数，不触发 buffer 重建）
           // 这些参数每帧都可能变化（如 pose），但不会触发 buffer 重建
-          // 优化：缓存配置对象，避免每次创建新对象（如果配置没有变化）
           const pose = finalData.pose || { position: { x: 0, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } }
           const pointSize = config.size ?? finalData.scale?.x ?? 3
           const colorTransformer = finalData.colorTransformer || 'Flat'
@@ -3650,11 +3657,23 @@ export class SceneManager {
             minValue,
             maxValue
           })
+          
+          // 更新数据哈希记录
+          this.pointCloud2DataHashMap.set(componentId, dataHash)
         }
 
-        // 立即注册绘制调用（不使用 requestAnimationFrame，避免延迟）
-        this.registerDrawCalls()
-        this.worldviewContext.onDirty()
+        // CPU 优化：只在数据真正变化时才重新注册 draw calls
+        // 对于百万点云，registerDrawCalls 的开销很大，应该避免不必要的调用
+        // 如果数据没有变化，只更新配置（通过 BufferManager），不需要重新注册
+        if (dataChanged || !dataHash) {
+          // 数据变化或首次加载：重新注册 draw calls
+          this.registerDrawCalls()
+          this.worldviewContext.onDirty()
+        } else {
+          // 数据未变化：只标记需要渲染（配置可能变化，如 pose）
+          // 注意：即使数据未变化，pose 等配置可能变化，仍然需要渲染
+          this.worldviewContext.onDirty()
+        }
       } else {
         // 数据为 null 可能是 Transform 无效或其他错误
         if (result.error) {
@@ -3699,6 +3718,8 @@ export class SceneManager {
     this.pointCloud2HistoryMap.delete(componentId) // 清除历史数据
     this.pointCloud2Instances.delete(componentId)
     this.pointCloud2RequestIds.delete(componentId)
+    // CPU 优化：清理数据哈希记录
+    this.pointCloud2DataHashMap.delete(componentId)
     
     // 立即重新注册绘制调用，确保已删除的组件不再渲染
     this.registerDrawCalls()
