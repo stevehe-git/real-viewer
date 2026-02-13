@@ -120,22 +120,9 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       }
     }
 
-    // 性能优化：使用缓存的 DataView 对象，避免每次调用都创建新的 DataView
-    // 创建共享的 DataView，减少对象创建开销（CPU 优化）
-    let sharedDataView: DataView | null = null
-    let sharedBuffer: ArrayBufferLike | null = null
-    
-    // 读取浮点数（little-endian）- 优化版本：缓存 DataView
-    const readFloat32 = (buffer: Uint8Array, offset: number): number => {
-      // 如果 buffer 的底层 ArrayBuffer 变化，重新创建 DataView
-      if (sharedBuffer !== buffer.buffer || sharedDataView === null) {
-        sharedBuffer = buffer.buffer
-        sharedDataView = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength)
-      }
-      // 计算实际偏移量（考虑 buffer.byteOffset）
-      const actualOffset = buffer.byteOffset + offset
-      return sharedDataView.getFloat32(actualOffset, true) // little-endian
-    }
+    // 性能优化：直接使用 DataView 读取，减少函数调用开销
+    // 创建一次 DataView，在整个解析过程中复用（CPU 优化）
+    let dataView: DataView | null = null
 
     // 转换数据数组为 Uint8Array（如果需要）
     // 支持 Uint8Array、Array、字符串（base64编码）
@@ -193,6 +180,10 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
           error: 'Failed to create data array'
         }
       }
+      
+      // 性能优化：创建 DataView 一次，在整个解析过程中复用
+      // 使用 DataView 直接读取比手动拼接字节更快，减少计算量
+      dataView = new DataView(dataArray.buffer, dataArray.byteOffset, dataArray.byteLength)
     } catch (error: any) {
       // 清理临时变量
       base64Decoded = null
@@ -206,19 +197,8 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
     }
 
     const rawPointCount = width * height || Math.floor(dataArray.length / pointStep)
+    const pointCount = rawPointCount
     
-    // 智能采样：对于超大点云（超过500万点），自动降采样以保持性能
-    // 亿万级点云需要降采样，否则会导致内存溢出和浏览器崩溃
-    // CPU 优化：根据点云大小动态调整最大点数，避免处理过多数据
-    const MAX_POINTS = 5000000 // 最多处理500万点
-    const needsDownsampling = rawPointCount > MAX_POINTS
-    const sampleStep = needsDownsampling ? Math.ceil(rawPointCount / MAX_POINTS) : 1
-    const pointCount = needsDownsampling ? Math.floor(rawPointCount / sampleStep) : rawPointCount
-    
-    if (needsDownsampling) {
-      console.warn(`[PointCloud2 Worker] Large point cloud detected (${rawPointCount.toLocaleString()} points). Downsampling to ${pointCount.toLocaleString()} points (step: ${sampleStep})`)
-    }
-
     // 预分配Float32Array，避免中间数组的内存开销
     // 每个点4个float：x, y, z, intensity
     // 内存优化：使用精确大小，避免浪费
@@ -249,6 +229,16 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
     
     // CPU 优化：批量处理，减少循环开销
     // 对于百万点云，循环本身的开销很大，需要优化循环体
+    // 性能优化：使用 DataView 直接读取，比函数调用更快，减少计算量
+    if (!dataView) {
+      return {
+        type: 'pointCloud2Processed',
+        componentId,
+        data: null,
+        error: 'DataView not initialized'
+      }
+    }
+    
     let i = 0
     while (i < rawPointCount) {
       const pointOffset = i * pointStep
@@ -258,11 +248,12 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
         break
       }
 
-      // CPU 优化：批量读取点坐标，减少函数调用开销
-      // 使用内联的 DataView 读取，避免函数调用开销
-      const x = readFloat32(dataArray, pointOffset + xOffsetFinal)
-      const y = readFloat32(dataArray, pointOffset + yOffsetFinal)
-      const z = readFloat32(dataArray, pointOffset + zOffsetFinal)
+      // CPU 优化：使用 DataView 直接读取，减少函数调用开销和计算量
+      // DataView.getFloat32 比手动拼接字节更快，浏览器优化过的函数
+      const actualOffset = dataArray.byteOffset + pointOffset
+      const x = dataView.getFloat32(actualOffset + xOffsetFinal, true) // true = little-endian
+      const y = dataView.getFloat32(actualOffset + yOffsetFinal, true)
+      const z = dataView.getFloat32(actualOffset + zOffsetFinal, true)
 
       // 跳过无效点（NaN 或 Infinity）
       // CPU 优化：使用 isFinite 检查（浏览器优化过的函数，比手动检查更快）
@@ -279,7 +270,8 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
         let intensityValue = 0.0
         
         if (isIntensityMode) {
-          intensityValue = readFloat32(dataArray, pointOffset + intensityOffsetFinal)
+          // CPU 优化：使用 DataView 直接读取
+          intensityValue = dataView.getFloat32(actualOffset + intensityOffsetFinal, true)
           // CPU 优化：使用 isFinite 检查（浏览器优化过的函数）
           if (isFinite(intensityValue)) {
             // 同时计算intensity范围
@@ -303,14 +295,12 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
         validPointCount++
       }
       
-      // CPU 优化：使用步进，支持降采样
-      i += sampleStep
+      i++
     }
     
     // 内存优化：清理临时变量引用（帮助 GC）
-    // 注意：dataArray 在函数结束时会被清理，但显式清理可以更快
-    sharedDataView = null
-    sharedBuffer = null
+    // 注意：dataArray 和 dataView 在函数结束时会被清理，但显式清理可以更快
+    dataView = null
 
     // 处理范围计算的边界情况
     if (hasAxisValues) {

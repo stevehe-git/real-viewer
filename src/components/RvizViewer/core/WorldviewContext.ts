@@ -295,6 +295,12 @@ export class WorldviewContext {
       return
     }
     
+    // 性能优化：无数据时跳过渲染，避免空跑浪费 CPU
+    // 如果没有 draw calls，直接返回，不进行任何渲染操作
+    if (this._drawCalls.size === 0) {
+      return
+    }
+    
     // 优化：只在有统计对象时才重置（使用 for 循环）
     const cmdObjects = this.reglCommandObjects
     let drawCallCount = 0
