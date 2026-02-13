@@ -587,7 +587,15 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
             console.warn(`Points: Invalid point data at index ${index}`, pointData)
             return
           }
-          command(pointData)
+          
+          // 性能优化：检查点数量，避免无效渲染
+          const pointCount = pointData.pointCount || 
+            (hasPointData ? Math.floor(pointData.pointData.length / (pointData.useGpuColorMapping ? 4 : 7)) : 0) ||
+            (hasPoints ? pointData.points.length : 0)
+          
+          if (pointCount > 0) {
+            command(pointData)
+          }
         })
       } else {
         // 如果是单个对象，直接渲染
@@ -599,7 +607,15 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
           console.warn(`Points: Invalid point data`, inProps)
           return
         }
-        command(inProps)
+        
+        // 性能优化：检查点数量，避免无效渲染
+        const pointCount = inProps.pointCount || 
+          (hasPointData ? Math.floor(inProps.pointData.length / (inProps.useGpuColorMapping ? 4 : 7)) : 0) ||
+          (hasPoints ? inProps.points.length : 0)
+        
+        if (pointCount > 0) {
+          command(inProps)
+        }
       }
     }
   }
