@@ -7,7 +7,7 @@ import { grid, lines, makePointsCommand, cylinders, makeArrowsCommand, makeMapTe
 import { clearMapTextureCache, clearAllMapTextureCache } from '../commands/MapTexture'
 import { quat } from 'gl-matrix'
 import { tfManager } from '@/services/tfManager'
-import { PointCloudBufferManager, generateDataHash, type CompactPointCloudData } from '../commands/PointCloudBufferManager'
+import { PointCloudBufferManager, generateDataHash, generateDataHashFromSeparated, type CompactPointCloudData } from '../commands/PointCloudBufferManager'
 import { getDataProcessorWorker } from '@/workers/dataProcessorWorker'
 import type { TFProcessRequest } from '@/workers/dataProcessor.worker'
 import { pointCloud2ProcessorWorker } from '@/workers/pointCloud2ProcessorWorker'
@@ -435,71 +435,29 @@ export class SceneManager {
         // 获取配置
         const config = this.pointCloud2ConfigMap.get(componentId) || {}
         
-        // 优化：直接使用Float32Array格式，避免转换开销
         let renderData: any
-        if (pointCloud2Data.pointData && pointCloud2Data.pointData instanceof Float32Array) {
-          // GPU端颜色映射格式：Float32Array [x1, y1, z1, intensity1, x2, y2, z2, intensity2, ...]
-          // 每个点占用4个float（16字节）
-          const pointData = pointCloud2Data.pointData
-          const useGpuColorMapping = pointCloud2Data.useGpuColorMapping ?? true
-          const stride = useGpuColorMapping ? 4 : 7 // GPU端颜色映射：4个float/点，旧格式：7个float/点
-          
-          // 如果数据长度不是stride的倍数，截断到最近的完整点
-          const validDataLength = Math.floor(pointData.length / stride) * stride
-          const pointCount = pointCloud2Data.pointCount || Math.floor(pointData.length / stride)
-          
-          // 验证数据格式：确保数据长度是stride的倍数
-          if (pointData.length % stride !== 0) {
-            if (import.meta.env.DEV) {
-              console.warn(`[PointCloud2] Invalid data length for ${componentId}:`, {
-                dataLength: pointData.length,
-                stride,
-                remainder: pointData.length % stride,
-                validDataLength,
-                pointCount,
-                useGpuColorMapping
-              })
-            }
-            // 如果数据不完整，使用截断后的数据
-            if (validDataLength > 0) {
-              // 创建一个新的截断后的数组（如果需要）
-              // 注意：这里不实际截断，只是记录警告，实际截断在Points命令中处理
-            }
-          }
-          
-          if (pointCount === 0) {
-            console.warn(`[PointCloud2] No points in data for ${componentId}`)
-            return
-        }
-        
-          // 性能优化：优先使用缓存的 GPU buffer（如果存在）
-          // 这样可以避免每帧重新创建 Float32Array，大幅提升渲染性能
+        const hasPositionData = pointCloud2Data.positionData && pointCloud2Data.positionData instanceof Float32Array
+        const hasPointData = pointCloud2Data.pointData && pointCloud2Data.pointData instanceof Float32Array
+        const useGpuColorMapping = pointCloud2Data.useGpuColorMapping ?? true
+        const pointCount = pointCloud2Data.pointCount ||
+          (hasPositionData ? Math.floor(pointCloud2Data.positionData.length / 3) : 0) ||
+          (hasPointData ? Math.floor(pointCloud2Data.pointData.length / (useGpuColorMapping ? 4 : 7)) : 0)
+        if ((hasPositionData || hasPointData) && pointCount > 0) {
           let cachedBuffers: { positionBuffer?: any; intensityBuffer?: any; colorBuffer?: any } | undefined
           if (this.pointCloudBufferManager) {
             const buffers = this.pointCloudBufferManager.getBuffers(componentId)
             if (buffers) {
-              cachedBuffers = {
-                positionBuffer: buffers.positionBuffer,
-                intensityBuffer: buffers.intensityBuffer,
-                colorBuffer: buffers.colorBuffer
-              }
+              cachedBuffers = { positionBuffer: buffers.positionBuffer, intensityBuffer: buffers.intensityBuffer, colorBuffer: buffers.colorBuffer }
             } else if (import.meta.env.DEV && pointCount > 1000000) {
-              // 对于大规模点云，如果缓存未命中，记录警告
-              console.warn(`[PointCloud2] Cache miss for ${componentId} (${pointCount.toLocaleString()} points) - this will cause high CPU usage`, {
-                componentId,
-                pointCount,
-                hasBufferManager: !!this.pointCloudBufferManager,
-                dataHash: generateDataHash(pointData, pointCount, useGpuColorMapping)
-              })
+              console.warn(`[PointCloud2] Cache miss for ${componentId} (${pointCount.toLocaleString()} points) - this will cause high CPU usage`)
             }
           }
-          
-          // 直接传递Float32Array，Points命令会直接处理
-          // 传递GPU端颜色映射配置
           renderData = {
             pose: pointCloud2Data.pose,
-            pointData, // 直接传递Float32Array（GPU端颜色映射格式：[x, y, z, intensity, ...]）
-            pointCount, // 点的数量
+            pointCount,
+            positionData: pointCloud2Data.positionData,
+            intensityData: pointCloud2Data.intensityData,
+            pointData: pointCloud2Data.pointData,
             scale: {
               x: config.size ?? pointCloud2Data.scale?.x ?? 3,
               y: config.size ?? pointCloud2Data.scale?.y ?? 3,
@@ -553,11 +511,10 @@ export class SceneManager {
         
         // 调试：检查数据格式和配置
         // 兼容新旧两种数据格式
-        const useGpuColorMapping = pointCloud2Data.useGpuColorMapping ?? true
-        const stride = useGpuColorMapping ? 4 : 7
-        const pointsCount = pointCloud2Data.pointData 
-          ? Math.floor(pointCloud2Data.pointData.length / stride)
-          : (pointCloud2Data.points?.length || 0)
+        const stride = (pointCloud2Data.useGpuColorMapping ?? true) ? 4 : 7
+        const pointsCount = pointCloud2Data.positionData
+          ? Math.floor(pointCloud2Data.positionData.length / 3)
+          : (pointCloud2Data.pointData ? Math.floor(pointCloud2Data.pointData.length / stride) : (pointCloud2Data.points?.length || 0))
         const colorsCount = pointCloud2Data.colors?.length || 0
         
         if (import.meta.env.DEV) {
@@ -3068,7 +3025,9 @@ export class SceneManager {
     // 合并操作对于大规模点云（>50万点）CPU开销过大，会导致卡顿
     const firstData = historyDataArray[historyDataArray.length - 1]?.data
     if (firstData) {
-      const pointCount = firstData.pointCount || (firstData.pointData?.length ? Math.floor(firstData.pointData.length / (firstData.useGpuColorMapping ? 4 : 7)) : 0)
+      const pointCount = firstData.pointCount ||
+        (firstData.positionData ? Math.floor(firstData.positionData.length / 3) : 0) ||
+        (firstData.pointData ? Math.floor(firstData.pointData.length / (firstData.useGpuColorMapping ? 4 : 7)) : 0)
       if (pointCount > 500000) {
         // 大规模点云：直接返回最新数据，跳过合并
         return firstData
@@ -3091,46 +3050,36 @@ export class SceneManager {
     // 性能优化：使用 for 循环而不是 for...of，减少迭代器开销
     for (let historyIdx = 0; historyIdx < historyDataArray.length; historyIdx++) {
       const historyItem = historyDataArray[historyIdx]
-      if (!historyItem || !historyItem.data) continue
-      const { data } = historyItem
-      if (!data || !data.pointData || !(data.pointData instanceof Float32Array)) continue
-      
-      lastData = data // 保存最新的数据用于配置
-      const pointData = data.pointData
-      
-      // 检测数据格式：4个float/点（新格式：xyz + intensity）或7个float/点（旧格式：xyz + rgba）
+      if (!historyItem?.data) continue
+      const data = historyItem.data
+      const hasSeparated = data.positionData instanceof Float32Array && data.intensityData instanceof Float32Array
+      const hasInterleaved = data.pointData instanceof Float32Array
+      if (!hasSeparated && !hasInterleaved) continue
+
+      lastData = data
       const useGpuColorMapping = data.useGpuColorMapping ?? true
       const stride = useGpuColorMapping ? 4 : 7
-      const pointCount = data.pointCount || Math.floor(pointData.length / stride)
-      
-      // 性能优化：预先计算边界，避免在循环中重复计算
-      const maxOffset = pointData.length - stride
-      
-      // 遍历该帧的所有点
-      // 性能优化：使用单次循环，减少循环开销
+      const pointCount = data.pointCount ||
+        (hasSeparated ? Math.floor(data.positionData.length / 3) : Math.floor(data.pointData.length / stride))
+
       for (let i = 0; i < pointCount; i++) {
-        const offset = i * stride
-        
-        // 边界检查：确保不会越界
-        if (offset > maxOffset) break
-        
-        const x = pointData[offset + 0]
-        const y = pointData[offset + 1]
-        const z = pointData[offset + 2]
-        
-        // 跳过无效的点（NaN或Infinity）- 提前检查，避免后续计算
-        if (!isFinite(x) || !isFinite(y) || !isFinite(z)) {
-          continue
+        let x: number, y: number, z: number, intensity: number
+        if (hasSeparated) {
+          const posIdx = i * 3
+          if (posIdx + 2 >= data.positionData!.length) break
+          x = data.positionData![posIdx]
+          y = data.positionData![posIdx + 1]
+          z = data.positionData![posIdx + 2]
+          intensity = i < data.intensityData!.length && isFinite(data.intensityData![i]) ? data.intensityData![i] : 0.0
+        } else {
+          const offset = i * stride
+          if (offset + 2 >= data.pointData!.length) break
+          x = data.pointData![offset]
+          y = data.pointData![offset + 1]
+          z = data.pointData![offset + 2]
+          intensity = useGpuColorMapping && offset + 3 < data.pointData!.length && isFinite(data.pointData![offset + 3]) ? data.pointData![offset + 3] : 0.0
         }
-        
-        // 根据格式提取intensity或使用默认值
-        let intensity = 0.0
-        if (useGpuColorMapping && offset + 3 < pointData.length) {
-          // 新格式：第4个float是intensity
-          const intensityVal = pointData[offset + 3]
-          intensity = isFinite(intensityVal) ? intensityVal : 0.0
-        }
-        // 旧格式：没有intensity，使用默认值0（已在上面初始化）
+        if (!isFinite(x) || !isFinite(y) || !isFinite(z)) continue
         
         // CPU 优化：计算位置hash（使用整数，避免字符串操作）
         // 使用位运算和整数运算，避免浮点数运算
@@ -3599,8 +3548,9 @@ export class SceneManager {
         // 更新历史数据队列（过滤后的数组会替换旧的，旧数组会被 GC 回收）
         this.pointCloud2HistoryMap.set(componentId, filteredHistory)
         
-        // 计算点数量（用于后续判断是否需要合并历史数据）
-        const pointCount = result.data?.pointCount || (result.data?.pointData?.length / (result.data?.useGpuColorMapping ? 4 : 7) || 0)
+        const pointCount = result.data?.pointCount ||
+          (result.data?.positionData ? Math.floor(result.data.positionData.length / 3) : 0) ||
+          (result.data?.pointData ? Math.floor(result.data.pointData.length / (result.data?.useGpuColorMapping ? 4 : 7)) : 0) || 0
         const isLargePointCloud = pointCount > 1000000
         historyDataArray = filteredHistory
         
@@ -3642,27 +3592,21 @@ export class SceneManager {
         let dataHash: string | null = null
         let dataChanged = false
         
-        if (this.pointCloudBufferManager && finalData.pointData && finalData.pointData instanceof Float32Array) {
+        const hasSeparated = finalData.positionData && finalData.intensityData &&
+          finalData.positionData instanceof Float32Array && finalData.intensityData instanceof Float32Array
+        const hasInterleaved = finalData.pointData && finalData.pointData instanceof Float32Array
+        if (this.pointCloudBufferManager && (hasSeparated || hasInterleaved)) {
           const useGpuColorMapping = finalData.useGpuColorMapping ?? true
-          // CPU 优化：缓存计算结果，避免重复计算
-          const stride = useGpuColorMapping ? 4 : 7
-          const pointCount = finalData.pointCount || Math.floor(finalData.pointData.length / stride)
-          
-          // CPU 优化：计算数据哈希，用于检测数据是否变化
-          // 如果数据没有变化（dataHash 相同），BufferManager 会复用缓存的 buffer
-          dataHash = generateDataHash(finalData.pointData, pointCount, useGpuColorMapping)
-          
-          // CPU 优化：检查数据是否真正变化，只在变化时才更新和重新注册
+          const pointCount = finalData.pointCount ||
+            (hasSeparated ? Math.floor(finalData.positionData.length / 3) : Math.floor(finalData.pointData.length / (useGpuColorMapping ? 4 : 7)))
+          dataHash = hasSeparated
+            ? generateDataHashFromSeparated(finalData.positionData, finalData.intensityData, pointCount)
+            : generateDataHash(finalData.pointData, pointCount, useGpuColorMapping)
           const previousDataHash = this.pointCloud2DataHashMap.get(componentId)
           dataChanged = previousDataHash !== dataHash
-          
-          const compactData: CompactPointCloudData = {
-            data: finalData.pointData,
-            count: pointCount,
-            pointSize: config.size ?? finalData.scale?.x ?? 3,
-            dataHash,
-            useGpuColorMapping
-          }
+          const compactData: CompactPointCloudData = hasSeparated
+            ? { positionData: finalData.positionData, intensityData: finalData.intensityData, count: pointCount, pointSize: config.size ?? finalData.scale?.x ?? 3, dataHash, useGpuColorMapping }
+            : { data: finalData.pointData, count: pointCount, pointSize: config.size ?? finalData.scale?.x ?? 3, dataHash, useGpuColorMapping }
           
           // 更新 GPU Buffer 缓存（智能缓存机制）
           // - 如果数据未变化（dataHash 相同），只更新引用，复用缓存的 buffer（零开销）
@@ -3887,7 +3831,7 @@ export class SceneManager {
           // CPU 优化：更新 BufferManager 配置（axisColor 等变化只需要更新配置）
           if (this.pointCloudBufferManager && axisColorChanged) {
             const currentData = this.pointCloud2DataMap.get(componentId)
-            if (currentData && currentData.pointData) {
+            if (currentData && (currentData.pointData || currentData.positionData)) {
               // 更新 BufferManager 配置，不需要重新处理数据
               this.pointCloudBufferManager.updateInstanceConfig(componentId, {
                 componentId,
@@ -3909,7 +3853,7 @@ export class SceneManager {
         // CPU 优化：axisColor 变化只需要更新配置，不需要重新处理数据
         if (axisColorChanged && this.pointCloudBufferManager) {
           const currentData = this.pointCloud2DataMap.get(componentId)
-          if (currentData && currentData.pointData) {
+          if (currentData && (currentData.pointData || currentData.positionData)) {
             // 更新 BufferManager 配置（axisColor 变化）
             this.pointCloudBufferManager.updateInstanceConfig(componentId, {
               componentId,
@@ -3946,9 +3890,8 @@ export class SceneManager {
             let finalData: any
             // 优化：对于大规模点云（>50万点），禁用历史合并以提高性能
             const lastHistoryItem = filteredHistory.length > 0 ? filteredHistory[filteredHistory.length - 1] : undefined
-            const pointCount = lastHistoryItem?.data 
-              ? (lastHistoryItem.data.pointCount || (lastHistoryItem.data.pointData?.length / 7 || 0))
-              : 0
+            const d = lastHistoryItem?.data
+            const pointCount = d ? (d.pointCount || (d.positionData ? d.positionData.length / 3 : 0) || (d.pointData ? d.pointData.length / (d.useGpuColorMapping ? 4 : 7) : 0)) : 0
             const isLargePointCloud = pointCount > 500000
             
             if (decayTime > 0 && filteredHistory.length > 1 && !isLargePointCloud) {
@@ -3967,6 +3910,17 @@ export class SceneManager {
             
             if (finalData) {
               this.pointCloud2DataMap.set(componentId, finalData)
+              if (this.pointCloudBufferManager && finalData.pointData instanceof Float32Array) {
+                const cnt = finalData.pointCount || Math.floor(finalData.pointData.length / 4)
+                const dataHash = generateDataHash(finalData.pointData, cnt, true)
+                this.pointCloudBufferManager.updatePointCloudData(componentId, {
+                  data: finalData.pointData,
+                  count: cnt,
+                  pointSize: this.pointCloud2ConfigMap.get(componentId)?.size ?? finalData.scale?.x ?? 3,
+                  dataHash,
+                  useGpuColorMapping: true
+                })
+              }
               this.registerDrawCalls()
               this.worldviewContext.onDirty()
             }

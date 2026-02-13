@@ -5,6 +5,26 @@
 import type { Regl, PointType } from '../types'
 import { getVertexColors, pointToVec3, withPose, defaultBlend } from './utils/commandUtils'
 
+/** GPU 颜色映射模式下的占位 color 数组缓存（LRU，避免每帧创建百万级 Float32Array） */
+const DUMMY_COLOR_CACHE_MAX = 10
+const dummyColorCache = new Map<number, Float32Array>()
+
+function getDummyColorBuffer(count: number): Float32Array {
+  let buffer = dummyColorCache.get(count)
+  if (buffer) {
+    dummyColorCache.delete(count)
+    dummyColorCache.set(count, buffer)
+    return buffer
+  }
+  buffer = new Float32Array(count * 4).fill(1.0)
+  if (dummyColorCache.size >= DUMMY_COLOR_CACHE_MAX) {
+    const firstKey = dummyColorCache.keys().next().value
+    if (firstKey !== undefined) dummyColorCache.delete(firstKey)
+  }
+  dummyColorCache.set(count, buffer)
+  return buffer
+}
+
 type PointsProps = {
   useWorldSpaceSize?: boolean
   style?: string // 'Points' | 'Squares' | 'Flat Squares' | 'Spheres' | 'Boxes'
@@ -304,7 +324,9 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
             if (props._cachedBuffers?.positionBuffer) {
               return props._cachedBuffers.positionBuffer
             }
-            
+            if (props.positionData && props.positionData instanceof Float32Array) {
+              return props.positionData
+            }
             // 如果没有缓存，需要从 pointData 提取数据
             // 这种情况应该很少发生（只在首次渲染或数据变化时）
             // 优化：支持Float32Array二进制格式
@@ -358,7 +380,9 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
             if (props._cachedBuffers?.intensityBuffer) {
               return props._cachedBuffers.intensityBuffer
             }
-            
+            if (props.intensityData && props.intensityData instanceof Float32Array) {
+              return props.intensityData
+            }
             // 如果没有缓存，需要从 pointData 提取数据
             // GPU端颜色映射：提取intensity数据
             // 注意：regl要求attribute必须始终提供有效的Float32Array，且长度必须与point属性匹配
@@ -405,11 +429,8 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
             // 向后兼容：如果使用GPU颜色映射，不需要color属性（但regl要求attribute必须存在）
             // 这种情况下，返回一个占位数组，不会被使用（颜色在GPU着色器中计算）
             if (props.useGpuColorMapping) {
-              const pointCount = props.pointCount || (props.pointData?.length ? Math.floor(props.pointData.length / 4) : 0)
-              const count = Math.max(1, pointCount) // 至少1个元素
-              // 优化：如果数据未变化，可以复用同一个占位数组（但 regl 可能不支持，所以每次都创建）
-              // 这个数组很小，开销可以接受
-              return new Float32Array(count * 4).fill(1.0) // 占位，不会被使用
+              const pointCount = props.pointCount ?? (props.positionData ? Math.floor(props.positionData.length / 3) : 0) ?? (props.pointData ? Math.floor(props.pointData.length / 4) : 0)
+              return getDummyColorBuffer(Math.max(1, pointCount))
             }
             
             // 旧格式：支持Float32Array二进制格式
@@ -562,13 +583,12 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
         },
 
         count: (_context: any, props: any) => {
-          // 优化：支持Float32Array格式
-          if (props.pointData && props.pointData instanceof Float32Array) {
+          if (props.pointCount != null) return Math.max(0, props.pointCount)
+          if (props.positionData instanceof Float32Array) return Math.max(0, Math.floor(props.positionData.length / 3))
+          if (props.pointData instanceof Float32Array) {
             const stride = props.useGpuColorMapping ? 4 : 7
-            const pointCount = props.pointCount || Math.floor(props.pointData.length / stride)
-            return Math.max(0, pointCount) // 确保非负
+            return Math.max(0, Math.floor(props.pointData.length / stride))
           }
-          // 向后兼容：对象数组格式
           return props.points?.length || 0
         }
       })
@@ -581,15 +601,15 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
         inProps.forEach((pointData: any, index: number) => {
           // 优化：支持Float32Array格式
           const hasPointData = pointData?.pointData instanceof Float32Array
+          const hasPositionData = pointData?.positionData instanceof Float32Array
           const hasPoints = pointData?.points && pointData.points.length > 0
-          
-          if (!pointData || (!hasPointData && !hasPoints)) {
+
+          if (!pointData || (!hasPointData && !hasPositionData && !hasPoints)) {
             console.warn(`Points: Invalid point data at index ${index}`, pointData)
             return
           }
-          
-          // 性能优化：检查点数量，避免无效渲染
-          const pointCount = pointData.pointCount || 
+          const pointCount = pointData.pointCount ||
+            (hasPositionData ? Math.floor(pointData.positionData.length / 3) : 0) ||
             (hasPointData ? Math.floor(pointData.pointData.length / (pointData.useGpuColorMapping ? 4 : 7)) : 0) ||
             (hasPoints ? pointData.points.length : 0)
           
@@ -601,15 +621,15 @@ export const makePointsCommand = ({ useWorldSpaceSize, style = 'Points' }: Point
         // 如果是单个对象，直接渲染
         // 优化：支持Float32Array格式
         const hasPointData = inProps?.pointData instanceof Float32Array
+        const hasPositionData = inProps?.positionData instanceof Float32Array
         const hasPoints = inProps?.points && inProps.points.length > 0
-        
-        if (!inProps || (!hasPointData && !hasPoints)) {
+
+        if (!inProps || (!hasPointData && !hasPositionData && !hasPoints)) {
           console.warn(`Points: Invalid point data`, inProps)
           return
         }
-        
-        // 性能优化：检查点数量，避免无效渲染
-        const pointCount = inProps.pointCount || 
+        const pointCount = inProps.pointCount ||
+          (hasPositionData ? Math.floor(inProps.positionData.length / 3) : 0) ||
           (hasPointData ? Math.floor(inProps.pointData.length / (inProps.useGpuColorMapping ? 4 : 7)) : 0) ||
           (hasPoints ? inProps.points.length : 0)
         

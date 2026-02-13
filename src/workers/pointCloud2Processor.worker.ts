@@ -199,10 +199,9 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
     const rawPointCount = width * height || Math.floor(dataArray.length / pointStep)
     const pointCount = rawPointCount
     
-    // 预分配Float32Array，避免中间数组的内存开销
-    // 每个点4个float：x, y, z, intensity
-    // 内存优化：使用精确大小，避免浪费
-    const pointDataArray = new Float32Array(pointCount * 4)
+    // CPU优化：直接写入分离的 position/intensity 数组，主线程无需再循环分离
+    const positionDataArray = new Float32Array(pointCount * 3)
+    const intensityDataArray = new Float32Array(pointCount)
     
     // 用于范围计算的临时变量（单遍遍历时使用）
     let axisMin = Infinity
@@ -285,12 +284,12 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
           }
         }
 
-        // CPU 优化：直接写入预分配的Float32Array，批量写入减少数组访问次数
-        const arrayIndex = validPointCount * 4
-        pointDataArray[arrayIndex] = x
-        pointDataArray[arrayIndex + 1] = y
-        pointDataArray[arrayIndex + 2] = z
-        pointDataArray[arrayIndex + 3] = intensityValue
+        // CPU优化：直接写入分离数组，主线程无需分离循环
+        const posIdx = validPointCount * 3
+        positionDataArray[posIdx] = x
+        positionDataArray[posIdx + 1] = y
+        positionDataArray[posIdx + 2] = z
+        intensityDataArray[validPointCount] = intensityValue
         
         validPointCount++
       }
@@ -336,18 +335,14 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       }
     }
 
-    // 如果实际处理的点数少于预分配的大小，创建精确大小的数组（节省内存）
-    // 注意：slice 会创建新数组，原数组会被 GC 回收
-    // 内存优化：及时清理不需要的大数组
-    let finalPointDataArray: Float32Array
+    let finalPositionData: Float32Array
+    let finalIntensityData: Float32Array
     if (processedPointCount < pointCount) {
-      // 创建精确大小的新数组，原数组会被 GC 回收
-      finalPointDataArray = pointDataArray.slice(0, processedPointCount * 4)
-      // 显式清理原数组引用（虽然会在函数结束时自动清理，但显式清理可以更快）
-      // 注意：不能直接设置为 null，因为 TypeScript 不允许，但可以确保不再使用
-      // 通过创建新数组，原数组的引用计数会减少，帮助 GC 更快回收
+      finalPositionData = positionDataArray.slice(0, processedPointCount * 3)
+      finalIntensityData = intensityDataArray.slice(0, processedPointCount)
     } else {
-      finalPointDataArray = pointDataArray
+      finalPositionData = positionDataArray
+      finalIntensityData = intensityDataArray
     }
     
     // 内存优化：清理不再使用的临时变量引用
@@ -394,15 +389,15 @@ function processPointCloud2(request: PointCloud2ProcessRequest): PointCloud2Proc
       }
     }
     
-    // 构建返回对象
+    // 构建返回对象（CPU优化：分离格式，主线程无需循环分离）
     const result: PointCloud2ProcessResult = {
       type: 'pointCloud2Processed',
       componentId,
       data: {
         pose,
-        // 使用Float32Array二进制格式，比对象数组节省70%+内存
-        pointData: finalPointDataArray, // 交错存储 xyz + intensity（GPU端颜色映射）
-        pointCount: processedPointCount, // 点的数量
+        positionData: finalPositionData,
+        intensityData: finalIntensityData,
+        pointCount: processedPointCount,
         scale: { x: pointSize, y: pointSize, z: pointSize },
         // GPU端颜色映射配置
         useGpuColorMapping: true,
@@ -466,64 +461,25 @@ self.onmessage = (event: MessageEvent<PointCloud2ProcessRequest>) => {
  */
 function handlePointCloud2Request(request: PointCloud2ProcessRequest): void {
   let response: PointCloud2ProcessResult | null = null
-  let pointDataArray: Float32Array | null = null
-  let arrayBuffer: ArrayBuffer | null = null
-  
+
   try {
     if (request.type === 'processPointCloud2') {
       response = processPointCloud2(request)
-      
-      // 使用 Transferable Objects 优化大数据传输，避免序列化开销
-      if (response.data?.pointData && response.data.pointData instanceof Float32Array) {
-        // 保存 pointData 和 buffer 引用（在传输前）
-        pointDataArray = response.data.pointData
-        // 类型断言：pointDataArray 在这里已经被赋值，不会是 null
-        const bufferLike = pointDataArray!.buffer
-        
-        // 确保 buffer 是 ArrayBuffer（不是 SharedArrayBuffer）
-        // 类型检查：ArrayBufferLike 可能是 ArrayBuffer 或 SharedArrayBuffer
-        if (bufferLike instanceof ArrayBuffer) {
-          arrayBuffer = bufferLike
-          // 创建 transferList（只包含 buffer）
-          const transferList = [arrayBuffer]
-          
-          // 发送消息（buffer 会被传输到主线程，Worker 中的 buffer 会被清空）
-          // 注意：传输后 pointDataArray.buffer 会被清空，但 pointDataArray 对象仍存在
-          // CPU 优化：使用 postMessage 的 transferList 参数，避免数据复制
-          ;(self.postMessage as any)(response, transferList)
-          
-          // 重要：传输后立即清理所有引用，帮助 GC 快速回收内存
-          // 参照 rviz 实现：彻底清理所有引用，防止内存泄漏
-          // 1. 清理 response 中的 pointData 引用（虽然 buffer 已被传输，但对象引用仍存在）
-          if (response.data) {
-            // 内存优化：显式清理大对象引用
-            response.data.pointData = null as any
-            // 注意：不需要删除 pointCount，它是一个小数字，不会造成内存泄漏
-          }
-          
-          // 2. 清理局部变量引用（在传输后立即清理）
-          pointDataArray = null
-          arrayBuffer = null
-          
-          // 3. 清理整个 response 引用
-          response = null
-        } else {
-          // 如果不是 ArrayBuffer（如 SharedArrayBuffer），使用普通序列化
-          // 注意：这种情况很少见，但需要处理
-          self.postMessage(response)
-          response = null
-          pointDataArray = null
-          arrayBuffer = null
+
+      const posData = response.data?.positionData
+      const intData = response.data?.intensityData
+      const canTransfer = posData instanceof Float32Array && intData instanceof Float32Array &&
+        posData.buffer instanceof ArrayBuffer && intData.buffer instanceof ArrayBuffer
+
+      if (canTransfer) {
+        const transferList: ArrayBuffer[] = [posData!.buffer, intData!.buffer]
+        ;(self.postMessage as any)(response, transferList)
+        if (response.data) {
+          response.data.positionData = null as any
+          response.data.intensityData = null as any
         }
-      } else if (pointDataArray) {
-        // pointDataArray 存在但不是 Float32Array，或 buffer 不是 ArrayBuffer
-        // 使用普通序列化
-        self.postMessage(response)
         response = null
-        pointDataArray = null
-        arrayBuffer = null
       } else {
-        // 没有 pointData 或不是 Float32Array，直接发送
         self.postMessage(response)
         response = null
       }
@@ -538,8 +494,6 @@ function handlePointCloud2Request(request: PointCloud2ProcessRequest): void {
       self.postMessage(errorResponse)
     }
   } catch (error: any) {
-    // 错误处理：确保即使出错也能发送响应并清理内存
-    // 内存优化：在错误情况下也要清理所有引用
     const errorResponse: PointCloud2ProcessResult = {
       type: 'pointCloud2Processed',
       componentId: request?.componentId || 'unknown',
@@ -547,18 +501,9 @@ function handlePointCloud2Request(request: PointCloud2ProcessRequest): void {
       error: error?.message || 'Unknown error in worker message handler'
     }
     self.postMessage(errorResponse)
-    
-    // 清理错误处理中的引用
     response = null
-    pointDataArray = null
-    arrayBuffer = null
   } finally {
-    // 最终清理：确保所有引用都被释放（参照 rviz 的内存管理策略）
-    // 这是防止内存泄漏的关键步骤
-    // 内存优化：在 finally 块中清理，确保即使出错也能清理
     response = null
-    pointDataArray = null
-    arrayBuffer = null
     
     // 注意：不强制触发 GC，因为：
     // 1. gc() 不是标准 API，只在某些浏览器（如 Chrome with --js-flags=--expose-gc）中可用

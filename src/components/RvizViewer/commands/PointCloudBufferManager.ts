@@ -50,19 +50,24 @@ import type { Regl } from '../types'
 /**
  * 二进制紧凑格式的点云数据
  * 支持两种格式：
- * 1. GPU端颜色映射格式：[x1, y1, z1, intensity1, x2, y2, z2, intensity2, ...] - 每个点4个float（16字节）
- * 2. 旧格式：[x1, y1, z1, r1, g1, b1, a1, x2, y2, z2, r2, g2, b2, a2, ...] - 每个点7个float（28字节）
+ * 1. GPU端颜色映射（分离格式，优先）：positionData (xyz) + intensityData - 主线程零分离开销
+ * 2. GPU端颜色映射（交错格式）：[x1, y1, z1, intensity1, ...] - 每个点4个float
+ * 3. 旧格式：[x1, y1, z1, r1, g1, b1, a1, ...] - 每个点7个float
  */
 export interface CompactPointCloudData {
-  /** 二进制数据：交错存储位置和颜色/强度数据 */
-  data: Float32Array
+  /** 交错格式（兼容）：[x, y, z, intensity/rgba, ...]，当 positionData+intensityData 存在时可省略 */
+  data?: Float32Array
+  /** 分离格式（CPU优化）：position [x,y,z,x,y,z,...]，与 intensityData 同时存在时优先使用 */
+  positionData?: Float32Array
+  /** 分离格式：intensity [i,i,i,...] */
+  intensityData?: Float32Array
   /** 点的数量 */
   count: number
   /** 点大小（世界空间单位） */
   pointSize: number
-  /** 数据哈希，用于检测数据是否变化 */
+  /** 数据哈希 */
   dataHash: string
-  /** 是否使用GPU端颜色映射（true: 4个float/点，false: 7个float/点） */
+  /** 是否使用GPU端颜色映射 */
   useGpuColorMapping?: boolean
 }
 
@@ -296,64 +301,44 @@ export class PointCloudBufferManager {
 
   /**
    * 更新现有 buffer 的数据（使用 subdata，避免重建）
-   * 
-   * 性能优化：使用 subdata 更新 buffer 比重建快 100%+，CPU 占用大幅降低
-   * 
-   * @param bufferItem 现有的 buffer 项
-   * @param data 新的点云数据
+   * CPU优化：分离格式时直接 subdata，零循环开销
    */
   private updateBuffers(bufferItem: BufferCacheItem, data: CompactPointCloudData): void {
-    const { data: floatData, count, useGpuColorMapping = true } = data
-    const stride = useGpuColorMapping ? 4 : 7
-    
-    // 分离位置数据
-    const positionData = new Float32Array(count * 3)
-    
-    if (useGpuColorMapping) {
-      // GPU端颜色映射格式：[x, y, z, intensity]
-      const intensityData = new Float32Array(count)
-      
-      for (let i = 0; i < count; i++) {
-        const srcOffset = i * stride
-        const posOffset = i * 3
-        
-        positionData[posOffset + 0] = floatData[srcOffset + 0] ?? 0
-        positionData[posOffset + 1] = floatData[srcOffset + 1] ?? 0
-        positionData[posOffset + 2] = floatData[srcOffset + 2] ?? 0
-        intensityData[i] = floatData[srcOffset + 3] ?? 0
-      }
-      
-      // 使用 subdata 更新 buffer（关键优化：避免重建）
-      bufferItem.positionBuffer.subdata(positionData)
-      if (bufferItem.intensityBuffer) {
-        bufferItem.intensityBuffer.subdata(intensityData)
-      }
-    } else {
-      // 旧格式：[x, y, z, r, g, b, a]
-      const colorData = new Float32Array(count * 4)
-      
-      for (let i = 0; i < count; i++) {
-        const srcOffset = i * stride
-        const posOffset = i * 3
-        const colorOffset = i * 4
-        
-        positionData[posOffset + 0] = floatData[srcOffset + 0] ?? 0
-        positionData[posOffset + 1] = floatData[srcOffset + 1] ?? 0
-        positionData[posOffset + 2] = floatData[srcOffset + 2] ?? 0
-        colorData[colorOffset + 0] = floatData[srcOffset + 3] ?? 1
-        colorData[colorOffset + 1] = floatData[srcOffset + 4] ?? 1
-        colorData[colorOffset + 2] = floatData[srcOffset + 5] ?? 1
-        colorData[colorOffset + 3] = floatData[srcOffset + 6] ?? 1
-      }
-      
-      // 使用 subdata 更新 buffer（关键优化：避免重建）
-      bufferItem.positionBuffer.subdata(positionData)
-      if (bufferItem.colorBuffer) {
-        bufferItem.colorBuffer.subdata(colorData)
+    const { positionData: posData, intensityData: intData, data: floatData, count, useGpuColorMapping = true } = data
+
+    if (useGpuColorMapping && posData && intData && posData.length >= count * 3 && intData.length >= count) {
+      bufferItem.positionBuffer.subdata(posData)
+      if (bufferItem.intensityBuffer) bufferItem.intensityBuffer.subdata(intData)
+    } else if (floatData) {
+      const stride = useGpuColorMapping ? 4 : 7
+      const positionData = new Float32Array(count * 3)
+      if (useGpuColorMapping) {
+        const intensityData = new Float32Array(count)
+        for (let i = 0; i < count; i++) {
+          const src = i * stride
+          positionData[i * 3] = floatData[src] ?? 0
+          positionData[i * 3 + 1] = floatData[src + 1] ?? 0
+          positionData[i * 3 + 2] = floatData[src + 2] ?? 0
+          intensityData[i] = floatData[src + 3] ?? 0
+        }
+        bufferItem.positionBuffer.subdata(positionData)
+        if (bufferItem.intensityBuffer) bufferItem.intensityBuffer.subdata(intensityData)
+      } else {
+        const colorData = new Float32Array(count * 4)
+        for (let i = 0; i < count; i++) {
+          const src = i * stride
+          positionData[i * 3] = floatData[src] ?? 0
+          positionData[i * 3 + 1] = floatData[src + 1] ?? 0
+          positionData[i * 3 + 2] = floatData[src + 2] ?? 0
+          colorData[i * 4] = floatData[src + 3] ?? 1
+          colorData[i * 4 + 1] = floatData[src + 4] ?? 1
+          colorData[i * 4 + 2] = floatData[src + 5] ?? 1
+          colorData[i * 4 + 3] = floatData[src + 6] ?? 1
+        }
+        bufferItem.positionBuffer.subdata(positionData)
+        if (bufferItem.colorBuffer) bufferItem.colorBuffer.subdata(colorData)
       }
     }
-    
-    // 更新数据哈希
     bufferItem.dataHash = data.dataHash
     bufferItem.count = count
   }
@@ -370,42 +355,11 @@ export class PointCloudBufferManager {
    * @returns BufferCacheItem 包含 positionBuffer 和 intensityBuffer/colorBuffer
    */
   private createBuffers(data: CompactPointCloudData): BufferCacheItem {
-    const { data: floatData, count, useGpuColorMapping = true } = data
-    const stride = useGpuColorMapping ? 4 : 7
-    
-    // 分离位置数据（两种格式都相同：前3个float是xyz）
-    const positionData = new Float32Array(count * 3)
-    
-    if (useGpuColorMapping) {
-      // GPU端颜色映射格式：[x, y, z, intensity]
-      const intensityData = new Float32Array(count)
-      
-      for (let i = 0; i < count; i++) {
-        const srcOffset = i * stride
-        const posOffset = i * 3
-        
-        // 位置：xyz
-        positionData[posOffset + 0] = floatData[srcOffset + 0] ?? 0
-        positionData[posOffset + 1] = floatData[srcOffset + 1] ?? 0
-        positionData[posOffset + 2] = floatData[srcOffset + 2] ?? 0
-        
-        // 强度：intensity
-        intensityData[i] = floatData[srcOffset + 3] ?? 0
-      }
+    const { positionData: posData, intensityData: intData, data: floatData, count, useGpuColorMapping = true } = data
 
-      // 创建 regl buffer（使用 dynamic usage 以便后续可以使用 subdata 更新）
-      // usage: 'dynamic' 允许使用 subdata 更新，比重建 buffer 快 100%+
-      const positionBuffer = this.regl.buffer({
-        type: 'float',
-        usage: 'dynamic', // 动态使用，支持 subdata 更新
-        data: positionData
-      })
-
-      const intensityBuffer = this.regl.buffer({
-        type: 'float',
-        usage: 'dynamic', // 动态使用，支持 subdata 更新
-        data: intensityData
-      })
+    if (useGpuColorMapping && posData && intData && posData.length >= count * 3 && intData.length >= count) {
+      const positionBuffer = this.regl.buffer({ type: 'float', usage: 'dynamic', data: posData })
+      const intensityBuffer = this.regl.buffer({ type: 'float', usage: 'dynamic', data: intData })
 
       return {
         positionBuffer,
@@ -416,47 +370,38 @@ export class PointCloudBufferManager {
         lastUsed: this.currentFrameTime
       }
     } else {
-      // 旧格式：[x, y, z, r, g, b, a]
-    const colorData = new Float32Array(count * 4)
-    
-    for (let i = 0; i < count; i++) {
-        const srcOffset = i * stride
-      const posOffset = i * 3
-      const colorOffset = i * 4
-      
-      // 位置：xyz
-      positionData[posOffset + 0] = floatData[srcOffset + 0] ?? 0
-      positionData[posOffset + 1] = floatData[srcOffset + 1] ?? 0
-      positionData[posOffset + 2] = floatData[srcOffset + 2] ?? 0
-      
-      // 颜色：rgba
-      colorData[colorOffset + 0] = floatData[srcOffset + 3] ?? 1
-      colorData[colorOffset + 1] = floatData[srcOffset + 4] ?? 1
-      colorData[colorOffset + 2] = floatData[srcOffset + 5] ?? 1
-      colorData[colorOffset + 3] = floatData[srcOffset + 6] ?? 1
-    }
-
-      // 创建 regl buffer（使用 dynamic usage 以便后续可以使用 subdata 更新）
-      // usage: 'dynamic' 允许使用 subdata 更新，比重建 buffer 快 100%+
-    const positionBuffer = this.regl.buffer({
-      type: 'float',
-        usage: 'dynamic', // 动态使用，支持 subdata 更新
-      data: positionData
-    })
-
-    const colorBuffer = this.regl.buffer({
-      type: 'float',
-      usage: 'dynamic', // 动态使用，支持 subdata 更新
-      data: colorData
-    })
-
-    return {
-      positionBuffer,
-      colorBuffer,
-      count,
-      dataHash: data.dataHash,
-        useGpuColorMapping: false,
-      lastUsed: this.currentFrameTime
+      const stride = useGpuColorMapping ? 4 : 7
+      const positionData = new Float32Array(count * 3)
+      if (!floatData || floatData.length < count * stride) {
+        throw new Error('Invalid CompactPointCloudData: missing data or positionData+intensityData')
+      }
+      if (useGpuColorMapping) {
+        const intensityData = new Float32Array(count)
+        for (let i = 0; i < count; i++) {
+          const src = i * stride
+          positionData[i * 3] = floatData[src] ?? 0
+          positionData[i * 3 + 1] = floatData[src + 1] ?? 0
+          positionData[i * 3 + 2] = floatData[src + 2] ?? 0
+          intensityData[i] = floatData[src + 3] ?? 0
+        }
+        const positionBuffer = this.regl.buffer({ type: 'float', usage: 'dynamic', data: positionData })
+        const intensityBuffer = this.regl.buffer({ type: 'float', usage: 'dynamic', data: intensityData })
+        return { positionBuffer, intensityBuffer, count, dataHash: data.dataHash, useGpuColorMapping: true, lastUsed: this.currentFrameTime }
+      } else {
+        const colorData = new Float32Array(count * 4)
+        for (let i = 0; i < count; i++) {
+          const src = i * stride
+          positionData[i * 3] = floatData[src] ?? 0
+          positionData[i * 3 + 1] = floatData[src + 1] ?? 0
+          positionData[i * 3 + 2] = floatData[src + 2] ?? 0
+          colorData[i * 4] = floatData[src + 3] ?? 1
+          colorData[i * 4 + 1] = floatData[src + 4] ?? 1
+          colorData[i * 4 + 2] = floatData[src + 5] ?? 1
+          colorData[i * 4 + 3] = floatData[src + 6] ?? 1
+        }
+        const positionBuffer = this.regl.buffer({ type: 'float', usage: 'dynamic', data: positionData })
+        const colorBuffer = this.regl.buffer({ type: 'float', usage: 'dynamic', data: colorData })
+        return { positionBuffer, colorBuffer, count, dataHash: data.dataHash, useGpuColorMapping: false, lastUsed: this.currentFrameTime }
       }
     }
   }
@@ -877,32 +822,20 @@ export class PointCloudBufferManager {
  * @returns 数据哈希字符串，用于缓存键
  */
 export function generateDataHash(data: Float32Array, count: number, useGpuColorMapping: boolean = true): string {
-  // CPU 优化：减少采样数量（从100降到50），减少 CPU 开销
-  // 对于大数据量，50个采样点已经足够检测数据变化
   const sampleSize = Math.min(50, count)
   const stride = useGpuColorMapping ? 4 : 7
-  
-  // CPU 优化：使用数字哈希代替字符串拼接，大幅提升性能
-  // 字符串拼接操作（`hash += ...`）对于大数据量非常慢（O(n²)）
-  // 使用整数运算和位运算，比字符串拼接快 10-100 倍
   let hash = 0
   hash = ((hash << 5) - hash) + count
   hash = ((hash << 5) - hash) + stride
-  
-  // 前50个点（采样位置数据 xyz）
-  // CPU 优化：使用整数运算代替字符串拼接
   const maxSampleOffset = Math.min(sampleSize * stride, data.length)
   for (let i = 0; i < maxSampleOffset; i += stride) {
     const x = data[i] || 0
     const y = data[i + 1] || 0
     const z = data[i + 2] || 0
-    // 使用位运算和整数运算计算哈希（比字符串拼接快得多）
     hash = ((hash << 5) - hash) + Math.round(x * 1000)
     hash = ((hash << 5) - hash) + Math.round(y * 1000)
     hash = ((hash << 5) - hash) + Math.round(z * 1000)
   }
-  
-  // 后50个点（采样位置数据 xyz）
   if (count > sampleSize) {
     const start = Math.max(0, (count - sampleSize) * stride)
     const end = Math.min(start + sampleSize * stride, data.length)
@@ -910,16 +843,38 @@ export function generateDataHash(data: Float32Array, count: number, useGpuColorM
       const x = data[i] || 0
       const y = data[i + 1] || 0
       const z = data[i + 2] || 0
-      // 使用位运算和整数运算计算哈希
       hash = ((hash << 5) - hash) + Math.round(x * 1000)
       hash = ((hash << 5) - hash) + Math.round(y * 1000)
       hash = ((hash << 5) - hash) + Math.round(z * 1000)
     }
   }
-  
-  // 将数字哈希转换为字符串（用于缓存键）
-  // 使用 base36 编码，比 toString(10) 更短，但性能相近
   return `${count}_${stride}_${hash.toString(36)}`
+}
+
+/** 分离格式的哈希（positionData + intensityData），主线程零分离开销 */
+export function generateDataHashFromSeparated(positionData: Float32Array, intensityData: Float32Array, count: number): string {
+  const sampleSize = Math.min(50, count)
+  let hash = 0
+  hash = ((hash << 5) - hash) + count
+  for (let i = 0; i < Math.min(sampleSize, count); i++) {
+    const x = positionData[i * 3] || 0
+    const y = positionData[i * 3 + 1] || 0
+    const z = positionData[i * 3 + 2] || 0
+    hash = ((hash << 5) - hash) + Math.round(x * 1000)
+    hash = ((hash << 5) - hash) + Math.round(y * 1000)
+    hash = ((hash << 5) - hash) + Math.round(z * 1000)
+  }
+  if (count > sampleSize) {
+    for (let i = count - sampleSize; i < count; i++) {
+      const x = positionData[i * 3] || 0
+      const y = positionData[i * 3 + 1] || 0
+      const z = positionData[i * 3 + 2] || 0
+      hash = ((hash << 5) - hash) + Math.round(x * 1000)
+      hash = ((hash << 5) - hash) + Math.round(y * 1000)
+      hash = ((hash << 5) - hash) + Math.round(z * 1000)
+    }
+  }
+  return `${count}_4_${hash.toString(36)}`
 }
 
 /**
