@@ -88,9 +88,36 @@ export class PointCloud2ProcessorWorker {
   }
 
   /**
+   * 处理 PointCloud2 数据（支持 Transferable Objects）
+   * 
+   * 当从主线程传递大型二进制数据（如点云的 ArrayBuffer）时，应尽量使用 transferList
+   * 以避免结构化克隆产生的大量拷贝开销。
+   */
+  async processPointCloud2WithTransfer(
+    request: PointCloud2ProcessRequest,
+    transferList?: ArrayBuffer[]
+  ): Promise<PointCloud2ProcessResult> {
+    if (!this.worker) {
+      return {
+        type: 'pointCloud2Processed',
+        componentId: request.componentId,
+        data: null,
+        error: 'PointCloud2 processing requires Worker'
+      }
+    }
+
+    return this.sendRequest(request.componentId, request, 10000, transferList)
+  }
+
+  /**
    * 发送请求到 Worker（通用方法）
    */
-  private sendRequest(requestId: string, request: PointCloud2ProcessRequest, timeoutMs: number): Promise<PointCloud2ProcessResult> {
+  private sendRequest(
+    requestId: string,
+    request: PointCloud2ProcessRequest,
+    timeoutMs: number,
+    transferList?: ArrayBuffer[]
+  ): Promise<PointCloud2ProcessResult> {
     return new Promise((resolve, reject) => {
       // 如果已有相同 componentId 的请求，取消旧的请求
       const existing = this.pendingRequests.get(requestId)
@@ -113,7 +140,11 @@ export class PointCloud2ProcessorWorker {
       })
 
       // 发送请求到 Worker
-      this.worker!.postMessage(request)
+      if (transferList && transferList.length > 0) {
+        this.worker!.postMessage(request, transferList)
+      } else {
+        this.worker!.postMessage(request)
+      }
     })
   }
 

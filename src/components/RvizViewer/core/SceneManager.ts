@@ -3418,6 +3418,8 @@ export class SceneManager {
       // 性能优化：创建可序列化消息对象，减少不必要的对象创建
       // 只提取 Worker 需要的字段，确保所有字段都是可序列化的
       // 优化：使用对象字面量直接创建，避免多次赋值
+      // 同时：尽量使用 Transferable Objects，避免对大数据做结构化克隆拷贝
+      const transferList: ArrayBuffer[] = []
       const cleanMessage: any = {
         header: message.header ? {
           seq: message.header.seq,
@@ -3448,12 +3450,10 @@ export class SceneManager {
             // Base64 字符串，直接传递
             return message.data
           } else if (message.data instanceof Uint8Array) {
-            // Uint8Array：转换为 ArrayBuffer（可序列化，支持 Transferable Objects）
-            // 性能优化：使用 slice 创建新的 ArrayBuffer，避免引用原始 buffer
-            return message.data.buffer.slice(
-              message.data.byteOffset,
-              message.data.byteOffset + message.data.byteLength
-            )
+            // Uint8Array：直接传递其底层 ArrayBuffer，并通过 transferList 进行零拷贝传输
+            const buffer = message.data.buffer
+            transferList.push(buffer)
+            return buffer
           } else if (Array.isArray(message.data)) {
             // Array：直接传递
             return message.data
@@ -3474,13 +3474,18 @@ export class SceneManager {
       // })
 
       // 使用专门的 PointCloud2 处理器 Worker
-      const result = await pointCloud2ProcessorWorker.processPointCloud2({
+      const workerRequest = {
         type: 'processPointCloud2',
         componentId,
         message: cleanMessage,
         config: workerConfig,
         frameInfo // 传递 TF 变换信息到 Worker
-      })
+      } as const
+
+      const result = await pointCloud2ProcessorWorker.processPointCloud2WithTransfer(
+        workerRequest,
+        transferList.length > 0 ? transferList : undefined
+      )
 
       // 记录 Worker 处理结束
       const pointsCount = result.data?.pointCount || 0
